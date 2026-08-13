@@ -78,6 +78,11 @@ ENV PYTHONPATH=/app
 ARG PORTFOLIODB_VERSION=unknown
 ENV PORTFOLIODB_APP_VERSION=${PORTFOLIODB_VERSION}
 
+# Ownership proof for the MCP Server Registry: it only accepts a server.json
+# whose `name` matches this label on the image the entry points at. Must stay in
+# lockstep with server.json at the repo root.
+LABEL io.modelcontextprotocol.server.name="io.github.amosgeva/portfoliodb"
+
 # Created here, before the chown below, so a named volume mounted at this path
 # inherits appuser ownership from the image. Without it Docker initialises the
 # volume root-owned and the (non-root) app cannot write its cache.
