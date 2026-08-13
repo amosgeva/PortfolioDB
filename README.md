@@ -168,9 +168,17 @@ overlay: `make build` then `make dev-up`.
 
 Then, in whatever order suits you:
 
-- **Enter your own trades** — Manage page, or
-  `make add-lot ARGS="--symbol NVDA --account IBKR --trade-date 2026-02-13 --side BUY --qty 10 --price 184"`.
-  Have history in a spreadsheet? [docs/csv-import.md](docs/csv-import.md).
+- **Get your history in.** There is **no broker sync — on purpose**, since that
+  would mean holding your credentials. So either:
+  - **Import a CSV**, which is the path worth taking if you have more than a
+    handful of trades. Export your trade history, rename a few columns, dry-run
+    it: [docs/csv-import.md](docs/csv-import.md) has the mapping recipe and a
+    sample file. Watch the one trap — a history containing sales needs a `Side`
+    column, or every sale imports as a purchase.
+  - **Or enter trades directly** — the Manage page, or
+    `make add-lot ARGS="--symbol NVDA --account IBKR --trade-date 2026-02-13 --side BUY --qty 10 --price 184"`.
+  Either way this is the part that costs you an evening if your history is long.
+  Worth knowing before you install rather than after.
 - **Set your timezone and collector window** — Manage → Settings. The defaults
   are UTC-shaped; if you're not on UTC, set them before trusting the daily
   numbers ([docs/scheduling.md](docs/scheduling.md)).
