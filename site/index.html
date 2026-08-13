@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PortfolioDB — your portfolio ledger, in a database you control</title>
+<meta name="description" content="A self-hosted, append-only portfolio ledger on Postgres. FIFO and average-cost engines recompute every number on read. No accounts, no telemetry, no broker credentials.">
+<link rel="canonical" href="https://portfoliodb.app/">
+<link rel="icon" href="images/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="PortfolioDB — your portfolio ledger, in a database you control">
+<meta property="og:description" content="Append-only lots on Postgres. FIFO and average-cost recomputed on every read. Self-hosted, no accounts, no telemetry, no broker credentials.">
+<meta property="og:url" content="https://portfoliodb.app/">
+<meta property="og:image" content="https://portfoliodb.app/images/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+
+<div class="wrap">
+  <header class="masthead">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/></svg>
+    </span>
+    <span class="wordmark">PortfolioDB</span>
+    <nav>
+      <a href="#what">What it does</a>
+      <a href="#start">Quick start</a>
+      <a href="#limits">Limitations</a>
+      <a href="https://github.com/amosgeva/PortfolioDB">GitHub</a>
+    </nav>
+  </header>
+
+  <!-- ── hero ─────────────────────────────────────────────── -->
+  <section class="hero">
+    <h1>
+      <span>Your portfolio ledger.</span>
+      <span>Your database.</span>
+      <span class="last">Nobody else's server.</span>
+    </h1>
+    <p class="sub">
+      An append-only ledger on Postgres, self-hosted in Docker. Every buy and sell is
+      a row you can read; open quantity, cost basis and realized P&amp;L are recomputed
+      from those rows every time you look — never stored, never drifted.
+      No accounts, no telemetry, no broker credentials.
+    </p>
+
+    <div class="code">
+      <button class="copy" type="button" data-copy="install">Copy</button>
+<pre id="install"><span class="prompt">$ </span><span class="cmd">mkdir</span> portfoliodb &amp;&amp; <span class="cmd">cd</span> portfoliodb
+<span class="prompt">$ </span><span class="cmd">curl</span> <span class="flag">-fsSLO</span> https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/docker-compose.yml
+<span class="prompt">$ </span><span class="cmd">curl</span> <span class="flag">-fsSLO</span> https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/Makefile
+<span class="prompt">$ </span><span class="cmd">curl</span> <span class="flag">-fsSL</span>  https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/.env.template <span class="flag">-o</span> .env
+<span class="prompt">$ </span><span class="cmd">make</span> init &amp;&amp; <span class="cmd">make</span> up &amp;&amp; <span class="cmd">make</span> schema</pre>
+    </div>
+    <p class="hero-note">
+      That is the whole install — there is nothing to sign up for.
+      <code>make init</code> generates your Postgres password and MCP token;
+      the application image is <strong>pulled, not built</strong>, so no Python and no
+      toolchain land on your machine. Then open <code>localhost:8501</code>.
+    </p>
+
+    <div class="cta">
+      <a class="btn btn--primary" href="https://github.com/amosgeva/PortfolioDB">View on GitHub</a>
+      <a class="btn" href="#start">Full quick start</a>
+    </div>
+  </section>
+
+  <!-- ── the screenshot ───────────────────────────────────── -->
+  <section>
+    <figure>
+      <img src="images/portfolio.webp" width="1600" height="949" alt="The portfolio view: total value with a labelled one-month sparkline, market value, unrealized and realized P&amp;L, time-weighted returns by period against SPY, portfolio value history and allocation by position.">
+      <figcaption>
+        The portfolio view. Every screen on this page shows <code>make demo-seed</code>
+        data — a fictional portfolio with random-walk prices, not anyone's holdings.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ── the problem ──────────────────────────────────────── -->
+  <section>
+    <h2>Your spreadsheet wins on trust and loses on arithmetic</h2>
+    <p class="lede">
+      Most portfolio trackers want your brokerage login, keep your positions on their
+      servers, and show you a return figure that is really whatever their integration
+      last managed to sync. So the trustworthy option ends up being the one that cannot
+      do the maths — a spreadsheet where you type everything and reconcile by hand.
+      PortfolioDB does not connect to your broker at all. You enter trades, or import a
+      CSV, into a Postgres database that exists only on your infrastructure, and every
+      number on screen is recomputed from that ledger on the spot.
+    </p>
+  </section>
+
+  <!-- ── what it does ─────────────────────────────────────── -->
+  <section id="what">
+    <h2>What it actually does</h2>
+    <p class="lede">Four things worth knowing before you install it.</p>
+
+    <div class="cards">
+      <div class="card">
+        <span class="tag">The ledger</span>
+        <h3>Lots, not positions</h3>
+        <p>
+          Every BUY and SELL is a row. Open quantity, cost basis and realized P&amp;L are
+          recomputed from <code>lots</code> on every read, never stored — so no number can
+          quietly drift from the trades behind it. FIFO and moving-average engines run
+          side by side over the same rows.
+        </p>
+        <a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/methodology.md">How every number is computed →</a>
+      </div>
+
+      <div class="card">
+        <span class="tag">The interesting part</span>
+        <h3>Ask your own agent</h3>
+        <p>
+          An optional MCP server exposes 47 tools, 7 resources and 7 prompts over the same
+          engines the dashboard uses — positions, P&amp;L, concentration, correlation, data
+          quality, a pre-trade "what if". Point Claude Code, Claude Desktop or Cursor at
+          it. Read-only, bearer-token authenticated, and nothing leaves your network.
+        </p>
+        <a href="https://github.com/amosgeva/PortfolioDB#mcp-server-for-ai-agents">The MCP surface →</a>
+      </div>
+
+      <div class="card">
+        <span class="tag">Trust</span>
+        <h3>Numbers you can audit</h3>
+        <p>
+          Splits are applied at read time from <code>corporate_actions</code>, so an
+          adjustment is undone by deleting a row. A Data Health page answers "can I trust
+          this number, and if not why" per symbol — judged against the collector's own
+          runs rather than a clock, because a weekend gap is legitimately 64 hours.
+        </p>
+        <a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/operations.md">Operations and health →</a>
+      </div>
+
+      <div class="card">
+        <span class="tag">Optional</span>
+        <h3>An advisor that read your rules</h3>
+        <p>
+          You write a one-page investing philosophy, paste it into the dashboard, and it
+          goes into every model call alongside a live portfolio snapshot. Anthropic,
+          OpenAI, OpenRouter — or fully local through Ollama, so the financial data and
+          the model both stay on your box.
+        </p>
+        <a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/philosophy.md">Writing your one-pager →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── quick start ──────────────────────────────────────── -->
+  <section id="start">
+    <h2>Quick start, in full</h2>
+    <p class="lede">
+      You need Docker with Compose. Nothing else: the image is pulled, not built, so
+      there is no Python, no toolchain and no compile step on your machine.
+    </p>
+
+    <ol class="steps">
+      <li>Make a directory and fetch three files — <code>docker-compose.yml</code>,
+        <code>.env.template</code> (saved as <code>.env</code>) and the
+        <code>Makefile</code>.</li>
+      <li><code>make init</code> — generates the Postgres password, writes it to the two
+        keys that must match, generates an MCP token, and tightens permissions on
+        <code>.env</code>. Safe to re-run; it never rotates a secret you already have.</li>
+      <li><code>make up</code> — starts Postgres, the dashboard and the price collector.</li>
+      <li><code>make schema</code> — creates the tables and applies migrations in order.</li>
+      <li><code>make demo-seed</code> — optional fictional data, so the dashboard has
+        something to show before you type in a single trade.</li>
+      <li>Open <code>http://localhost:8501</code>, then set your timezone and collector
+        window under Manage → Settings. The defaults are UTC-shaped.</li>
+    </ol>
+
+    <div class="code">
+      <button class="copy" type="button" data-copy="start-block">Copy</button>
+<pre id="start-block"><span class="prompt">$ </span><span class="cmd">mkdir</span> portfoliodb &amp;&amp; <span class="cmd">cd</span> portfoliodb
+<span class="prompt">$ </span><span class="cmd">curl</span> <span class="flag">-fsSLO</span> https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/docker-compose.yml
+<span class="prompt">$ </span><span class="cmd">curl</span> <span class="flag">-fsSLO</span> https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/Makefile
+<span class="prompt">$ </span><span class="cmd">curl</span> <span class="flag">-fsSL</span>  https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/.env.template <span class="flag">-o</span> .env
+<span class="prompt">$ </span><span class="cmd">make</span> init
+<span class="prompt">$ </span><span class="cmd">make</span> up &amp;&amp; <span class="cmd">make</span> schema
+<span class="prompt">$ </span><span class="cmd">make</span> demo-seed        <span class="comment"># optional, fictional data</span></pre>
+    </div>
+    <p class="section-note">
+      Prefer not to trust a <code>Makefile</code> you have not read? Every target is a
+      one-line <code>docker compose</code> command, and the README lists them.
+      Pin a version instead of tracking <code>latest</code> with
+      <code>PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.0.0</code> in <code>.env</code>.
+    </p>
+  </section>
+
+  <!-- ── what it does not do ──────────────────────────────── -->
+  <section id="limits">
+    <h2>What it does not do</h2>
+    <p class="lede">
+      These are design decisions, not gaps waiting to be filled. Read them before you
+      install rather than after — if one of them rules you out, better to find out now.
+    </p>
+
+    <div class="limits">
+      <div class="limit"><span class="x" aria-hidden="true">✕</span><p>
+        <b>One currency, end to end.</b> If you hold instruments in several, the totals are
+        arithmetic on mixed units — <b>wrong, not approximate.</b>
+      </p></div>
+      <div class="limit"><span class="x" aria-hidden="true">✕</span><p>
+        <b>No authentication.</b> Single-user by design; the network is your access
+        control. Do not put it on the open internet — do put it behind your own VPN,
+        tailnet or LAN.
+        <a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/exposure.md">Exposing it safely →</a>
+      </p></div>
+      <div class="limit"><span class="x" aria-hidden="true">✕</span><p>
+        <b>No broker sync.</b> You enter trades or import a CSV, because syncing would mean
+        holding your credentials. If your history is long this costs you an evening —
+        the <a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/csv-import.md">CSV
+        import guide</a> is the shortcut.
+      </p></div>
+      <div class="limit"><span class="x" aria-hidden="true">✕</span><p>
+        <b>Equities and ETFs only.</b> No options, no bonds, no crypto-native accounting,
+        no shorts. Cash balances are entered by hand.
+      </p></div>
+      <div class="limit"><span class="x" aria-hidden="true">✕</span><p>
+        <b>One person's portfolio.</b> No multi-user, no sharing, no roles.
+      </p></div>
+    </div>
+  </section>
+
+  <!-- ── more screens ─────────────────────────────────────── -->
+  <section>
+    <h2>More screens</h2>
+    <details>
+      <summary>Statistics, Advisor and Data Health</summary>
+      <figure>
+        <img src="images/statistics.webp" width="1600" height="949" loading="lazy" alt="The statistics view: best and worst day, week and month, streaks and consistency measures computed from snapshot history.">
+        <figcaption>Period statistics — best and worst day, week and month, streaks, consistency.</figcaption>
+      </figure>
+      <figure>
+        <img src="images/advisor.webp" width="1600" height="949" loading="lazy" alt="The advisor view showing a generated brief against demo data, with the model named as ollama:llama3.3 and the investor one-pager loaded.">
+        <figcaption>
+          The advisor, here running <code>ollama:llama3.3</code> — a local model, no data
+          leaving the machine. The brief is fictional demo content.
+        </figcaption>
+      </figure>
+      <figure>
+        <img src="images/data-health.webp" width="1600" height="949" loading="lazy" alt="The data health view: overall status complete, seven symbols checked, per-symbol freshness and issue columns.">
+        <figcaption>Data Health — per-symbol freshness, cost basis, orphaned sells, suspected splits.</figcaption>
+      </figure>
+    </details>
+  </section>
+
+  <!-- ── disclaimer ───────────────────────────────────────── -->
+  <section>
+    <div class="disclaimer">
+      <h2>Not investment advice</h2>
+      <p>
+        This is a record-keeping and analysis tool. It reports what your ledger says and,
+        if you enable the advisor, what a language model thinks about it — neither is
+        financial advice.
+      </p>
+      <p>
+        Language models state wrong things confidently. Verify anything that would move
+        money. You are the only decision-maker, and you own the consequences.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── footer ───────────────────────────────────────────── -->
+  <footer>
+    <div class="cols">
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/amosgeva/PortfolioDB">Repository</a></li>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/releases">Releases</a></li>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/issues">Issues</a></li>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/blob/main/CHANGELOG.md">Changelog</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/methodology.md">Methodology</a></li>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/csv-import.md">CSV import</a></li>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/llm-providers.md">LLM providers</a></li>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/blob/main/docs/operations.md">Backups &amp; upgrades</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Licence</h4>
+        <ul>
+          <li><a href="https://github.com/amosgeva/PortfolioDB/blob/main/LICENSE">AGPL-3.0</a></li>
+        </ul>
+        <p style="margin-top:6px">
+          Self-host it, modify it, use it for anything. If you run a modified version as a
+          service for other people, those modifications have to be published too.
+        </p>
+      </div>
+    </div>
+
+    <p class="fine">
+      <strong>Privacy.</strong> The application has no accounts, no authentication and no
+      telemetry — nothing phones home except your price source, and your LLM provider only
+      if you turn the advisor on. This website is separate: it is static, sets no cookies,
+      and currently runs no analytics of any kind.
+    </p>
+  </footer>
+</div>
+
+<script>
+  // Copy buttons. No dependencies, and no clipboard access until you click.
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = document.getElementById(btn.dataset.copy);
+      if (!pre) return;
+      // Strip the shell prompts and inline comments: what lands on the clipboard
+      // should be runnable as-is, not something you have to clean up first.
+      var text = Array.prototype.map.call(pre.childNodes, function (n) {
+        if (n.nodeType === 1 && (n.classList.contains('prompt') || n.classList.contains('comment'))) return '';
+        return n.textContent;
+      }).join('').split('\n').map(function (l) { return l.trimEnd(); }).join('\n').trim();
+      navigator.clipboard.writeText(text).then(function () {
+        var was = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.dataset.copied = '1';
+        setTimeout(function () { btn.textContent = was; btn.dataset.copied = '0'; }, 1600);
+      });
+    });
+  });
+</script>
+</body>
+</html>

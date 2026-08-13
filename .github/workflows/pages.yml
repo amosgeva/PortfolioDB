@@ -1,0 +1,64 @@
+name: Deploy site
+
+# Manual for now, on purpose: this cannot succeed until Pages is enabled for the
+# repository (Settings → Pages → Source: GitHub Actions), and a workflow that
+# fails on every push is noise that trains you to ignore it. Once Pages is on and
+# one manual run has gone green, uncomment the push trigger.
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  #   paths: ['site/**', 'docs/images/**', '.github/workflows/pages.yml']
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never two deploys at once, and let a newer one win.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+
+      - name: Assemble the site
+        # The screenshots live in docs/images/ and are referenced by the README
+        # too. Copying at build time keeps one copy in git — two would drift, and
+        # the drifting one would be the one on the public page.
+        run: |
+          mkdir -p _site/images
+          cp site/index.html site/style.css _site/
+          cp docs/images/portfolio.webp docs/images/statistics.webp \
+             docs/images/advisor.webp docs/images/data-health.webp \
+             docs/images/social-preview.png _site/images/
+          cp app/static/icon.svg _site/images/icon.svg
+          # The custom domain has to be in the artifact, or Pages drops it on
+          # every deploy and the domain quietly reverts to github.io.
+          echo 'portfoliodb.app' > _site/CNAME
+          ls -R _site
+
+      - name: Check every local reference resolves
+        # A 404 image on the launch page is the cheapest possible own-goal.
+        run: |
+          cd _site
+          fail=0
+          for ref in $(grep -oE '(href|src)="[^"#]+"' index.html \
+                       | sed -E 's/.*="([^"]+)"/\1/' | grep -vE '^(https?:|mailto:)'); do
+            if [ ! -e "$ref" ]; then echo "MISSING: $ref"; fail=1; fi
+          done
+          exit $fail
+
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5.0.0
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b  # v4.0.0
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
