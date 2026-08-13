@@ -136,14 +136,37 @@ def ping_db() -> bool:
     return ping_db_detail()[0]
 
 
+def explain_db_error(exc: BaseException) -> str:
+    """A one-line diagnosis for a connection failure, for humans.
+
+    The same failure used to read two different ways: /healthz explained that a
+    read-only role may never have been created, while the dashboard's Data
+    Health page printed psycopg2's raw text — container IP included — on the one
+    page whose job is telling you whether your numbers are trustworthy. This is
+    the single place that turns an exception into an explanation.
+
+    psycopg2 names the role and the host but never the password, so echoing its
+    first line is safe.
+    """
+    first = (str(exc).strip().splitlines() or [""])[0] or exc.__class__.__name__
+    ro_user = os.getenv("PORTFOLIODB_MCP_RO_USER")
+    if ro_user and "password authentication failed" in first and ro_user in first:
+        return (
+            f"The read-only role '{ro_user}' rejected the password in "
+            "PORTFOLIODB_MCP_RO_PASSWORD. Either the role was never created or its "
+            "password changed. Fix it with `make ro-role` (which prints the two "
+            ".env lines), or clear both PORTFOLIODB_MCP_RO_* values to fall back to "
+            "the application credentials. Then `make restart`."
+        )
+    return first
+
+
 def ping_db_detail() -> tuple[bool, str | None]:
     """(reachable, reason) — the reason is what /healthz reports on failure.
 
     Worth the extra return value: "reachable: false" on its own sends you
-    looking for a dead Postgres, when the usual cause is that
-    PORTFOLIODB_MCP_RO_USER points at a read-only role that was never created
-    (or whose password changed). psycopg2's message names the role and the host
-    but never the password, so it is safe to surface.
+    looking for a dead Postgres, when the usual cause is a read-only role that
+    was never created. See explain_db_error.
     """
     try:
         with get_conn() as conn:
@@ -153,6 +176,4 @@ def ping_db_detail() -> tuple[bool, str | None]:
         return True, None
     except Exception as e:
         log.exception("DB ping failed")
-        # First line only: psycopg2 appends multi-line connection detail that
-        # is noise in a health payload.
-        return False, str(e).strip().splitlines()[0] if str(e).strip() else e.__class__.__name__
+        return False, explain_db_error(e)

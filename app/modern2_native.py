@@ -996,7 +996,9 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
             method=method, materiality_pct=float(materiality)
         )
     except Exception as e:  # pragma: no cover - surfaced in the UI
-        st.error(f"Could not build the data-quality report: {e}")
+        from app.mcp.deps import explain_db_error
+
+        st.error(f"Could not build the data-quality report. {explain_db_error(e)}")
         return
 
     overall = report["overall_status"]
