@@ -1,0 +1,148 @@
+# Run `make init` (or copy .env.template to .env) before the first `up` — the
+# app services read it.
+#
+#   docker compose up -d                    postgres + dashboard (:8501) + scheduler
+#   docker compose --profile mcp up -d      also the MCP server (:8765)
+#   docker compose --profile tools up -d    also pgAdmin (:58080)
+#
+# The application image is pulled, not built. To build from source instead —
+# what you want when changing the code — add the dev overlay:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+#
+# or just `make build`, which does that for you.
+
+# Shared by every service running the app image (see app/Dockerfile: one image,
+# different commands).
+x-app-base: &app-base
+  # Pin a version instead of latest if you'd rather upgrade deliberately:
+  #   PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:v1.0.0 in .env
+  image: ${PORTFOLIODB_IMAGE:-ghcr.io/amosgeva/portfoliodb:latest}
+  restart: unless-stopped
+  # The whole .env reaches the container this way — LLM keys, the FD key, the
+  # display name, the timezone — so adding a key never means editing compose.
+  # `environment:` below wins over anything with the same name in .env.
+  env_file:
+    - .env
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+x-app-env: &app-env
+  # Talk to the postgres service over the docker network, not the host port
+  # published below (which is what .env's PORTFOLIODB_HOST points at).
+  PORTFOLIODB_HOST: postgres
+  PORTFOLIODB_PORT: 5432
+  PORTFOLIODB_DB: portfoliodb
+  PORTFOLIODB_USER: portfoliouser
+  PORTFOLIODB_PASSWORD: ${POSTGRES_PASSWORD}
+  TZ: ${PORTFOLIODB_TZ:-UTC}
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: portfoliodb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: portfoliodb
+      POSTGRES_USER: portfoliouser
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${PORTFOLIODB_TZ:-UTC}
+    ports:
+      - "54320:5432"
+    volumes:
+      # Named volume, not a ./data bind mount: Docker owns the permissions (a
+      # bind mount hits uid mismatches on some hosts), `docker compose down`
+      # cannot sweep it away with the project directory, and nothing invites
+      # you to open the live data directory in an editor. Prefer a bind mount?
+      # Override it — see docker-compose.override.yml.example.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U portfoliouser -d portfoliodb" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  dashboard:
+    <<: *app-base
+    container_name: portfoliodb-dashboard
+    environment:
+      <<: *app-env
+    # From /app/app, mirroring the documented host workflow (run it from app/):
+    # the bare module imports resolve without putting app/ ahead of
+    # site-packages, which would shadow the `mcp` SDK — see app/Dockerfile.
+    command: ["sh", "-c", "cd /app/app && streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501"]
+    ports:
+      - "8501:8501"
+    volumes:
+      # The operator's own philosophy, read-only — the advisor reads it on
+      # every call and must never write it. Create it from
+      # philosophy.md.template before the first `up`, or Docker will helpfully
+      # create a *directory* here instead.
+      - ./philosophy.md:/app/philosophy.md:ro
+      # Named volume rather than a ./cache bind mount: a bind mount is created
+      # root-owned on Linux hosts and the container runs unprivileged, so the
+      # Financial-Datasets cache could not be written. Shared with the Phase 4
+      # scheduler, which is the only writer.
+      - appcache:/app/cache
+
+  # Scheduled jobs (price snapshots, daily brief, weekly enrichment) — see
+  # docker/crontab. Replaces the Windows Task Scheduler setup; the market
+  # window lives in app/market_window.py, not in the cron lines.
+  scheduler:
+    <<: *app-base
+    container_name: portfoliodb-scheduler
+    environment:
+      <<: *app-env
+    # Absolute path, not a bare "supercronic": as PID 1 supercronic re-execs
+    # itself to reap zombies, and ForkExec cannot resolve argv[0] through PATH
+    # — the bare name crash-loops with "Failed to fork exec: no such file or
+    # directory" before any job runs.
+    command: ["/usr/local/bin/supercronic", "-passthrough-logs", "/app/docker/crontab"]
+    volumes:
+      - ./philosophy.md:/app/philosophy.md:ro
+      - appcache:/app/cache
+
+  # Optional DB browser, behind a profile: it needs PGADMIN_EMAIL/PASSWORD and
+  # crash-loops without them, so a fresh clone must not start it by default.
+  #   docker compose --profile tools up -d pgadmin
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: portfoliodb-pgadmin
+    restart: unless-stopped
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      TZ: ${PORTFOLIODB_TZ:-UTC}
+    ports:
+      - "127.0.0.1:58080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Optional MCP service, behind a profile because most installs won't want a
+  # second network listener:
+  #   docker compose --profile mcp up -d mcp
+  mcp:
+    <<: *app-base
+    container_name: portfoliodb-mcp
+    profiles: ["mcp"]
+    environment:
+      <<: *app-env
+      PORTFOLIODB_MCP_TOKEN: ${PORTFOLIODB_MCP_TOKEN}
+      PORTFOLIODB_MCP_HOST: 0.0.0.0
+      PORTFOLIODB_MCP_PORT: 8765
+    command: ["sh", "-c", "uvicorn app.mcp.server:asgi --host ${PORTFOLIODB_MCP_HOST:-0.0.0.0} --port ${PORTFOLIODB_MCP_PORT:-8765}"]
+    ports:
+      - "127.0.0.1:8765:8765"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2).status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  appcache:

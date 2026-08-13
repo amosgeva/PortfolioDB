@@ -1,0 +1,97 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<script>
+/* mirror the app shell: adopt the saved theme before first paint and keep the
+   parent Streamlit page's background in step, so a cold load never flashes */
+try{
+  var _t=localStorage.getItem('pdb_theme')||
+    ((window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light');
+  document.documentElement.setAttribute('data-theme',_t);
+  try{window.parent.document.body.style.background=_t==='dark'?'#16181d':'#ffffff';}catch(e){}
+}catch(e){}
+</script>
+<style>
+:root{--bg:oklch(98% 0.005 255);--surface:#fff;--border:oklch(91% 0.008 260);
+  --shimmer:oklch(95.5% 0.008 255);--rail:oklch(26% 0.035 264);--rail-shimmer:oklch(31% 0.04 264)}
+[data-theme="dark"]{--bg:oklch(16.5% 0.015 260);--surface:oklch(20.5% 0.018 260);--border:oklch(29% 0.015 260);
+  --shimmer:oklch(24% 0.02 260);--rail:oklch(18.5% 0.028 264);--rail-shimmer:oklch(24% 0.032 264)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);min-height:100vh;overflow:hidden}
+.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+.sk{border-radius:8px;background:var(--shimmer);position:relative;overflow:hidden}
+.sk::after{content:'';position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.10),transparent);animation:sh 1.4s infinite}
+@keyframes sh{100%{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){.sk::after{animation:none}}
+.rail{background:var(--rail);padding:20px 16px;display:flex;flex-direction:column;gap:12px}
+.rail .sk{background:var(--rail-shimmer)}
+.brand{display:flex;gap:11px;align-items:center;margin-bottom:10px}
+.logo{width:34px;height:34px;border-radius:9px}
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{display:flex;align-items:center;gap:14px;padding:16px 28px;border-bottom:1px solid var(--border);background:var(--surface)}
+.tape{height:38px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;gap:24px;align-items:center;padding:0 20px;overflow:hidden}
+.content{padding:26px 28px;display:flex;flex-direction:column;gap:20px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:96px;gap:16px}
+.kpis .hero{grid-column:span 2;grid-row:span 2}
+.row{display:grid;grid-template-columns:1.6fr 1fr;gap:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:18px;display:flex;flex-direction:column;gap:12px}
+@media (max-width:980px){.app{grid-template-columns:1fr}.rail{display:none}.kpis{grid-template-columns:1fr 1fr}.row{grid-template-columns:1fr}}
+</style></head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><span class="sk logo"></span><span class="sk" style="width:110px;height:16px"></span></div>
+    <span class="sk" style="width:70%;height:12px"></span>
+    <span class="sk" style="width:88%;height:30px"></span>
+    <span class="sk" style="width:88%;height:30px"></span>
+    <span class="sk" style="width:88%;height:30px"></span>
+    <span class="sk" style="width:88%;height:30px"></span>
+    <span class="sk" style="width:88%;height:30px"></span>
+    <span class="sk" style="width:60%;height:12px;margin-top:14px"></span>
+    <span class="sk" style="width:92%;height:24px"></span>
+    <span class="sk" style="width:92%;height:24px"></span>
+    <span class="sk" style="width:92%;height:24px"></span>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <span class="sk" style="width:150px;height:22px"></span>
+      <span class="sk" style="width:220px;height:14px"></span>
+      <span class="sk" style="margin-left:auto;width:260px;height:36px;border-radius:9px"></span>
+      <span class="sk" style="width:150px;height:30px;border-radius:99px"></span>
+      <span class="sk" style="width:38px;height:38px;border-radius:9px"></span>
+      <span class="sk" style="width:38px;height:38px;border-radius:9px"></span>
+    </div>
+    <div class="tape">
+      <span class="sk" style="width:120px;height:14px"></span><span class="sk" style="width:120px;height:14px"></span>
+      <span class="sk" style="width:120px;height:14px"></span><span class="sk" style="width:120px;height:14px"></span>
+      <span class="sk" style="width:120px;height:14px"></span><span class="sk" style="width:120px;height:14px"></span>
+    </div>
+    <div class="content">
+      <div class="kpis">
+        <div class="card hero"><span class="sk" style="width:90px;height:12px"></span><span class="sk" style="width:210px;height:38px"></span><span class="sk" style="width:160px;height:14px"></span><span class="sk" style="width:100%;height:54px;margin-top:auto"></span></div>
+        <div class="card"><span class="sk" style="width:80px;height:12px"></span><span class="sk" style="width:130px;height:26px"></span></div>
+        <div class="card"><span class="sk" style="width:80px;height:12px"></span><span class="sk" style="width:130px;height:26px"></span></div>
+        <div class="card"><span class="sk" style="width:80px;height:12px"></span><span class="sk" style="width:130px;height:26px"></span></div>
+        <div class="card"><span class="sk" style="width:80px;height:12px"></span><span class="sk" style="width:130px;height:26px"></span></div>
+      </div>
+      <div class="row">
+        <div class="card"><span class="sk" style="width:140px;height:14px"></span><span class="sk" style="width:100%;height:220px"></span></div>
+        <div class="card"><span class="sk" style="width:110px;height:14px"></span><span class="sk" style="width:160px;height:160px;border-radius:50%;margin:14px auto"></span></div>
+      </div>
+      <div class="card">
+        <span class="sk" style="width:100px;height:14px"></span>
+        <span class="sk" style="width:100%;height:44px"></span><span class="sk" style="width:100%;height:44px"></span>
+        <span class="sk" style="width:100%;height:44px"></span><span class="sk" style="width:100%;height:44px"></span>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+/* size our iframe to the viewport like app.js does, so the skeleton owns the
+   exact same footprint the real shell will take over */
+try{
+  var fe=window.frameElement;
+  if(fe){fe.style.height=window.parent.innerHeight+'px';fe.style.width='100%';}
+}catch(e){}
+</script>
+</body></html>

@@ -1,0 +1,16 @@
+# Codacy Configuration
+# https://docs.codacy.com/repositories-configure/codacy-configuration-file/
+
+# Exclude paths from analysis
+exclude_paths:
+  # Development/admin scripts - don't run in production, no user input
+  - "scripts/**"
+  - "examples/**"
+  - "docs/**"
+  - "sql/**"
+  - "Synk/**"
+  - "supabase/**"
+  - "test-reports/**"
+  - "test-results/**"
+  - "tests/**"
+

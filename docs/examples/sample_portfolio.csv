@@ -1,0 +1,6 @@
+Symbol,Trade Date,Purchase Price,Quantity,Commission,Comment,Date,Time,Current Price
+AAPL,20260213,184.25,40,1.25,opening position,2026/05/20,16:00 EDT,195.10
+AAPL,20260408,201.60,25,1.25,added on dip,2026/05/20,16:00 EDT,195.10
+VOO,20260220,505.10,12,0.00,IBKR core sleeve,2026/05/20,16:00 EDT,518.44
+GLD,20260305,214.80,30,1.25,IBKR ballast,2026/05/20,16:00 EDT,221.05
+MSFT,,,,,watchlist only - no position,2026/05/20,16:00 EDT,436.90

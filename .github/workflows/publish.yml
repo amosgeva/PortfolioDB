@@ -1,0 +1,123 @@
+name: Publish image
+
+# Users should pull, not build. This publishes the shared application image to
+# GitHub Container Registry so `docker compose up -d` needs no toolchain.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# Third-party actions below are pinned to full commit SHAs, with the release
+# they correspond to in a trailing comment. A tag like @v3 is mutable: this job
+# can push to the registry, so an action that silently changed under a moved tag
+# could push whatever it liked. Update a pin by bumping the SHA *and* the
+# comment together. GitHub-owned actions/* are left on tags.
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false          # never abandon a half-pushed manifest
+
+jobs:
+  # Gate: the same CI workflow users see on pull requests, called rather than
+  # copied, so a green badge and a published tag mean the same thing.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # QEMU only for the arm64 leg: a sizeable share of self-hosters run a
+      # Raspberry Pi, an ARM NAS, or Apple silicon, and shipping amd64 only
+      # would quietly exclude them.
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3.7.0
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # no extra secret needed
+
+      # Lower-cases the owner: GHCR rejects capitals in a repository name, and
+      # github.repository_owner preserves them.
+      - name: Resolve image name and build stamp
+        id: img
+        run: |
+          echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/portfoliodb" >> "$GITHUB_OUTPUT"
+          # Baked into the image so the dashboard and MCP responses can report
+          # which build they are, instead of "unknown".
+          echo "stamp=${GITHUB_REF_NAME}@${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
+        id: meta
+        with:
+          images: ${{ steps.img.outputs.name }}
+          # latest tracks main; vX.Y.Z tags also publish vX.Y and vX for users
+          # who want to float on a minor line. Every build gets its SHA.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=PortfolioDB
+            org.opencontainers.image.description=Append-only, lot-based personal portfolio ledger on Postgres
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            PORTFOLIODB_VERSION=${{ steps.img.outputs.stamp }}
+          tags: ${{ steps.meta.outputs.tags }}
+          # image.source is what links the package to this repository on GitHub,
+          # which is also what lets the package inherit a sensible landing page.
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false            # keeps the manifest list simple to inspect
+
+      # This is the arm64 safety net. The arm64 leg cannot be tested on an
+      # unprivileged LXC (registering a binfmt handler needs privileges the
+      # container does not have), so instead of trusting it, the workflow
+      # refuses to call a publish successful unless both architectures actually
+      # landed in the manifest.
+      - name: Verify both architectures are in the manifest
+        run: |
+          set -euo pipefail
+          tag=$(printf '%s\n' "${{ steps.meta.outputs.tags }}" | head -1)
+          echo "inspecting $tag"
+          docker buildx imagetools inspect "$tag" | tee /tmp/manifest.txt
+          grep -q 'linux/amd64' /tmp/manifest.txt
+          grep -q 'linux/arm64' /tmp/manifest.txt
+          echo "both architectures present"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published"
+            echo ''
+            echo '```'
+            printf '%s\n' "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ''
+            echo 'First publish only: make the package public in'
+            echo '**Packages → portfoliodb → Package settings → Change visibility**,'
+            echo 'otherwise `docker pull` asks strangers for credentials.'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Callable so publish.yml can gate on a real test run instead of repeating
+  # these steps and drifting from them.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed on the calling workflow too: a publish run must not cancel the CI run
+  # for the same ref (they share github.ref).
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The fast suites need no database: everything DB-touching is either stubbed
+  # or guarded by a skip. Proving that on a runner with no Postgres is the point
+  # — it is what keeps `make test` working on a fresh install.
+  tests:
+    name: Test suites (no database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt pytest
+
+      - name: Engines, settings, market window (from app/)
+        working-directory: app
+        run: python -m pytest tests/ -q
+
+      # From the repo root, NOT app/: on the path as app/, the local app/mcp/
+      # package shadows the installed `mcp` SDK that fastmcp imports.
+      #
+      # Also a separate step from the slow suite below, deliberately: running
+      # both in one pytest process fails four reconciliation tests through
+      # cross-test state. Two invocations, no interference.
+      - name: MCP suite (fast)
+        run: python -m pytest app/mcp/tests/ -m "not slow" -q
+
+  # The reconciliation suite runs the real services against a real database, so
+  # it gets one: schema, migrations, and the fictional demo ledger.
+  reconciliation:
+    name: Reconciliation (live database)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: portfoliodb
+          POSTGRES_USER: portfoliouser
+          POSTGRES_PASSWORD: ci-not-a-secret
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U portfoliouser -d portfoliodb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PORTFOLIODB_HOST: 127.0.0.1
+      PORTFOLIODB_PORT: '5432'
+      PORTFOLIODB_DB: portfoliodb
+      PORTFOLIODB_USER: portfoliouser
+      PORTFOLIODB_PASSWORD: ci-not-a-secret
+      # Pin the reporting timezone so day-bucketing is deterministic whatever
+      # the runner's clock is set to.
+      PORTFOLIODB_TZ: UTC
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt pytest
+
+      - name: Apply schema and migrations
+        run: |
+          psql -q -f sql/schema.sql
+          psql -q -f sql/schema_fd.sql
+          for f in sql/migrations/*.sql; do echo "applying $f"; psql -q -f "$f"; done
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGDATABASE: portfoliodb
+          PGUSER: portfoliouser
+          PGPASSWORD: ci-not-a-secret
+
+      - name: Seed the fictional demo ledger
+        run: python app/demo_seed.py --yes
+
+      - name: Reconciliation suite
+        run: python -m pytest app/mcp/tests/ -m slow -q

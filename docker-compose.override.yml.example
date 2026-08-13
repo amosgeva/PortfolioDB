@@ -1,0 +1,24 @@
+# Copy to docker-compose.override.yml (gitignored) for anything specific to
+# your machine. Compose merges it over docker-compose.yml automatically, so you
+# never have to edit the committed file and fight it on every `git pull`.
+#
+# Two common cases:
+
+services:
+  postgres:
+    volumes:
+      # Keep the database in a directory you can see and back up with ordinary
+      # file tools instead of the default `pgdata` named volume. This is also
+      # the migration path for installs that predate the named volume: point
+      # this at the directory you already have.
+      #
+      # Careful: Postgres owns everything under it. Do not edit or move files
+      # in there while the container is running.
+      - ./data:/var/lib/postgresql/data
+
+  dashboard:
+    # Publish on a different host port, or bind to localhost only so the
+    # dashboard is not reachable from the LAN (it has no authentication —
+    # see the exposure notes in the README).
+    ports:
+      - "127.0.0.1:8501:8501"

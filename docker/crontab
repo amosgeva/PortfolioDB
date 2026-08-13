@@ -1,0 +1,23 @@
+# PortfolioDB scheduled jobs, run by supercronic in the `scheduler` service.
+#
+# Times are in the container's TZ (PORTFOLIODB_TZ, default UTC). Every job is
+# safe to run more often than needed:
+#
+#   * snapshot_prices.py exits immediately outside the configured market window
+#     (app/market_window.py — set it from the Settings page), so the every-5-
+#     minutes tick below does not need to know the window. Change the window in
+#     one place, not here.
+#   * advisor.py brief and fd_weekly_enrichment.py no-op or degrade cleanly
+#     without their API keys, so an install without keys logs and moves on.
+#
+# Working directory is /app/app so the bare imports resolve the way they do on
+# a host; supercronic logs each run's output to the container's stdout.
+
+# Price snapshots — every 5 minutes; the Python guard decides whether to work.
+*/5 * * * *   cd /app/app && python snapshot_prices.py
+
+# Daily advisor brief, 07:00 on weekdays.
+0 7 * * 1-5   cd /app/app && python advisor.py brief --kind morning
+
+# Weekly fundamentals enrichment, Saturday 06:00 (cache-first, cheap).
+0 6 * * 6     cd /app/app && python fd_weekly_enrichment.py --profile weekly

@@ -1,0 +1,5 @@
+# Serve app/static/ at /app/static/ — used for the PWA manifest + icon that
+# the dashboard injects into the page head (see brandParentPage in
+# streamlit_app.py). Theme env vars in run_dashboard.ps1 still apply.
+[server]
+enableStaticServing = true

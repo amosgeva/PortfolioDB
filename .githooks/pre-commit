@@ -1,0 +1,62 @@
+#!/bin/sh
+# PortfolioDB pre-commit checks. Enable with:
+#     git config core.hooksPath .githooks
+#
+# 1. Unused imports on staged Python files — the F401 case Codacy gates on,
+#    which has twice failed CI after the work was already pushed.
+# 2. Both test suites.
+#
+# Bypass with `git commit --no-verify` when committing work in progress.
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+python=$(command -v python || command -v python3)
+if [ -z "$python" ]; then
+    echo "pre-commit: no python on PATH, skipping checks" >&2
+    exit 0
+fi
+
+# ---------- 1. unused imports on staged files ----------
+# Added/Copied/Modified only: a deleted file has nothing to lint.
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if [ -n "$staged" ]; then
+    # shellcheck disable=SC2086
+    if ! "$python" .githooks/check_unused_imports.py $staged; then
+        echo "pre-commit: unused imports (see above)" >&2
+        exit 1
+    fi
+fi
+
+# ---------- 2. test suites ----------
+# `-m "not slow"` skips the live-database reconciliation suite: the hook must
+# stay fast and must not fail merely because Postgres is down. Run it with
+#     pytest app/mcp/tests/ -m slow
+# The two suites need DIFFERENT working directories (see CLAUDE.md): the MCP
+# suite imports `app.mcp...` and must run from the repo root, while the FIFO
+# suite imports bare modules and must run from app/. Running the MCP suite from
+# app/ puts the local app/mcp/ package on the path as top-level `mcp`, shadowing
+# the official SDK that fastmcp needs.
+#
+# Output is captured rather than piped: `pytest | tail` would report tail's exit
+# status, so a failing suite would sail straight through the hook.
+
+echo "pre-commit: app/mcp/tests"
+if ! out=$("$python" -m pytest app/mcp/tests/ -q --no-header -m "not slow" 2>&1); then
+    echo "$out" | tail -25
+    echo "pre-commit: MCP suite failed" >&2
+    exit 1
+fi
+echo "$out" | tail -1
+
+echo "pre-commit: app/tests"
+if ! out=$(cd app && "$python" -m pytest tests/ -q --no-header 2>&1); then
+    echo "$out" | tail -25
+    echo "pre-commit: app suite failed" >&2
+    exit 1
+fi
+echo "$out" | tail -1
+
+echo "pre-commit: ok"

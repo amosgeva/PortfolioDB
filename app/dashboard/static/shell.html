@@ -1,0 +1,311 @@
+
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<script>
+/* set theme before first paint to avoid a light-mode flash */
+try{var _t=localStorage.getItem('pdb_theme')||
+  (window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  document.documentElement.setAttribute('data-theme',_t);}catch(e){}
+</script>
+<style>__CSS__</style></head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail__brand">
+      <span class="rail__logo">__SVG_LOGO__</span>
+      <span><div class="rail__name">Portfolio<b>DB</b></div><div class="rail__tag">Live markets</div></span>
+    </div>
+    <div class="rail__sect">
+      <div class="rail__label">Workspace</div>
+      <nav class="nav">
+        <a data-view="portfolio" class="is-active" tabindex="0" aria-current="page">__SVG_GRID__ Portfolio</a>
+        <a data-view="movers" tabindex="0">__SVG_TREND__ Market Movers</a>
+        <a data-view="stats" tabindex="0">__SVG_STATS__ Statistics</a>
+        <a data-view="alerts" tabindex="0">__SVG_BELL__ Alerts &amp; News <span class="badge">0</span></a>
+        <a data-view="fundamentals" tabindex="0">__SVG_BOOK__ Fundamentals</a>
+        <a data-view="history" tabindex="0">__SVG_CLOCK__ History</a>
+      </nav>
+    </div>
+    <div class="rail__sect">
+      <div class="rail__label">Account</div>
+      <nav class="nav">
+        <a data-nav="manage" tabindex="0">__SVG_SLIDERS__ Manage</a>
+        <a data-nav="advisor" tabindex="0">__SVG_SPARK__ Advisor</a>
+        <a data-nav="health" tabindex="0">__SVG_PULSE__ Data Health</a>
+      </nav>
+    </div>
+    <div class="rail__div"></div>
+    <div class="rail__sect">
+      <div class="rail__label">Watchlist</div>
+      <div class="wl" data-watchlist></div>
+    </div>
+    <div class="rail__foot">
+      <span class="avatar">__USER_INITIALS__</span>
+      <span class="rail__user"><b>__USER_NAME__</b><span>Growth portfolio</span></span>
+    </div>
+  </aside>
+  <div class="scrim"></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button class="iconbtn menu-btn" aria-label="Menu">__SVG_MENU__</button>
+      <div class="topbar__title"><h1 data-title>Portfolio</h1><p data-subtitle>Real-time overview of your holdings</p></div>
+      <label class="search"><span>__SVG_SEARCH__</span><input type="search" data-global-search placeholder="Jump to anything…  Ctrl+K" readonly aria-label="Open command palette"/></label>
+      <span class="snap-pill" data-snap title="Last price snapshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span data-snap-text>—</span></span>
+      <span class="mkt-pill"><span class="dot"></span><span class="lbl">Live</span> · <span class="t" data-clock>—</span></span>
+      <button class="iconbtn" data-theme-toggle title="Toggle light / dark" aria-label="Toggle color theme"></button>
+      <button class="iconbtn is-on" data-refresh title="Refresh data">__SVG_REFRESH__</button>
+    </header>
+
+    <div class="tape"><div class="tape__track" data-tape></div></div>
+
+    <div class="content">
+      <!-- ===== PORTFOLIO ===== -->
+      <section class="view is-active" data-view-pane="portfolio">
+        <section class="kpis">
+          <div class="card kpi kpi--hero">
+            <div class="kpi__label">Total value</div>
+            <div class="kpi__val" id="kpi-total">—</div>
+            <div class="kpi__sub" id="kpi-total-sub"></div>
+            <div class="kpi__story" id="kpi-story"></div>
+            <div class="kpi__spark" id="kpi-hero-spark"></div>
+          </div>
+          <div class="card kpi"><div class="kpi__label">Market value</div><div class="kpi__val" id="kpi-mktval">—</div><div class="kpi__sub"><span style="color:var(--muted)">Positions at market price</span></div></div>
+          <div class="card kpi"><div class="kpi__label">Unrealized P&amp;L</div><div class="kpi__val" id="kpi-gl">—</div><div class="kpi__sub" id="kpi-gl-sub"></div></div>
+          <div class="card kpi"><div class="kpi__label">Buying power</div><div class="kpi__val" id="kpi-cash">—</div><div class="kpi__sub"><span style="color:var(--muted)">Settled cash · ready to invest</span></div></div>
+          <div class="card kpi"><div class="kpi__label">Realized P&amp;L</div><div class="kpi__val" id="kpi-realized">—</div><div class="kpi__sub"><span style="color:var(--muted)">Closed positions</span></div></div>
+          <div class="card kpi"><div class="kpi__label">Total return</div><div class="kpi__val" id="kpi-return">—</div><div class="kpi__sub"><span style="color:var(--muted)">Realized + unrealized</span></div></div>
+          <div class="card kpi"><div class="kpi__label">Cost basis</div><div class="kpi__val" id="kpi-cost">—</div><div class="kpi__sub" id="kpi-cost-sub"></div></div>
+          <div class="card kpi"><div class="kpi__label">Δ last snapshot</div><div class="kpi__val" id="kpi-delta">—</div><div class="kpi__sub" id="kpi-delta-sub"></div></div>
+          <div class="card kpi"><div class="kpi__label">Dividends</div><div class="kpi__val" id="kpi-div">—</div><div class="kpi__sub" id="kpi-div-sub"></div></div>
+        </section>
+        <section class="card" id="returns-card">
+          <div class="card__hd"><h2>Returns</h2><span class="sub" id="returns-sub">vs SPY</span></div>
+          <div class="card__bd"><div id="returns-strip"></div></div>
+        </section>
+        <section class="row2">
+          <div class="card">
+            <div class="card__hd"><h2>Portfolio value</h2><span class="sub">snapshot history</span>
+              <span style="margin-left:auto;display:flex;gap:6px" id="pv-chips">
+                <button class="chip is-active" data-range="1D">1D</button>
+                <button class="chip" data-range="1W">1W</button>
+                <button class="chip" data-range="1M">1M</button>
+                <button class="chip" data-range="1Y">1Y</button>
+              </span>
+            </div>
+            <div class="card__bd"><div id="pv-chart"></div></div>
+          </div>
+          <div class="card"><div class="card__hd"><h2>Allocation</h2>
+            <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center" id="alloc-chips">
+              <button class="chip is-active" data-dim="position">Position</button>
+              <button class="chip" data-dim="sector">Sector</button>
+              <button class="chip" data-dim="asset_class">Asset</button>
+              <button class="chip" data-dim="currency">Currency</button>
+              <button class="chip" data-dim="region">Region</button>
+              <span style="width:1px;height:18px;background:var(--border-2)"></span>
+              <span id="alloc-mode" style="display:flex;gap:6px">
+                <button class="chip is-active" data-mode="donut">Donut</button>
+                <button class="chip" data-mode="map">Map</button>
+              </span>
+            </span></div><div class="card__bd"><div id="alloc"></div></div></div>
+        </section>
+        <section class="row2">
+          <div class="card">
+            <div class="card__hd"><h2>P&amp;L attribution</h2><span class="sub">which holdings drive the move</span>
+              <span style="margin-left:auto;display:flex;gap:6px" id="attr-chips">
+                <button class="chip is-active" data-attr="day">Day</button>
+                <button class="chip" data-attr="total">Total</button>
+              </span>
+            </div>
+            <div class="card__bd"><div id="attr-chart"></div></div>
+          </div>
+          <div class="card">
+            <div class="card__hd"><h2>Net P&amp;L waterfall</h2><span class="sub">unrealized + realized + dividends − fees</span></div>
+            <div class="card__bd"><div id="waterfall"></div></div>
+          </div>
+        </section>
+        <section class="card" style="margin-bottom:20px">
+          <div class="card__hd"><h2>Risk &amp; analytics</h2><span class="sub" id="risk-sub">1Y daily closes · SPY benchmark</span></div>
+          <div class="card__bd" id="risk-body">
+            <div class="stat-row" id="risk-stats" style="flex-wrap:wrap"></div>
+            <div class="row2" style="margin-bottom:0">
+              <div class="tbl-wrap"><table class="tbl"><thead><tr>
+                <th style="text-align:left">Symbol</th><th>Weight</th><th>Beta</th><th>Vol (ann.)</th><th>Sharpe</th>
+              </tr></thead><tbody id="risk-tbl"></tbody></table></div>
+              <div id="risk-corr"></div>
+            </div>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card__hd"><h2>Holdings</h2><span class="sub" id="holdings-sub">click a column to sort</span>
+            <button class="btn btn--ghost" id="pos-csv" style="margin-left:auto">Export CSV</button></div>
+          <div class="tbl-wrap holdings-wrap"><table class="tbl" id="holdings-tbl"><thead><tr>
+            <th data-key="sym" scope="col" tabindex="0">Symbol <span class="arrow"></span></th>
+            <th data-key="price" scope="col" tabindex="0">Price <span class="arrow"></span></th>
+            <th data-key="dayPct" scope="col" tabindex="0">Day <span class="arrow"></span></th>
+            <th data-key="qty" scope="col" tabindex="0">Qty <span class="arrow"></span></th>
+            <th data-key="mktVal" scope="col" tabindex="0">Mkt value <span class="arrow"></span></th>
+            <th data-key="avgCost" scope="col" tabindex="0">Avg cost <span class="arrow"></span></th>
+            <th data-key="gl" scope="col" tabindex="0">Total G / L <span class="arrow"></span></th>
+            <th scope="col">Trend</th>
+          </tr></thead><tbody id="holdings"></tbody></table></div>
+          <div class="hcards" id="holdings-cards"></div>
+        </section>
+
+        <section class="card" style="margin-top:20px">
+          <div class="card__hd"><h2>Price history</h2><span class="sub">per holding · your trades marked</span>
+            <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <select id="ph-symbol" class="chip" style="cursor:pointer"></select>
+              <label class="chip" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="ph-spy" style="margin:0;accent-color:var(--accent)"/> SPY</label>
+              <span style="display:flex;gap:6px" id="ph-chips">
+                <button class="chip" data-phr="1M">1M</button>
+                <button class="chip is-active" data-phr="3M">3M</button>
+                <button class="chip" data-phr="1Y">1Y</button>
+                <button class="chip" data-phr="ALL">ALL</button>
+              </span>
+            </span>
+          </div>
+          <div class="card__bd"><div id="ph-chart"></div></div>
+        </section>
+
+        <section class="card" style="margin-top:20px">
+          <div class="card__hd"><h2>Latest prices</h2><span class="sub" id="lp-sub"></span></div>
+          <div class="tbl-wrap"><table class="tbl"><thead><tr>
+            <th>Symbol</th><th>Last</th><th>Bid</th><th>Ask</th><th>Source</th><th>As of</th>
+          </tr></thead><tbody id="latest-prices"></tbody></table></div>
+        </section>
+      </section>
+
+      <!-- ===== MOVERS ===== -->
+      <section class="view" data-view-pane="movers">
+        <section class="card" style="margin-bottom:20px">
+          <div class="card__hd"><h2>Market breadth</h2><span class="sub" id="breadth-sub">advancers vs decliners</span>
+            <span class="sub" style="margin-left:auto">As of <b data-asof>—</b></span></div>
+          <div class="card__bd"><div id="breadth-bar" style="margin-bottom:10px"></div>
+            <div id="breadth-legend" style="display:flex;gap:18px;font-size:12.5px;font-family:var(--mono)"></div></div>
+        </section>
+        <section class="row2" style="grid-template-columns:1fr 1fr">
+          <div class="card"><div class="card__hd"><span style="width:8px;height:8px;border-radius:50%;background:var(--up)"></span><h2>Top gainers</h2></div>
+            <div class="card__bd" style="padding:8px 14px"><div class="mvlist" id="gainers"></div></div></div>
+          <div class="card"><div class="card__hd"><span style="width:8px;height:8px;border-radius:50%;background:var(--down)"></span><h2>Top losers</h2></div>
+            <div class="card__bd" style="padding:8px 14px"><div class="mvlist" id="losers"></div></div></div>
+        </section>
+        <section class="card">
+          <div class="card__hd"><h2>Sector heatmap</h2><span class="sub">tile color = day change</span>
+            <label class="search" style="margin-left:auto;width:220px"><span>__SVG_SEARCH__</span><input type="search" id="mv-search" placeholder="Filter symbols…"/></label></div>
+          <div class="card__bd"><div class="toolbar" id="sector-chips"></div><div class="heat" id="heat"></div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:16px;font-size:11px;color:var(--muted)">
+              <span>−3%+</span><span style="flex:0 0 220px;height:8px;border-radius:99px;background:linear-gradient(90deg,oklch(44% .18 26),oklch(72% .015 260),oklch(44% .18 152))"></span><span>+3%+</span>
+            </div></div>
+        </section>
+      </section>
+
+
+      <!-- ===== STATISTICS ===== -->
+      <section class="view" data-view-pane="stats">
+        <section class="card" style="margin-bottom:20px">
+          <div class="card__hd"><h2>Records</h2>
+            <span class="sub" id="st-basis">time-weighted, contributions neutralised</span>
+            <span class="sub" style="margin-left:auto" id="st-coverage"></span></div>
+          <div class="card__bd"><div class="recs" id="st-recs"></div></div>
+        </section>
+
+        <section class="card" style="margin-bottom:20px">
+          <div class="card__hd"><h2>Monthly returns</h2>
+            <span class="sub">shaded by size &middot; hatched = partial period</span></div>
+          <div class="card__bd"><div class="stbl-wrap"><table class="stbl" id="st-months"></table></div></div>
+        </section>
+
+        <section class="row2" style="grid-template-columns:1fr 1fr">
+          <div class="card"><div class="card__hd"><h2>Consistency</h2>
+            <span class="sub">share of periods that finished up</span></div>
+            <div class="card__bd"><div id="st-hit"></div></div></div>
+          <div class="card"><div class="card__hd"><h2>Streaks</h2>
+            <span class="sub">consecutive up or down days</span></div>
+            <div class="card__bd"><div id="st-streaks"></div></div></div>
+        </section>
+      </section>
+
+      <!-- ===== ALERTS ===== -->
+      <section class="view" data-view-pane="alerts">
+        <div class="alerts-grid">
+          <div>
+            <div class="stat-row">
+              <div class="card stat-mini"><div class="v" id="unread-count">0</div><div class="l">Unread</div></div>
+              <div class="card stat-mini"><div class="v" id="armed-count">0</div><div class="l">Armed alerts</div></div>
+            </div>
+            <div class="card"><div class="card__hd"><h2>Create price alert</h2></div>
+              <div class="card__bd">
+                <form id="alert-form" novalidate>
+                  <div class="field"><label for="a-sym">Symbol</label>
+                    <input id="a-sym" class="mono-in" type="text" placeholder="e.g. NVDA" autocomplete="off" maxlength="6" aria-describedby="a-sym-err"/>
+                    <div class="err" id="a-sym-err" role="alert"></div>
+                    <div style="font-size:11.5px;color:var(--muted);margin-top:-8px" id="a-hint"></div></div>
+                  <div class="field-row">
+                    <div class="field"><label for="a-cond">Condition</label>
+                      <select id="a-cond"><option value="above">Rises above</option><option value="below">Falls below</option></select></div>
+                    <div class="field"><label for="a-price">Target price</label>
+                      <input id="a-price" class="mono-in" type="number" step="0.01" min="0" placeholder="0.00" aria-describedby="a-price-err"/>
+                      <div class="err" id="a-price-err" role="alert"></div></div>
+                  </div>
+                  <button class="btn" type="submit" style="width:100%">Arm alert</button>
+                </form>
+                <p style="font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.5">
+                  Alerts are checked against the latest snapshot price the moment you arm them. Refresh to re-evaluate against new prices.</p>
+              </div></div>
+          </div>
+          <div class="card"><div class="card__hd"><h2>Activity</h2>
+            <div class="toolbar" style="margin:0 0 0 auto">
+              <button class="chip is-active" data-filter="all">All</button>
+              <button class="chip" data-filter="triggered">Triggered</button>
+              <button class="chip" data-filter="armed">Armed</button>
+              <button class="chip" data-filter="news">News</button>
+              <button class="btn btn--ghost" id="mark-all">Mark all read</button></div></div>
+            <div class="feed" id="feed"></div></div>
+        </div>
+      </section>
+
+      <!-- ===== FUNDAMENTALS ===== -->
+      <section class="view" data-view-pane="fundamentals">
+        <div class="toolbar">
+          <span style="font-size:13px;font-weight:600;color:var(--fg-soft)">Symbol</span>
+          <select id="fd-symbol" class="chip" style="min-width:120px;cursor:pointer"></select>
+          <span class="spacer"></span>
+          <span class="sub" id="fd-asof" style="font-size:11.5px;color:var(--muted)"></span>
+        </div>
+        <div id="fd-body"></div>
+      </section>
+
+      <!-- ===== HISTORY ===== -->
+      <section class="view" data-view-pane="history">
+        <div id="history-body"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<nav class="tabbar" aria-label="Primary">
+  <button data-tab="portfolio" class="is-active">__SVG_GRID__<span>Portfolio</span></button>
+  <button data-tab="movers">__SVG_TREND__<span>Movers</span></button>
+  <button data-tab="alerts">__SVG_BELL__<span>Alerts</span></button>
+  <button data-tab="fundamentals">__SVG_BOOK__<span>Fund.</span></button>
+  <button data-tab="history">__SVG_CLOCK__<span>History</span></button>
+</nav>
+
+<div class="drawer-scrim" data-drawer-scrim></div>
+<aside class="drawer" data-drawer role="dialog" aria-modal="true" aria-label="Symbol details" tabindex="-1">
+  <div class="drawer__hd" data-drawer-hd></div>
+  <div class="drawer__bd" data-drawer-bd></div>
+  <div class="drawer__foot" data-drawer-foot></div>
+</aside>
+
+<div class="cmdk" data-cmdk>
+  <div class="cmdk__panel" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk__in">__SVG_SEARCH__<input data-cmdk-input type="text" placeholder="Jump to a symbol, view, or action…" autocomplete="off" spellcheck="false"/></div>
+    <div class="cmdk__list" data-cmdk-list role="listbox"></div>
+    <div class="cmdk__hint"><span>↑↓ navigate</span><span>↵ select</span><span>esc close</span></div>
+  </div>
+</div>
+<script>const DATA = __DATA_JSON__;</script>
+<script>__APP_JS__</script>
+</body></html>

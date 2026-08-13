@@ -1,0 +1,31 @@
+# Overlay for working on the code: builds the application image locally instead
+# of pulling it from GHCR. Committed on purpose — contributors need it, and it
+# is not machine-specific (that is docker-compose.override.yml).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# `make build` and `make dev-up` apply it for you.
+#
+# `image:` is repeated so the locally built image gets a name that cannot be
+# confused with a published one — otherwise a later `docker compose pull` would
+# happily replace your build with the registry's.
+
+x-build: &build
+  build:
+    context: .
+    dockerfile: app/Dockerfile
+    args:
+      # `make build` passes the local short SHA, so a locally built image still
+      # reports what it is instead of "build unknown".
+      PORTFOLIODB_VERSION: ${PORTFOLIODB_VERSION:-dev}
+  image: portfoliodb-app:dev
+  pull_policy: never
+
+services:
+  dashboard:
+    <<: *build
+  scheduler:
+    <<: *build
+  mcp:
+    <<: *build

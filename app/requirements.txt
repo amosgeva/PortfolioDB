@@ -1,0 +1,14 @@
+psycopg2-binary>=2.9,<3
+pandas>=2.1,<4
+yfinance>=1.5,<2
+python-dotenv>=1.0,<2
+streamlit>=1.60,<2
+python-dateutil>=2.8,<3
+pytz>=2024.1
+plotly>=5.18,<7
+anthropic>=0.40,<1
+# OpenAI-compatible advisor path (OpenAI / OpenRouter / Ollama / LM Studio)
+openai>=1.50,<3
+# MCP server (app/mcp/)
+fastmcp>=3.3,<4
+uvicorn[standard]>=0.30,<1

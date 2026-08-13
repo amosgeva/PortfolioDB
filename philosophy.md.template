@@ -1,0 +1,67 @@
+# Investor One-Pager — [Your Name]
+
+> **STATUS: TEMPLATE.** Every bracketed section below is a placeholder. The
+> advisor detects this header and treats the document as absent, so filling it in
+> is what turns generic advice into advice that fits you.
+>
+> **The easy way:** paste the prompt in
+> [docs/investor-interview.md](docs/investor-interview.md) into any LLM, answer
+> its questions, and paste the result into **Advisor → 📝 Investor one-pager**.
+> Nothing to save on disk.
+>
+> **By hand:** fill this in and either paste it into that same box, or save it as
+> `philosophy.md` next to your `docker-compose.yml` (gitignored, mounted
+> read-only). Note that a mounted file is only re-read when the container
+> restarts if your editor replaced it rather than writing in place — pasting
+> avoids that entirely.
+>
+> **[docs/philosophy.md](docs/philosophy.md) explains what makes each section
+> usable**, the five ways this usually goes wrong, and shows a complete fictional
+> example.
+
+**Last updated:** [YYYY-MM-DD]
+**Operating base:** [city, residency, tax regime]
+
+---
+
+## North Star
+[2–4 sentences. The compounding-to-preservation arc. The asymmetric posture. The floor that keeps you sleeping at night. In your own voice, not generic advisor-speak.]
+
+---
+
+## Core Philosophy
+- **[Principle 1]** — [one short expansion]
+- **[Principle 2]** — [...]
+- **[Principle 3]** — [...]
+
+---
+
+## Time Horizon
+[How tactical / core / generational capital is separated. What rules apply where.]
+
+---
+
+## Mindset Rules
+1. [Pre-commitment to your future self — specific, executable under stress]
+2. ...
+3. ...
+
+---
+
+## Personal Nuances
+- **Tax:** [jurisdiction + relevant treatments — the AI can only reason about timing realisations if it knows your regime]
+- **Income & liquidity:** [monthly cash flow, whether you draw from the portfolio]
+- **Time budget:** [hours/week available for active management]
+- **Public-narrative blind spot:** [things you over-buy because you talk about them]
+- **Family:** [non-negotiable allocation constraints]
+
+---
+
+## Anti-Portfolio
+What you won't buy regardless of upside:
+- [bullet]
+- [bullet]
+
+---
+
+*Reviewed [cadence]. Material changes require [cooldown] before execution.*

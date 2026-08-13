@@ -1,0 +1,18 @@
+# Don't ship the Postgres data directory or local caches into the image.
+data/
+.git/
+# Secrets and personal context: the Dockerfile only COPYs app/, but keeping
+# these out of the build context means they can never be baked in by accident.
+.env
+philosophy.md
+cache/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+archive/
