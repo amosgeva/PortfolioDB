@@ -13,6 +13,36 @@ a computation change you should read before applying.
 
 Nothing yet.
 
+## [1.0.1] — 2026-08-13
+
+### Fixed
+
+- **CSV import could not record a sale.** `side` was hardcoded to `BUY`, so
+  importing a trade history recorded every sale as another purchase: open
+  quantity too high, realized P&L reported as zero, cost basis wrong — and
+  nothing errored. An optional **`Side`** column now carries `BUY`/`SELL`
+  (absent still means BUY, so holdings exports import unchanged), a negative
+  quantity is **refused rather than assumed to be a sale**, and the import
+  summary states the BUY/SELL split so a mismatch is visible immediately.
+  **If you imported a history containing sales before this, re-import it** —
+  the duplicate guard now includes `side`, so the missing sells will land.
+- **A failed database connection is now explained instead of dumped.** Stale
+  `PORTFOLIODB_MCP_RO_*` credentials took out the whole Data Health page with
+  psycopg2's raw text, container IP included. One explainer now serves both that
+  page and `/healthz`: it names the role, says how to fix it (`make ro-role`) and
+  how to opt out (clear both keys).
+- **The documented version pin was wrong.** The README and `docker-compose.yml`
+  told you to pin `:v1.0.0`, which does not exist — image tags carry no `v`. The
+  real tags are `1.0.0`, `1.0` and `1`.
+
+### Added
+
+- `server.json` and an `io.modelcontextprotocol.server.name` image label, so the
+  MCP server can be published to the MCP Server Registry. **This is the first
+  release whose image carries that label**; 1.0.0's does not.
+- A CSV mapping recipe in `docs/csv-import.md` for turning any broker export into
+  the expected columns, and a sample file that now demonstrates a partial sale.
+
 ## [1.0.0] — 2026-08-13
 
 First public release. Everything below already existed; this is the starting
@@ -57,5 +87,6 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.1
 [1.0.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.0
