@@ -1,0 +1,72 @@
+name: Bug report
+description: Something behaves differently than documented, or a number looks wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing this — a bug report from someone who actually ran the
+        thing is the most useful signal this project gets.
+
+        **Never paste your `.env`, a password, or a real account number.** If a
+        number looks wrong, the symbol and the figures are usually enough; if you
+        need to show a trade, invented quantities that reproduce it are fine.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+      placeholder: |
+        Ran `make schema` on a fresh install and got …
+        Expected the tables to be created.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran, in order. A copy-paste of the terminal is ideal.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >
+        `docker compose exec dashboard printenv PORTFOLIODB_APP_VERSION`, or the
+        image tag you pinned.
+      placeholder: main@e5333ac, or v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      description: The image is published for both; a bug in only one is worth knowing early.
+      options:
+        - linux/amd64
+        - linux/arm64
+        - not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Where does the database live?
+      description: >
+        The default is the `pgdata` named volume. A host directory is opt-in
+        through `docker-compose.override.yml`, and permissions behave differently
+        there — it changes what a fix looks like.
+      options:
+        - The default `pgdata` named volume
+        - A host directory (bind mount)
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: >
+        `make logs ARGS=dashboard` (or `scheduler`, `postgres`). Trim it to the
+        part that matters, and check it for anything private before pasting.
+      render: shell

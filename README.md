@@ -1,5 +1,9 @@
 # PortfolioDB
 
+[![CI](https://github.com/amosgeva/PortfolioDB/actions/workflows/ci.yml/badge.svg)](https://github.com/amosgeva/PortfolioDB/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![Container image](https://img.shields.io/badge/ghcr.io-portfoliodb-2496ed?logo=docker&logoColor=white)](https://github.com/amosgeva/PortfolioDB/pkgs/container/portfoliodb)
+
 **An append-only, lot-based portfolio ledger you own.** Postgres is the source of
 truth, FIFO and average-cost engines recompute everything on read, an optional
 advisor reads your written investment philosophy before it says anything, and an
@@ -121,24 +125,39 @@ docker compose run --rm dashboard python app/demo_seed.py --yes   # optional dem
 Open <http://localhost:8501>.
 
 With the Makefile those three become `make up`, `make schema`, `make demo-seed`,
-and `make` on its own lists every target.
+and `make` on its own lists every target. It also gives you a shortcut for step
+2 — `make init` generates the password, writes it to both keys, generates an MCP
+token and `chmod 600`s the file, so the whole install is:
+
+```bash
+mkdir portfoliodb && cd portfoliodb
+curl -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/docker-compose.yml
+curl -fsSL  https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/.env.template -o .env
+curl -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/Makefile
+make init && make up && make schema
+```
+
+`make init` is safe to re-run: it fills in only what is empty and never rotates a
+secret you already have. Set `PORTFOLIODB_TZ` and any LLM key by hand afterwards.
 
 To upgrade later: `docker compose pull && docker compose up -d` then
-`apply_schema.py` again (it is idempotent). Pin a version instead of tracking
-`latest` with `PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:v1.0.0` in `.env`.
+`apply_schema.py` again (it is idempotent). Read
+[CHANGELOG.md](CHANGELOG.md) first — it records anything that changes how a
+number is computed. Pin a version instead of tracking `latest` with
+`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:v1.0.0` in `.env`.
 
 <details>
 <summary>Prefer to clone, or want to work on the code?</summary>
 
 ```bash
 git clone https://github.com/amosgeva/PortfolioDB.git && cd PortfolioDB
-make init          # .env + philosophy.md, with a generated password and MCP token
+make init          # .env from the template, with a generated password + MCP token
 make up
 make schema
 ```
 
-`make init` does the `.env` copy, password generation and `chmod` for you — it
-is the only thing cloning buys you for a plain install.
+Cloning buys you the source, the tests and the dev overlay. It buys nothing for a
+plain install — `make init` works either way.
 
 To build the image from source instead of pulling it, use the committed dev
 overlay: `make build` then `make dev-up`.
@@ -178,6 +197,7 @@ safely.
 | [LLM providers](docs/llm-providers.md) | Anthropic / OpenAI / OpenRouter / local Ollama |
 | [Scheduling](docs/scheduling.md) | The jobs, the collector window, upgrading |
 | [Operations](docs/operations.md) | Backups, restore, upgrades, health checks |
+| [Changelog](CHANGELOG.md) | What changed, and whether an upgrade moves a number |
 | [Exposure](docs/exposure.md) | LAN-only defaults, tailnet, reverse proxies |
 | [CSV import](docs/csv-import.md) | Bulk-loading history from a broker export |
 | [Methodology](docs/methodology.md) | How trade quality and fee attribution are computed |
@@ -196,7 +216,7 @@ PortfolioDB/
 │   ├── streamlit_app.py       # Dashboard shell + embedded views
 │   ├── modern2_native.py      # Native views (Manage / Advisor / Data Health)
 │   ├── dashboard/             # Payload builder + static shell / js / css
-│   ├── advisor.py             # Claude-backed brief + chat
+│   ├── advisor.py             # Brief + chat (Anthropic/OpenAI/OpenRouter/Ollama)
 │   ├── exec_report.py         # Self-contained HTML executive report
 │   ├── portfolio.py           # FIFO/avg-cost merge (single source of truth for positions)
 │   ├── fifo.py / avg_cost.py  # Lot-matching engines (per-match fee attribution)
@@ -221,8 +241,8 @@ PortfolioDB/
 │   │   ├── tools/             # @mcp.tool registrations (47 tools)
 │   │   ├── resources/         # portfolio:// URIs (7 resources)
 │   │   ├── prompts/           # Pre-built analyses (7 prompts)
-│   │   └── tests/             # 285 tests incl. KPI parity + reconciliation
-│   └── tests/                 # 209 tests (engines, splits, TWR, XIRR, stats)
+│   │   └── tests/             # 286 tests incl. KPI parity + reconciliation
+│   └── tests/                 # 265 tests (engines, splits, TWR, XIRR, stats)
 ├── sql/
 │   ├── schema.sql             # Core tables: instruments, lots, price_snapshots,
 │   │                          # cash_snapshots, income, corporate_actions,
@@ -237,8 +257,8 @@ PortfolioDB/
 ├── .githooks/                 # Pre-commit: unused imports + both test suites
 ├── docs/
 │   ├── methodology.md         # How every number is computed — read before extending
-│   ├── migration-notes.md     # Behaviour changes, with before/after figures
-│   └── plan.md                # Scoped portfolio-review plan (complete)
+│   ├── philosophy.md          # Writing the one-pager the advisor reads
+│   └── investor-interview.md  # A prompt that interviews you and writes it
 ├── CLAUDE.md                  # Guidance for Claude Code working in this repo
 └── data/                      # Live Postgres data (gitignored — DO NOT EDIT)
 ```
@@ -425,11 +445,11 @@ local `app/mcp/` package on the path as top-level `mcp`, shadowing the official
 SDK that fastmcp needs.
 
 ```powershell
-# From repo root — 285 tests
-python -m pytest app\mcp\tests\ -m "not slow"   # 252, no database needed
+# From repo root — 286 tests
+python -m pytest app\mcp\tests\ -m "not slow"   # 253, no database needed
 python -m pytest app\mcp\tests\ -m slow          # 33, live Postgres, ~30s
 
-# From app/ — 209 tests (engines, splits, TWR, XIRR, period stats)
+# From app/ — 265 tests (engines, splits, TWR, XIRR, period stats)
 cd app; python -m pytest tests\
 ```
 

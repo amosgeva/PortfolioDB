@@ -388,13 +388,15 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "1M": _downsample_pairs(series_since(30)),
         "1Y": _downsample_pairs(series_since(365)),
     }
-    # Fall back to a fuller range if a narrow window has no points yet.
-    fallback = _downsample_pairs(series_since(None))
-    for k in ("1D", "1W", "1M"):
-        if len(pv[k]) < 2:
-            pv[k] = pv["1Y"] if len(pv["1Y"]) >= 2 else fallback
+    # A narrow window is left EMPTY when it has no points, never backfilled from a
+    # wider one. Substituting silently made the chart label lie: before the day's
+    # first snapshot — every morning, and all weekend, when the gap is ~64h — "1D"
+    # was drawing up to a year of history and reporting its change as the day's.
+    # The client picks the narrowest range that actually has data.
+    # 1Y is the one exception: it stands in for "everything", so an install whose
+    # history predates the window still has a chart to show.
     if len(pv["1Y"]) < 2:
-        pv["1Y"] = fallback
+        pv["1Y"] = _downsample_pairs(series_since(None))
 
     # --- ticker tape + rail watchlist symbols --------------------------
     held_syms = [h["sym"] for h in sorted(

@@ -10,6 +10,8 @@
 # CLI accepts works without teaching this file about it.
 
 COMPOSE ?= docker compose
+# Where `make init` tells you to fetch a missing .env.template from.
+RAW     := https://raw.githubusercontent.com/amosgeva/PortfolioDB/main
 # Building from source is the contributor path, so it needs the dev overlay.
 COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
 # One-shot container for CLIs: same image as the dashboard, removed after use.
@@ -31,34 +33,56 @@ help: ## Show this list
 
 # ── first run ────────────────────────────────────────────────────────────
 
-init: ## First-time setup: create .env + philosophy.md with generated secrets
-	@if [ -e .env ]; then \
-	  echo ".env already exists — leaving it alone."; \
-	else \
-	  cp .env.template .env; \
-	  pw=$$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | cut -c1-22); \
-	  tok=$$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | cut -c1-40); \
-	  sed -i.bak -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$$pw|" \
-	             -e "s|^PORTFOLIODB_PASSWORD=.*|PORTFOLIODB_PASSWORD=$$pw|" \
-	             -e "s|^PORTFOLIODB_MCP_TOKEN=.*|PORTFOLIODB_MCP_TOKEN=$$tok|" .env; \
-	  rm -f .env.bak; \
-	  chmod 600 .env; \
-	  echo "Created .env with a generated Postgres password and MCP token."; \
+init: ## First run: fill .env with generated secrets (safe to re-run)
+	@if [ ! -e .env ]; then \
+	  if [ -e .env.template ]; then \
+	    cp .env.template .env; \
+	    echo "Created .env from .env.template."; \
+	  else \
+	    echo "No .env here, and no .env.template to copy from."; \
+	    echo "Fetch one:"; \
+	    echo "  curl -fsSL $(RAW)/.env.template -o .env"; \
+	    exit 1; \
+	  fi; \
 	fi
-	@if [ -e philosophy.md ]; then \
-	  echo "philosophy.md already exists — leaving it alone."; \
+	@set -e; \
+	read_key() { sed -n "s/^$$1=//p" .env | head -1; }; \
+	gen() { head -c 48 /dev/urandom | base64 | tr -d '/+=' | cut -c1-"$$1"; }; \
+	write_key() { sed -i.bak -e "s|^$$1=.*|$$1=$$2|" .env; rm -f .env.bak; }; \
+	pg=$$(read_key POSTGRES_PASSWORD); app=$$(read_key PORTFOLIODB_PASSWORD); \
+	if [ -z "$$pg" ] && [ -z "$$app" ]; then \
+	  pw=$$(gen 22); write_key POSTGRES_PASSWORD "$$pw"; write_key PORTFOLIODB_PASSWORD "$$pw"; \
+	  echo "Generated a Postgres password and set both keys to it."; \
+	elif [ -z "$$app" ]; then \
+	  write_key PORTFOLIODB_PASSWORD "$$pg"; \
+	  echo "PORTFOLIODB_PASSWORD was empty — set it to match POSTGRES_PASSWORD."; \
+	elif [ -z "$$pg" ]; then \
+	  write_key POSTGRES_PASSWORD "$$app"; \
+	  echo "POSTGRES_PASSWORD was empty — set it to match PORTFOLIODB_PASSWORD."; \
+	elif [ "$$pg" != "$$app" ]; then \
+	  echo "WARNING: POSTGRES_PASSWORD and PORTFOLIODB_PASSWORD are different."; \
+	  echo "         Postgres will start and the app will fail to connect."; \
+	  echo "         Left both alone — make them equal by hand."; \
 	else \
-	  cp philosophy.md.template philosophy.md; \
-	  echo "Created philosophy.md from the template."; \
-	fi
+	  echo "Postgres password already set — left alone."; \
+	fi; \
+	if [ -z "$$(read_key PORTFOLIODB_MCP_TOKEN)" ]; then \
+	  write_key PORTFOLIODB_MCP_TOKEN "$$(gen 40)"; \
+	  echo "Generated an MCP token."; \
+	else \
+	  echo "MCP token already set — left alone."; \
+	fi; \
+	chmod 600 .env; \
+	echo "Tightened permissions on .env to 600."
 	@echo ""
 	@echo "Next:"
-	@echo "  1. (optional) put an LLM API key in .env    — see docs/llm-providers.md"
-	@echo "  2. (optional) write your investor one-pager   — paste it into the"
-	@echo "     dashboard's Advisor tab; see docs/philosophy.md"
-	@echo "  3. make up && make schema"
-	@echo "  4. make demo-seed   # fictional data to look at, skip for a real ledger"
-	@echo "  5. open http://localhost:8501"
+	@echo "  1. make up && make schema"
+	@echo "  2. make demo-seed   # fictional data to look at, skip for a real ledger"
+	@echo "  3. open http://localhost:8501"
+	@echo ""
+	@echo "  Optional: an LLM API key in .env enables the advisor"
+	@echo "            (docs/llm-providers.md), and your investor one-pager is"
+	@echo "            pasted into the dashboard's Advisor tab (docs/philosophy.md)."
 
 # ── stack ────────────────────────────────────────────────────────────────
 

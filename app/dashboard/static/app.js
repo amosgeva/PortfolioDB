@@ -324,6 +324,20 @@
     }
     return parts.join(', ') + (bench ? ' — ' + bench : '') + '.';
   }
+  // Built with DOM nodes rather than an innerHTML string: the percentage is our
+  // own arithmetic, but concatenating any value into markup is the habit that
+  // eventually ships an injection, so the label never becomes text-to-parse.
+  function sparkWindowLabel(series, up) {
+    var pct = series[0] ? ((series[series.length - 1] - series[0]) / series[0]) * 100 : 0;
+    var el = document.createElement('div');
+    el.className = 'kpi__spark-label';
+    el.appendChild(document.createTextNode('past month '));
+    var val = document.createElement('span');
+    val.className = up ? 'up' : 'down';
+    val.textContent = F.pct(pct);
+    el.appendChild(val);
+    return el;
+  }
   function renderKPIs() {
     var k = DATA.kpi || {};
     var signed = function (v) { return (v >= 0 ? '+' : '−') + F.money(Math.abs(v || 0)); };
@@ -332,8 +346,14 @@
     var story = $('#kpi-story'); if (story) story.textContent = narrative();
     var spark = $('#kpi-hero-spark');
     if (spark) {
+      // The number above this is *today*; the line is the past month, and it can
+      // legitimately fall while today rises. Label it, or the card reads as a
+      // contradiction — green delta over a red line with nothing explaining why.
       var pvm = ((DATA.pv || {})['1M'] || []).map(function (p) { return p[1]; });
       spark.innerHTML = pvm.length > 1 ? sparkSVG(pvm, pvm[pvm.length - 1] >= pvm[0], 600, 54) : '';
+      if (pvm.length > 1) {
+        spark.insertBefore(sparkWindowLabel(pvm, pvm[pvm.length - 1] >= pvm[0]), spark.firstChild);
+      }
     }
     $('#kpi-mktval').textContent = F.money(k.marketValue || 0);
     setKpi('kpi-gl', signed(k.unrealized), k.unrealized);
@@ -454,6 +474,25 @@
   }
   $all('#pv-chips [data-range]').forEach(function (b) { b.addEventListener('click', function () {
     pvRange = b.dataset.range; $all('#pv-chips .chip').forEach(function (c) { c.classList.toggle('is-active', c === b); }); renderPV(); }); });
+
+  // Ranges with no snapshots are disabled rather than silently drawn from a wider
+  // window, and the narrowest one that has data starts active — so the chip and
+  // the "+x%" beside it always describe the same series. Before the first
+  // snapshot of the day, and all weekend, 1D genuinely has nothing to show.
+  function initPVRange() {
+    var chips = $all('#pv-chips [data-range]');
+    var firstWithData = null;
+    chips.forEach(function (c) {
+      var has = (((DATA.pv || {})[c.dataset.range]) || []).length > 1;
+      c.disabled = !has;
+      c.title = has ? '' : 'No snapshots in this range yet';
+      if (has && !firstWithData) firstWithData = c;
+    });
+    if (firstWithData) {
+      pvRange = firstWithData.dataset.range;
+      chips.forEach(function (c) { c.classList.toggle('is-active', c === firstWithData); });
+    }
+  }
 
   // ---- allocation donut / treemap ----
   var allocDim = 'position', allocMode = 'donut';
@@ -1435,7 +1474,7 @@
 
   // ---- init ----
   brandParentPage();
-  renderKPIs(); renderReturns(); renderPV(); renderAlloc(); renderTable();
+  renderKPIs(); renderReturns(); initPVRange(); renderPV(); renderAlloc(); renderTable();
   renderAttribution(); renderWaterfall(); renderRisk();
   initPriceChart(); renderLatestPrices();
   renderMovers(); renderChips(); renderHeat(); renderBreadth();

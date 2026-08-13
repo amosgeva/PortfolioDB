@@ -1,0 +1,7 @@
+# Blank issues stay enabled on purpose: the README invites arguments about the
+# design, and a form is the wrong shape for "I think your FIFO scoping is wrong."
+blank_issues_enabled: true
+contact_links:
+  - name: Question, idea, or an argument about the design
+    url: https://github.com/amosgeva/PortfolioDB/issues/new
+    about: Open a plain issue — no template needed.
