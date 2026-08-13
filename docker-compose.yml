@@ -16,7 +16,8 @@
 # different commands).
 x-app-base: &app-base
   # Pin a version instead of latest if you'd rather upgrade deliberately:
-  #   PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:v1.0.0 in .env
+  #   PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.0.0 in .env
+  # (image tags have no `v`, unlike the git tag: 1.0.0, 1.0 and 1 all resolve)
   image: ${PORTFOLIODB_IMAGE:-ghcr.io/amosgeva/portfoliodb:latest}
   restart: unless-stopped
   # The whole .env reaches the container this way — LLM keys, the FD key, the

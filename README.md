@@ -144,7 +144,9 @@ To upgrade later: `docker compose pull && docker compose up -d` then
 `apply_schema.py` again (it is idempotent). Read
 [CHANGELOG.md](CHANGELOG.md) first — it records anything that changes how a
 number is computed. Pin a version instead of tracking `latest` with
-`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:v1.0.0` in `.env`.
+`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.0.0` in `.env`. Image tags carry
+no `v` even though the git tag and the release do — `1.0.0`, `1.0` and `1` all
+exist, and `1.0`/`1` float forward as patches land.
 
 <details>
 <summary>Prefer to clone, or want to work on the code?</summary>

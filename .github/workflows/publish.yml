@@ -63,8 +63,11 @@ jobs:
         id: meta
         with:
           images: ${{ steps.img.outputs.name }}
-          # latest tracks main; vX.Y.Z tags also publish vX.Y and vX for users
-          # who want to float on a minor line. Every build gets its SHA.
+          # latest tracks main; a vX.Y.Z git tag publishes X.Y.Z plus the floating
+          # X.Y and X. Note metadata-action strips the leading `v`, so the image
+          # tag is `1.0.0` while the git tag is `v1.0.0` — the docs say so, and
+          # they must keep saying so, because a pin that 404s breaks exactly the
+          # careful reader who pins. Every build also gets its SHA.
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
