@@ -68,6 +68,22 @@ jobs:
           fi
           echo "no literal test counts in public prose"
 
+      # Same failure as the test counts, one release later: a patch tag written by
+      # hand into prose. `:1.0.1` sat in the README as the "pin harder" example
+      # while 1.0.3 shipped the reviewed disclaimer — so a reader following our own
+      # advice literally got an image without it. The docs name the floating `:1.0`
+      # and point at the releases page for an exact build; CHANGELOG and
+      # server.json are exempt because there an exact version is the whole point.
+      - name: No hand-written patch pins in the docs or compose
+        run: |
+          if git grep -nE 'portfoliodb:[0-9]+\.[0-9]+\.[0-9]+' -- \
+               'README.md' 'docs/*.md' 'docker-compose*.yml' '.env.template' '.github' \
+               ':!docs/internal'; then
+            echo "::error::Name the floating :1.0 instead, or link the releases page."
+            exit 1
+          fi
+          echo "no hand-written patch pins outside CHANGELOG/server.json"
+
   # The reconciliation suite runs the real services against a real database, so
   # it gets one: schema, migrations, and the fictional demo ledger.
   reconciliation:

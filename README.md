@@ -184,11 +184,14 @@ secret you already have. Set `PORTFOLIODB_TZ` and any LLM key by hand afterwards
 To upgrade later: `docker compose pull && docker compose up -d` then
 `apply_schema.py` again (it is idempotent). Read
 [CHANGELOG.md](CHANGELOG.md) first — it records anything that changes how a
-number is computed. Pin a version instead of tracking `latest` with
-`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.0.1` in `.env`. The compose file
-already defaults to the floating `:1.0` rather than `:latest`. Image tags carry
-no `v` even though the git tag and the release do — `1.0.0`, `1.0` and `1` all
-exist, and `1.0`/`1` float forward as patches land.
+number is computed.
+
+The compose file already pins the minor line — `PORTFOLIODB_IMAGE` defaults to
+`ghcr.io/amosgeva/portfoliodb:1.0`, not `:latest`, so an upgrade brings patches
+and never a surprise major. To hold a single exact build instead, take the patch
+tag from the [release you want](https://github.com/amosgeva/PortfolioDB/releases)
+and set `PORTFOLIODB_IMAGE` to it. Note the image tags carry no `v` even though
+the git tags and releases do.
 
 <details>
 <summary>Prefer to clone, or want to work on the code?</summary>
