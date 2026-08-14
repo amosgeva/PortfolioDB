@@ -34,7 +34,7 @@ body:
       description: >
         `docker compose exec dashboard printenv PORTFOLIODB_APP_VERSION`, or the
         image tag you pinned.
-      placeholder: 1.0.1, or main@4edf6cb
+      placeholder: e.g. 1.0.x, or main@<short sha>
     validations:
       required: true
   - type: dropdown
