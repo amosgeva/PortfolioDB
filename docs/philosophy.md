@@ -1,7 +1,11 @@
 # Writing your one-pager
 
 The advisor reads two things: your ledger, and a short document you write about
-how you invest. The ledger it can compute — positions, cost basis, realized
+how you invest. Its job is narrow and worth stating before anything else: **it
+checks what you hold against rules you set for yourself.** It is not an adviser,
+it does not know anything about markets you have not given it, and the model
+answering is the one you configured — your key, or a local model on your own
+machine. The ledger it can compute — positions, cost basis, realized
 P&L, concentration, fees. The second one it cannot guess, and without it every
 observation it makes has to be hedged into uselessness.
 
