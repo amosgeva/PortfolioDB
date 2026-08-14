@@ -11,6 +11,10 @@ a computation change you should read before applying.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.1.1] — 2026-08-14
+
 ### Fixed
 
 - **The dashboard had two scrollbars.** An outer one with a short range sat next
@@ -33,6 +37,15 @@ a computation change you should read before applying.
   column, the exact command that fixes it, and the fact that nothing else is
   affected — and the job exits non-zero, because a cron job that exits 0 on
   failure is one nobody notices.
+
+### Upgrading
+
+No migration in this release — if you already ran the schema step for 1.1.0 there
+is nothing to do beyond pulling:
+
+```bash
+docker compose pull && docker compose up -d
+```
 
 ## [1.1.0] — 2026-08-14
 
@@ -199,7 +212,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.1
 [1.1.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.0
 [1.0.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.3
 [1.0.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.2
