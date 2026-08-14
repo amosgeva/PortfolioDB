@@ -26,6 +26,7 @@ import streamlit as st
 import advisor
 import branding
 import llm
+import market_overview
 import market_window
 import reporting_tz
 import settings
@@ -652,6 +653,18 @@ def _render_settings_section() -> None:
             )
             sc1.caption(f"snapshots collected {market_window.describe()}")
 
+            mkt_val = sc1.text_input(
+                "Market overview symbols",
+                value=settings.get(market_overview.SETTING_KEY,
+                                   env=market_overview.ENV_VAR, default="") or "",
+                help="Comma-separated SYMBOL:Label, e.g. "
+                     "ES=F:S&P Futures,^TA125.TA:TA-125. Any yfinance symbol works. "
+                     "These are collected round the clock, ignoring the window above — "
+                     "futures quote when your market is shut, which is the point. "
+                     "Empty = the default US set; clear it entirely to hide the strip.",
+            )
+            sc1.caption(f"currently: {_src(market_overview.SETTING_KEY, market_overview.ENV_VAR)}")
+
         with sc2:
             providers = list(llm.PROVIDERS)
             current_provider = llm.provider()
@@ -696,6 +709,8 @@ def _render_settings_section() -> None:
             for key, raw, env_names, dflt in (
                 ("display_name", name_val, "PORTFOLIODB_DISPLAY_NAME", "Operator"),
                 ("reporting_tz", tz_val, "PORTFOLIODB_TZ", reporting_tz.DEFAULT_TZ),
+                (market_overview.SETTING_KEY, mkt_val, market_overview.ENV_VAR,
+                 market_overview.DEFAULT_SYMBOLS),
                 ("market_window_start", start_val, "PORTFOLIODB_MARKET_START", market_window.DEFAULT_START),
                 ("market_window_end", end_val, "PORTFOLIODB_MARKET_END", market_window.DEFAULT_END),
                 ("market_week", week_val, "PORTFOLIODB_MARKET_WEEK", market_window.DEFAULT_WEEK),

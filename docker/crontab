@@ -16,6 +16,14 @@
 # Price snapshots — every 5 minutes; the Python guard decides whether to work.
 */5 * * * *   cd /app/app && python snapshot_prices.py
 
+# Market overview benchmarks (index futures, volatility) — every 15 minutes,
+# round the clock on weekdays plus Sunday evening, because that is when futures
+# trade and the whole point of collecting them is the hours your own market is
+# shut. Deliberately NOT gated by the market window, and it records no row in
+# snapshot_runs, so Data Health and the MCP cutoff keep meaning "the portfolio's
+# prices" — see the comment in snapshot_prices.main.
+*/15 * * * 0-5   cd /app/app && python snapshot_prices.py --benchmarks
+
 # Daily advisor brief, 07:00 on weekdays.
 0 7 * * 1-5   cd /app/app && python advisor.py brief --kind morning
 

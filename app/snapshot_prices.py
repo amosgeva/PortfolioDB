@@ -36,6 +36,7 @@ from decimal import Decimal
 
 import yfinance as yf
 
+import market_overview
 import market_window
 from db import connect, execute, fetch_all, load_config
 
@@ -267,7 +268,10 @@ def _start_run(conn, ts_start: datetime) -> int:
     return run_id
 
 
-def _finish_run(conn, run_id: int, status: str, total: int, ok: int, failed: int, error: str | None) -> None:
+def _finish_run(conn, run_id: int | None, status: str, total: int, ok: int, failed: int, error: str | None) -> None:
+    # run_id is None for a benchmark run, which records no row — see main().
+    if run_id is None:
+        return
     execute(
         conn,
         """
@@ -316,13 +320,27 @@ def main():
         action="store_true",
         help="Collect even outside the configured market window.",
     )
+    ap.add_argument(
+        "--benchmarks",
+        action="store_true",
+        help=(
+            "Collect the market-overview benchmarks (index futures, volatility) "
+            "instead of your holdings, and ignore the market window — futures "
+            "quote when the equity market is shut, which is the whole point of "
+            "collecting them."
+        ),
+    )
     args = ap.parse_args()
 
     # The window guard lives here rather than in the caller, so every entry
     # point obeys it: the container scheduler runs this on a plain cron tick,
     # the retired run_snapshot.ps1 checked the clock itself, and an operator
     # running it by hand gets the same rule.
-    if not args.ignore_window and not market_window.is_open():
+    # Benchmarks are exempt: the window describes when *your market* trades, and
+    # a futures quote at 03:00 ET is a live regular-session price. Gating them on
+    # the equity window would leave the strip nine hours stale at exactly the hour
+    # someone opens the dashboard to ask what happened overnight.
+    if not args.benchmarks and not args.ignore_window and not market_window.is_open():
         log.info(
             "Outside the market window (%s) — nothing collected. "
             "Use --ignore-window to force.",
@@ -335,10 +353,29 @@ def main():
 
     with connect(cfg) as conn:
         _reap_stale_runs(conn)
-        run_id = _start_run(conn, ts)
+        # A benchmark run deliberately records NO row in snapshot_runs. That table
+        # means one thing — "an attempt to collect the portfolio's prices" — and
+        # three readers depend on it meaning exactly that: cutoff.py steps the
+        # cutoff back behind any in-flight run, data_quality.py judges freshness
+        # against runs rather than clock age, and health.py reports the last one.
+        # Benchmarks collect round the clock, so recording them would pin the
+        # cutoff behind a futures fetch and tell Data Health your holdings are
+        # fresh when they have not been collected since Friday. The strip carries
+        # its own as-of timestamp, which is the staleness signal that belongs to it.
+        run_id = None if args.benchmarks else _start_run(conn, ts)
 
         try:
-            symbols = fetch_all(
+            if args.benchmarks:
+                # sync_flags makes instruments.benchmark match the setting, so the
+                # setting stays the only place the symbol set is edited.
+                symbols = market_overview.sync_flags(conn)
+                if not symbols:
+                    log.info("No market-overview symbols configured — nothing collected.")
+                    _finish_run(conn, run_id, "ok", 0, 0, 0, None)
+                    return
+                log.info("Collecting %d benchmark symbol(s): %s", len(symbols), ", ".join(symbols))
+            else:
+                symbols = fetch_all(
                 conn,
                 """
                 WITH pos AS (
@@ -354,9 +391,8 @@ def main():
                    OR i.watchlist = TRUE
                 ORDER BY i.symbol
                 """,
-            )
-
-            symbols = [r["symbol"] for r in symbols]
+                )
+                symbols = [r["symbol"] for r in symbols]
 
             if not symbols:
                 log.warning("No symbols found. Add lots first.")

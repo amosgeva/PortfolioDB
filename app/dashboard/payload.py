@@ -9,6 +9,7 @@ per-symbol enrichment. Callers own the connection lifecycle and caching
 from __future__ import annotations
 
 import base64
+import logging
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -16,12 +17,15 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import fd_store
+import market_overview
 import market_window
 import period_stats
 import twr
 from portfolio import compute_fifo_merged
 
 from . import queries
+
+log = logging.getLogger(__name__)
 
 _LOGO_DIR = Path(__file__).resolve().parent / "static" / "logos"
 
@@ -410,6 +414,18 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     tape_syms = tape_syms[:14]
     rail_watch = (watch_syms or held_syms)[:8]
 
+    # --- market overview (benchmarks) ----------------------------------
+    # Read through its own module and its own query, deliberately isolated from
+    # `stocks`/`holdings` above: benchmarks must not be able to reach allocation,
+    # movers, risk or the news universe. They have no lots either, so the P&L
+    # engines cannot see them at all.
+    try:
+        markets = market_overview.overview(conn)
+    except Exception:
+        # A context strip is never worth failing the whole dashboard for.
+        log.exception("market overview unavailable")
+        markets = []
+
     # --- news → alerts/news feed ---------------------------------------
     news_universe = list(dict.fromkeys(held_syms + watch_syms)) or list(stocks.keys())
     news_rows = fd_store.recent_news(conn, news_universe, limit=24) if news_universe else []
@@ -639,6 +655,7 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "stats": stats_block,
         "alloc": alloc,
         "risk": risk,
+        "markets": markets,
         "news": news,
         "tapeSyms": tape_syms,
         "watchSyms": rail_watch,

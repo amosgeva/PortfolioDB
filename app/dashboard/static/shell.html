@@ -79,6 +79,14 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="card kpi"><div class="kpi__label">Δ last snapshot</div><div class="kpi__val" id="kpi-delta">—</div><div class="kpi__sub" id="kpi-delta-sub"></div></div>
           <div class="card kpi"><div class="kpi__label">Dividends</div><div class="kpi__val" id="kpi-div">—</div><div class="kpi__sub" id="kpi-div-sub"></div></div>
         </section>
+        <!-- Market overview: context, not holdings. Sits above Returns because
+             it answers "what is the market doing" before "how am I doing against
+             it", and it is the only block on this page that says anything when
+             your own positions have no prints. -->
+        <section class="card" id="markets-card" hidden>
+          <div class="card__hd"><h2>Markets</h2><span class="sub" id="markets-sub"></span></div>
+          <div class="card__bd"><div id="markets-strip"></div></div>
+        </section>
         <section class="card" id="returns-card">
           <div class="card__hd"><h2>Returns</h2><span class="sub" id="returns-sub">vs SPY</span></div>
           <div class="card__bd"><div id="returns-strip"></div></div>

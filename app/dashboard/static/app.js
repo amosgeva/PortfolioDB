@@ -371,6 +371,69 @@
   }
 
   // ---- returns strip (multi-period, vs SPY) ----
+  // ---- market overview strip ----
+  // Built from DOM nodes rather than an innerHTML string: the labels come from a
+  // free-text setting, which makes them the one genuinely user-controlled string
+  // on this page. textContent cannot be markup, so the question does not arise.
+  //
+  // Index levels are formatted as plain numbers, not money — VIX is not 14.51 of
+  // any currency, and putting a $ on a futures level would be inventing a unit.
+  function renderMarkets() {
+    var card = $('#markets-card'), host = $('#markets-strip');
+    if (!card || !host) return;
+    var rows = DATA.markets || [];
+    if (!rows.length) { card.hidden = true; return; }   // nothing configured
+    card.hidden = false;
+    host.textContent = '';
+
+    var level = function (v) {
+      return v == null ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+    var freshest = null;
+    var wrap = document.createElement('div');
+    wrap.className = 'mkt-grid';
+
+    rows.forEach(function (r) {
+      if (r.ts && (!freshest || r.ts > freshest)) freshest = r.ts;
+      var up = r.pct != null && r.pct >= 0;
+      var cell = document.createElement('div');
+      cell.className = 'mkt';
+
+      var top = document.createElement('div'); top.className = 'mkt__top';
+      var name = document.createElement('b'); name.textContent = r.label; top.appendChild(name);
+      var pct = document.createElement('span');
+      pct.className = 'mkt__pct num ' + (r.pct == null ? 'muted' : (up ? 'up' : 'down'));
+      // No snapshot yet is said, not shown as 0.00% — a fresh install has no
+      // history until the collector runs, and a zero would read as a flat market.
+      pct.textContent = r.pct == null ? 'no data yet' : (up ? '↗ ' : '↘ ') + F.pct(r.pct);
+      top.appendChild(pct);
+      cell.appendChild(top);
+
+      var bottom = document.createElement('div'); bottom.className = 'mkt__bot';
+      var px = document.createElement('span'); px.className = 'num'; px.textContent = level(r.price);
+      bottom.appendChild(px);
+      var chg = document.createElement('span');
+      chg.className = 'num ' + (r.change == null ? 'muted' : (up ? 'up' : 'down'));
+      chg.textContent = r.change == null ? '' : (r.change >= 0 ? '+' : '−') + level(Math.abs(r.change));
+      bottom.appendChild(chg);
+      cell.appendChild(bottom);
+
+      var spark = document.createElement('div'); spark.className = 'mkt__spark';
+      if ((r.hist || []).length > 1) spark.innerHTML = sparkSVG(r.hist, up, 240, 46);
+      cell.appendChild(spark);
+      wrap.appendChild(cell);
+    });
+
+    host.appendChild(wrap);
+    var sub = $('#markets-sub');
+    if (sub) {
+      // Says what these are, because a strip of numbers next to a portfolio
+      // invites the reader to assume they own them.
+      sub.textContent = 'context, not holdings' +
+        (freshest ? ' · as of ' + new Date(freshest).toLocaleString() : ' · awaiting first collection');
+    }
+  }
+
   function renderReturns() {
     var R = DATA.returns || {}; var host = $('#returns-strip'); if (!host) return;
     var periods = R.periods || [];
@@ -1474,7 +1537,7 @@
 
   // ---- init ----
   brandParentPage();
-  renderKPIs(); renderReturns(); initPVRange(); renderPV(); renderAlloc(); renderTable();
+  renderKPIs(); renderMarkets(); renderReturns(); initPVRange(); renderPV(); renderAlloc(); renderTable();
   renderAttribution(); renderWaterfall(); renderRisk();
   initPriceChart(); renderLatestPrices();
   renderMovers(); renderChips(); renderHeat(); renderBreadth();

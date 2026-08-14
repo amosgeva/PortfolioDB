@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS instruments (
   currency      TEXT NOT NULL DEFAULT 'USD',
   exchange      TEXT,
   watchlist     BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Collected for context, never held: index futures, volatility. Kept out of
+  -- the portfolio by having no lots, and out of the watchlist rail and Data
+  -- Health by this flag. See sql/migrations/002_market_benchmarks.sql.
+  benchmark     BOOLEAN NOT NULL DEFAULT FALSE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
