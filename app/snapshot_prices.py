@@ -150,6 +150,24 @@ def check_fresh(quote: Quote, now: datetime) -> None:
         )
 
 
+
+def benchmark_market_closed(market_state: str | None) -> bool:
+    """Should a benchmark quote be skipped because its market is shut?
+
+    Only for benchmarks, and only for this reason: when a futures market is
+    closed the vendor keeps serving the last print, so a collector running every
+    15 minutes would write that same price under a fresh timestamp ~96 times a
+    day. The rows are not wrong exactly, but the strip's "as of" line would claim
+    the price is current when it is Friday's, and the sparkline would grow a long
+    flat tail that reads as a quiet market rather than a shut one.
+
+    Holdings are deliberately NOT treated this way — see check_fresh: outside
+    regular hours `regularMarketPrice` legitimately *is* the previous close, and
+    refusing it would leave the portfolio unpriced every evening.
+    """
+    return (market_state or "").upper() != "REGULAR"
+
+
 def get_quote_with_retry(symbol: str, attempts: int = 3) -> Quote:
     """get_quote with exponential backoff — a transient yfinance blip should
     not drop the symbol from the whole run.
@@ -425,6 +443,12 @@ def main():
             for sym in symbols:
                 try:
                     quote = get_quote_with_retry(sym)
+                    if args.benchmarks and benchmark_market_closed(quote.market_state):
+                        log.info(
+                            "%s: market %s — nothing new to record",
+                            sym, (quote.market_state or "unknown").lower(),
+                        )
+                        continue
                     check_fresh(quote, ts)
                 except StaleQuote as e:
                     # Don't persist it: writing an earlier session's close under
