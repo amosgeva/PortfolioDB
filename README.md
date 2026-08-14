@@ -10,8 +10,8 @@ advisor reads your written investment philosophy before it says anything, and an
 MCP server lets your own AI agents query the whole thing. Self-hosted,
 single-user, no accounts, no telemetry, no broker credentials.
 
-Runs anywhere Docker runs: `make init && make up` and you have a dashboard on
-port 8501.
+Runs anywhere Docker runs: `make init && make up && make schema` and you have a
+dashboard on port 8501.
 
 > **Not investment advice.** This is a record-keeping and analysis tool. It
 > reports what your ledger says and, if you enable the advisor, what a language
@@ -144,7 +144,8 @@ To upgrade later: `docker compose pull && docker compose up -d` then
 `apply_schema.py` again (it is idempotent). Read
 [CHANGELOG.md](CHANGELOG.md) first — it records anything that changes how a
 number is computed. Pin a version instead of tracking `latest` with
-`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.0.0` in `.env`. Image tags carry
+`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.0.1` in `.env`. The compose file
+already defaults to the floating `:1.0` rather than `:latest`. Image tags carry
 no `v` even though the git tag and the release do — `1.0.0`, `1.0` and `1` all
 exist, and `1.0`/`1` float forward as patches land.
 
@@ -251,8 +252,8 @@ PortfolioDB/
 │   │   ├── tools/             # @mcp.tool registrations (47 tools)
 │   │   ├── resources/         # portfolio:// URIs (7 resources)
 │   │   ├── prompts/           # Pre-built analyses (7 prompts)
-│   │   └── tests/             # 286 tests incl. KPI parity + reconciliation
-│   └── tests/                 # 265 tests (engines, splits, TWR, XIRR, stats)
+│   │   └── tests/             # KPI parity, reconciliation, null contracts
+│   └── tests/                 # engines, splits, TWR, XIRR, period stats
 ├── sql/
 │   ├── schema.sql             # Core tables: instruments, lots, price_snapshots,
 │   │                          # cash_snapshots, income, corporate_actions,
@@ -455,11 +456,11 @@ local `app/mcp/` package on the path as top-level `mcp`, shadowing the official
 SDK that fastmcp needs.
 
 ```powershell
-# From repo root — 286 tests
-python -m pytest app\mcp\tests\ -m "not slow"   # 253, no database needed
-python -m pytest app\mcp\tests\ -m slow          # 33, live Postgres, ~30s
+# From repo root
+python -m pytest app\mcp\tests\ -m "not slow"   # no database needed
+python -m pytest app\mcp\tests\ -m slow          # live Postgres, ~30s
 
-# From app/ — 265 tests (engines, splits, TWR, XIRR, period stats)
+# From app/ — engines, splits, TWR, XIRR, period stats
 cd app; python -m pytest tests\
 ```
 

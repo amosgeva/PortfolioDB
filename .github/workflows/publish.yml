@@ -22,13 +22,28 @@ concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false          # never abandon a half-pushed manifest
 
+# Only the public repo publishes. This file is mirrored to the private
+# development repo, and `steps.img` below derives the package name from
+# `repository_owner` plus a literal `portfoliodb` — not the repo name — so both
+# repos pushed to the *same* GHCR package and raced for `:latest` on every push.
+# Whichever ran last won, and when that was the private repo the published image
+# claimed `image.source=github.com/amosgeva/PortfolioDB-private`: a URL that 404s
+# for everyone else, a revision no public clone can resolve, and the private
+# repo's name stamped into an artefact strangers pull by default. On a project
+# whose audience chose AGPL so it could check what is running, that is the wrong
+# ten-second answer. Guarding here rather than renaming the package keeps every
+# already-published tag valid. The repo name is repeated literally in both jobs
+# because job-level `if` cannot read the `env` context.
+
 jobs:
   # Gate: the same CI workflow users see on pull requests, called rather than
   # copied, so a green badge and a published tag mean the same thing.
   test:
+    if: github.repository == 'amosgeva/PortfolioDB'
     uses: ./.github/workflows/ci.yml
 
   publish:
+    if: github.repository == 'amosgeva/PortfolioDB'
     needs: test
     runs-on: ubuntu-latest
     steps:

@@ -52,6 +52,22 @@ jobs:
       - name: MCP suite (fast)
         run: python -m pytest app/mcp/tests/ -m "not slow" -q
 
+      # Hand-maintained counts in prose went stale three times in 24 hours, so
+      # instead of maintaining them we assert that none exist. Any "NNN tests"
+      # claim in a tracked markdown file fails here — the vaguer true statement
+      # beats the precise one that rots.
+      # Scoped to what strangers read. docs/internal/ is excluded on purpose: it
+      # is a dated record of past work, where "16 tests on the engine" was true
+      # when written and is not a claim about today. CHANGELOG entries are the
+      # same — versioned facts, not live prose.
+      - name: No hand-maintained test counts in public docs
+        run: |
+          if git grep -nE '[0-9]{2,} tests?\b' -- 'README.md' 'docs/*.md' ':!docs/internal'; then
+            echo "::error::Remove the literal test count above, or describe the suite instead."
+            exit 1
+          fi
+          echo "no literal test counts in public prose"
+
   # The reconciliation suite runs the real services against a real database, so
   # it gets one: schema, migrations, and the fictional demo ledger.
   reconciliation:
