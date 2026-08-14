@@ -3,7 +3,7 @@
   "name": "io.github.amosgeva/portfoliodb",
   "title": "PortfolioDB",
   "description": "Read-only queries over your own append-only portfolio ledger on Postgres.",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "repository": {
     "url": "https://github.com/amosgeva/PortfolioDB",
     "source": "github"
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/amosgeva/portfoliodb:1.0.3",
+      "identifier": "ghcr.io/amosgeva/portfoliodb:1.1.0",
       "transport": {
         "type": "streamable-http",
         "url": "http://localhost:8765/mcp/",
