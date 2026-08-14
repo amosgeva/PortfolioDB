@@ -11,6 +11,10 @@ a computation change you should read before applying.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.1.0] — 2026-08-14
+
 ### Added
 
 - **A Markets strip** on the portfolio view: index futures and volatility, so the
@@ -32,10 +36,23 @@ a computation change you should read before applying.
     freshness keep meaning "the portfolio's prices" rather than "a futures fetch".
   - A symbol with no history yet reads "no data yet" rather than 0.00%.
 
-**Note on upgrading to this:** it is a feature, so it lands in 1.1.0 — and the
-compose default pins `:1.0`, which floats across patches but **not** across minor
-versions. That is deliberate (no surprise features), and it means you have to set
-`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.1` to pick it up.
+### Upgrading
+
+**This release adds a column, so run the schema step after pulling:**
+
+```bash
+docker compose pull && docker compose up -d
+docker compose run --rm dashboard python app/apply_schema.py   # idempotent
+```
+
+Skip it and nothing breaks loudly — the strip simply stays empty and the
+benchmark job logs an error about a missing column. Everything else is unaffected.
+
+**The compose default pins `:1.0`, which floats across patches but not across
+minor versions**, so a default install does *not* pick this up automatically.
+That is deliberate — no surprise features — and it means changing
+`PORTFOLIODB_IMAGE` to `ghcr.io/amosgeva/portfoliodb:1.1` (or `:1`, which floats
+across minors within 1.x).
 
 ## [1.0.3] — 2026-08-14
 
@@ -161,7 +178,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.0
 [1.0.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.3
 [1.0.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.2
 [1.0.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.1
