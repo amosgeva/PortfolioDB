@@ -11,7 +11,13 @@ a computation change you should read before applying.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Skipping the schema step after upgrading to 1.1.0 produced a psycopg2
+  traceback** in the scheduler log. It now logs one line naming the missing
+  column, the exact command that fixes it, and the fact that nothing else is
+  affected — and the job exits non-zero, because a cron job that exits 0 on
+  failure is one nobody notices.
 
 ## [1.1.0] — 2026-08-14
 

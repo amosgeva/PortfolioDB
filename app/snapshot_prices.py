@@ -36,6 +36,8 @@ from decimal import Decimal
 
 import yfinance as yf
 
+import psycopg2
+
 import market_overview
 import market_window
 from db import connect, execute, fetch_all, load_config
@@ -368,7 +370,21 @@ def main():
             if args.benchmarks:
                 # sync_flags makes instruments.benchmark match the setting, so the
                 # setting stays the only place the symbol set is edited.
-                symbols = market_overview.sync_flags(conn)
+                try:
+                    symbols = market_overview.sync_flags(conn)
+                except psycopg2.errors.UndefinedColumn:
+                    # Upgraded the image but skipped the schema step. A raw
+                    # psycopg2 traceback in a cron log is a poor way to learn that
+                    # — the fix is one documented command.
+                    conn.rollback()
+                    log.error(
+                        "instruments.benchmark is missing — the market-overview "
+                        "migration has not been applied. Run: docker compose run "
+                        "--rm dashboard python app/apply_schema.py  (idempotent). "
+                        "Nothing else is affected; the Markets strip stays empty "
+                        "until then."
+                    )
+                    return 1
                 if not symbols:
                     log.info("No market-overview symbols configured — nothing collected.")
                     _finish_run(conn, run_id, "ok", 0, 0, 0, None)
@@ -479,4 +495,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # SystemExit(main()) rather than main(): the benchmark path returns 1 when the
+    # migration is missing, and a cron job that exits 0 on failure is a cron job
+    # nobody notices. main() returns None on every other path, which exits 0.
+    raise SystemExit(main())
