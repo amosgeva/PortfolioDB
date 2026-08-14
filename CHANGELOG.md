@@ -13,6 +13,14 @@ a computation change you should read before applying.
 
 ### Fixed
 
+- **Benchmarks are no longer collected while their market is shut.** The vendor
+  keeps serving the last print when a futures market closes, so a 15-minute
+  collector wrote that same price under a fresh timestamp ~96 times a day: the
+  Markets strip's "as of" line claimed a Friday price was current, and the
+  sparkline grew a flat tail that read as a quiet market rather than a closed one.
+  Holdings are deliberately unaffected — outside regular hours their
+  `regularMarketPrice` legitimately *is* the previous close, and refusing it would
+  leave the portfolio unpriced every evening.
 - **Skipping the schema step after upgrading to 1.1.0 produced a psycopg2
   traceback** in the scheduler log. It now logs one line naming the missing
   column, the exact command that fixes it, and the fact that nothing else is

@@ -80,3 +80,31 @@ class TestFallbackLabel:
         would render a nameless card."""
         assert market_overview._fallback_label("=F") == "=F"
         assert market_overview._fallback_label("^") == "^"
+
+
+class TestClosedMarketSkip:
+    """Benchmarks are skipped while their market is shut.
+
+    Without this, a 15-minute collector writes the same Friday close ~96 times a
+    day and the strip's "as of" line claims a stale price is current.
+    """
+
+    def test_regular_is_collected(self):
+        from snapshot_prices import benchmark_market_closed
+        assert benchmark_market_closed("REGULAR") is False
+        assert benchmark_market_closed("regular") is False
+
+    @pytest.mark.parametrize("state", ["CLOSED", "PRE", "POST", "POSTPOST", "PREPRE"])
+    def test_anything_else_is_skipped(self, state):
+        """PRE and POST are skipped too: for an index future those are not
+        sessions, and for a symbol that does have them the vendor's price is
+        still the previous regular close."""
+        from snapshot_prices import benchmark_market_closed
+        assert benchmark_market_closed(state) is True
+
+    def test_missing_state_is_treated_as_closed(self):
+        """Absent metadata means we cannot tell, and writing a possibly-stale
+        price under a fresh timestamp is the failure being avoided."""
+        from snapshot_prices import benchmark_market_closed
+        assert benchmark_market_closed(None) is True
+        assert benchmark_market_closed("") is True
