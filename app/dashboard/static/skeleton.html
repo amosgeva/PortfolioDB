@@ -91,7 +91,15 @@ body{background:var(--bg);min-height:100vh;overflow:hidden}
    exact same footprint the real shell will take over */
 try{
   var fe=window.frameElement;
-  if(fe){fe.style.height=window.parent.innerHeight+'px';fe.style.width='100%';}
+  if(fe){
+    var h=window.parent.innerHeight+'px';
+    fe.style.height=h;fe.style.width='100%';
+    /* flex-basis, not height: the element container around the iframe is a flex
+       item with `flex: 0 0 <server height>`, so height alone is ignored and the
+       page keeps a second, short-range scrollbar. Same fix as app.js. */
+    var box=fe.closest&&fe.closest('[data-testid="stElementContainer"]');
+    if(box){box.style.flexBasis=h;box.style.height=h;}
+  }
 }catch(e){}
 </script>
 </body></html>

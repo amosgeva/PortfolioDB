@@ -1525,8 +1525,21 @@
     try {
       var fe = window.frameElement;
       if (!fe) return;
-      fe.style.height = window.parent.innerHeight + 'px';
+      var h = window.parent.innerHeight + 'px';
+      fe.style.height = h;
       fe.style.width = '100%';
+      // Streamlit reserves the *server-side* height (st.iframe(height=…)) on the
+      // element container wrapping the iframe. Shrinking only the iframe leaves
+      // that reservation behind, so section[data-testid="stMain"] scrolls the
+      // difference — which is the second scrollbar: an outer one with a short
+      // range sitting next to the real one inside the frame.
+      //
+      // It has to be flex-basis, not height. The container is a flex item in a
+      // column with `flex: 0 0 <server height>`, so the basis wins and an inline
+      // height is silently ignored — setting height alone looks like a fix and
+      // changes nothing. Both are set because older Streamlit sized by height.
+      var box = fe.closest && fe.closest('[data-testid="stElementContainer"]');
+      if (box) { box.style.flexBasis = h; box.style.height = h; }
       var pd = window.parent.document;
       pd.documentElement.style.overflow = 'hidden';
       pd.body.style.overflow = 'hidden';

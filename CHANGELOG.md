@@ -13,6 +13,13 @@ a computation change you should read before applying.
 
 ### Fixed
 
+- **The dashboard had two scrollbars.** An outer one with a short range sat next
+  to the real one inside the app frame. `fitViewport` shrank the iframe to the
+  viewport but not the element container Streamlit wraps it in, which still
+  reserved the server-side `height=` — so the page scrolled that difference. It
+  had to be set as **`flex-basis`**: the container is a flex item with
+  `flex: 0 0 <height>`, so an inline `height` is silently ignored. Fixed in both
+  the app shell and the loading skeleton.
 - **Benchmarks are no longer collected while their market is shut.** The vendor
   keeps serving the last print when a futures market closes, so a 15-minute
   collector wrote that same price under a fresh timestamp ~96 times a day: the
