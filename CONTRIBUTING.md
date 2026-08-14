@@ -84,20 +84,13 @@ Explain *why* in the message, not just what — the diff already says what. Keep
 one concern per PR where you can. CI runs both suites on Linux; a green run and
 a description of how you verified the change by hand is plenty.
 
-### How your PR actually gets merged
+### One note on this repository's history
 
-Worth saying plainly, because it affects what you see happen to your commits.
-This repository is **published from a private development repo**, and every
-commit here says so in its body. That has one consequence for contributors:
+The history starts at a single squashed commit in August 2026, and commits before
+that date do not exist here. That is not a rewrite: development happened in a
+private repository whose history carries real trade dates and holdings, so this
+one was started clean rather than by publishing that. The private repo is now an
+archive and holds nothing but that history and planning notes.
 
-**Your PR is applied to the private repo and arrives back here in the next
-publish, rather than being merged with a green merge button.** Your commits keep
-your name and email — they are cherry-picked, not retyped — but the PR itself is
-closed with a note pointing at the commit that carries your change, instead of
-showing as merged. GitHub will not credit you as a merged contributor on the
-graph, which is a real cost and the reason this section exists rather than
-leaving you to work it out.
-
-Nothing else changes: review happens in the PR, CI runs on it, and a change that
-is accepted ships. If that arrangement is a dealbreaker for you, an issue
-describing the fix is just as welcome as the patch.
+**Development happens here.** Pull requests are reviewed and merged here, and your
+commits stay yours.
