@@ -13,6 +13,33 @@ a computation change you should read before applying.
 
 Nothing yet.
 
+## [1.0.2] — 2026-08-14
+
+No change to how any number is computed. Upgrading is optional.
+
+### Added
+
+- **The AGPL text now ships inside the image.** The image declared
+  `org.opencontainers.image.licenses=AGPL-3.0-or-later` while the licence itself
+  was not in it, so anyone who pulled the image without visiting the repository
+  had a label and nothing to read. It is at `/app/LICENSE`; the source it
+  corresponds to is the `org.opencontainers.image.source` label.
+
+### Changed
+
+- **Scope stated plainly, in the README and on the Advisor page.** This keeps a
+  record of assets you already hold, across every broker you use. It is not a
+  broker, a custodian or an adviser and replaces none of them: it holds no money,
+  connects to no broker, and places no orders. The optional advisor runs on *your*
+  model — your key, or a local model on your machine — reading a one-pager *you*
+  wrote, so the question it answers is whether your holdings still match rules you
+  set for yourself. Any suggestion in its output is your model's text, and you are
+  the only decision-maker.
+- **The several-brokers-one-record behaviour is documented** rather than implied
+  by a CLI flag. Matching is scoped per `(symbol, account)`, so each broker's cost
+  basis stays its own — shares bought at one broker are never FIFO-matched against
+  a sale at another — while the dashboard shows per-account and merged views.
+
 ## [1.0.1] — 2026-08-13
 
 ### Fixed
@@ -87,6 +114,7 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.2
 [1.0.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.1
 [1.0.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.0
