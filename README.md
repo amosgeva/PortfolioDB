@@ -4,20 +4,43 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Container image](https://img.shields.io/badge/ghcr.io-portfoliodb-2496ed?logo=docker&logoColor=white)](https://github.com/amosgeva/PortfolioDB/pkgs/container/portfoliodb)
 
-**An append-only, lot-based portfolio ledger you own.** Postgres is the source of
-truth, FIFO and average-cost engines recompute everything on read, an optional
-advisor reads your written investment philosophy before it says anything, and an
-MCP server lets your own AI agents query the whole thing. Self-hosted,
-single-user, no accounts, no telemetry, no broker credentials.
+**Keep your own up-to-date record of what you hold, across every broker you use,
+in one place you control.** Split across two brokers and a pension account, the
+only place your actual position exists is a spreadsheet you maintain by hand.
+PortfolioDB is that record kept properly: every buy and sell is a row in Postgres,
+tagged with the account it happened in, and open quantity, cost basis and realized
+P&L are recomputed from those rows on every read — per account, and merged across
+all of them.
+
+FIFO and average-cost engines run side by side, an optional advisor reads
+investing rules you wrote yourself before it says anything, and an MCP server lets
+your own AI agents query the whole thing. Self-hosted, single-user, no accounts, no
+telemetry, no broker credentials.
 
 Runs anywhere Docker runs: `make init && make up && make schema` and you have a
 dashboard on port 8501.
 
-> **Not investment advice.** This is a record-keeping and analysis tool. It
-> reports what your ledger says and, if you enable the advisor, what a language
-> model thinks about it — neither is financial advice, and language models state
-> wrong things confidently. Verify anything that would move money. You are the
-> only decision-maker, and you own the consequences.
+> ### What this is, and what it is not
+>
+> **It is a record-keeping tool.** It keeps an accurate, up-to-date record of
+> assets you already hold, wherever you hold them, and computes what follows
+> arithmetically from those records.
+>
+> **It is not a broker, a custodian, or an adviser, and it replaces none of them.**
+> It holds no money, connects to no broker, places no orders, and has no way to
+> move a single share. It never tells you what to buy, when, or where — and
+> nothing in it is investment advice.
+>
+> **The optional advisor runs on your model, not ours.** You supply the API key or
+> point it at a local model on your own machine; the project supplies no model,
+> no key, and no opinions. What it reads is a one-page document *you* wrote
+> describing goals and rules you set for yourself, so the question it answers is
+> narrow: does what I hold still match what I said I wanted? Any suggestion in its
+> output is your model's text, generated for you, measured against your own rules.
+> **You are the only decision-maker, and you own the consequences.**
+>
+> Language models state wrong things confidently, and so do spreadsheets with a
+> bad formula. Verify anything that would move money.
 
 ![The portfolio view: KPI row, time-weighted returns, value history and allocation](docs/images/portfolio.webp)
 
@@ -50,6 +73,7 @@ random-walk prices, not anyone's holdings.</sub>
 ## What it does
 
 - **Lots**, not positions: every BUY/SELL is a row. Open quantity, cost basis, and realized P&L are always recomputed from `lots` on read — never persisted. FIFO and moving-average engines run side-by-side.
+- **Several brokers, one record.** Every lot and cash balance carries an `account` — a free-form label, so call them whatever your statements call them. Matching is scoped per `(symbol, account)`, which is what keeps each broker's cost basis its own: shares bought at one broker are never FIFO-matched against a sale at another. The dashboard shows both views — per account, and merged across all of them — so the same holding split across two brokers reads as one position without the two ledgers contaminating each other.
 - **Price snapshots** collected on a schedule inside the stack (via yfinance) during a collector window you configure. Append-only `(symbol, ts)` PK. Quotes that are stale upstream are rejected rather than written under a fresh timestamp, and vendor-reported splits are recorded to `corporate_actions`.
 - **Splits adjusted at read time**: `corporate_actions` is the source of truth and `lots`/`price_snapshots` are never rewritten, so the append-only invariant holds and an adjustment is undone by deleting its row.
 - **Streamlit dashboard** with KPIs, holdings, equity curve, market movers, period statistics (best/worst day, week and month, consistency, streaks), fundamentals, news, a data-health panel, an Advisor tab, and a one-click HTML executive report.

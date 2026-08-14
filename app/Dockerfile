@@ -61,6 +61,12 @@ COPY app /app/app
 COPY docker/crontab /app/docker/crontab
 COPY sql /app/sql
 
+# The licence travels with the binary. An image is a distribution of the program,
+# and the AGPL wants its terms to reach whoever received it — someone who pulled
+# this image and never saw the repository had the `licenses` label and nothing to
+# read. The source it corresponds to is the `image.source` label above.
+COPY LICENSE /app/LICENSE
+
 # /app only, so `app.mcp.*` resolves. Do NOT add /app/app here: PYTHONPATH is
 # prepended ahead of site-packages, and /app/app contains mcp/ — which would
 # shadow the installed `mcp` SDK that fastmcp imports and break the MCP server
