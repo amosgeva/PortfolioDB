@@ -13,6 +13,29 @@ a computation change you should read before applying.
 
 Nothing yet.
 
+## [1.0.3] — 2026-08-14
+
+No change to how any number is computed.
+
+### Changed
+
+- **The disclaimer now names the regime it disclaims under.** Reviewed wording:
+  the author is not a licensed investment adviser, investment marketer or
+  portfolio manager under Israeli law (Regulation of Investment Advice,
+  Investment Marketing and Investment Portfolio Management Law, 5755-1995) or any
+  other jurisdiction, and nothing here substitutes for personal advice from a
+  licensed professional who knows your circumstances.
+- **The numbers are stated as informational, not tax figures.** Cost basis,
+  realized P&L and returns are computed for portfolio tracking. They are not
+  prepared under any tax authority's rules — lot-matching method, currency
+  conversion dates and inflation adjustment may all differ — so they need
+  independent verification before they go anywhere near a tax return.
+- **The warranty disclaimer is surfaced in the README** rather than left to
+  whoever opens `LICENSE`.
+- **The Advisor tab and the executive report carry the short form.** The report
+  especially: it is a standalone HTML file that travels without the app or the
+  README, so the caveat had to travel inside it.
+
 ## [1.0.2] — 2026-08-14
 
 No change to how any number is computed. Upgrading is optional.
@@ -114,7 +137,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.3
 [1.0.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.2
 [1.0.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.1
 [1.0.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.0

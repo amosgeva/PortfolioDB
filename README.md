@@ -31,6 +31,14 @@ dashboard on port 8501.
 > move a single share. It never tells you what to buy, when, or where — and
 > nothing in it is investment advice.
 >
+> **The author is not a licensed investment adviser, investment marketer, or
+> portfolio manager** — under Israeli law (Regulation of Investment Advice,
+> Investment Marketing and Investment Portfolio Management Law, 5755-1995) or
+> under the law of any other jurisdiction. Nothing in this project, its
+> documentation, or its output constitutes investment advice, investment
+> marketing, or a substitute for personal advice from a licensed professional
+> that takes your individual data and needs into account.
+>
 > **The optional advisor runs on your model, not ours.** You supply the API key or
 > point it at a local model on your own machine; the project supplies no model,
 > no key, and no opinions. What it reads is a one-page document *you* wrote
@@ -39,8 +47,17 @@ dashboard on port 8501.
 > output is your model's text, generated for you, measured against your own rules.
 > **You are the only decision-maker, and you own the consequences.**
 >
+> **The numbers are informational, not tax figures.** Cost basis, realized P&L
+> and returns are computed for portfolio tracking. They are not prepared under
+> any tax authority's rules — lot-matching method, currency conversion dates,
+> and inflation adjustment may all differ — and are not suitable for tax
+> reporting without independent verification.
+>
 > Language models state wrong things confidently, and so do spreadsheets with a
 > bad formula. Verify anything that would move money.
+>
+> Use of this software is at your own risk. It is provided "as is", without
+> warranty of any kind, as set out in the [AGPL-3.0 license](LICENSE).
 
 ![The portfolio view: KPI row, time-weighted returns, value history and allocation](docs/images/portfolio.webp)
 
