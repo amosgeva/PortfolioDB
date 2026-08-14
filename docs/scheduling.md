@@ -13,6 +13,7 @@ docker compose logs -f scheduler
 | Job | Schedule | Notes |
 |---|---|---|
 | `snapshot_prices.py` | every 5 min | Exits immediately outside the collector window — the cron line does not know the window |
+| `snapshot_prices.py --benchmarks` | every 15 min, Sun–Fri | The Markets strip (index futures, volatility). **Deliberately ignores the collector window**: futures quote while your market is shut, which is the only reason to collect them. Records no row in `snapshot_runs`, so Data Health and the MCP cutoff keep meaning "the portfolio's prices" |
 | `advisor.py brief` | 07:00 Mon–Fri | Needs an LLM API key; without one it logs and moves on |
 | `fd_weekly_enrichment.py` | 06:00 Sat | Needs `FINANCIAL_DATASETS_API_KEY`; cache-first, so cheap |
 

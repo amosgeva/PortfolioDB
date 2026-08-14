@@ -41,6 +41,24 @@ UNIVERSE = {
 # "watchlist symbol with no position" path in the dashboard and collector.
 WATCHLIST_ONLY = {"AMD"}
 
+# Market-overview benchmarks: context, never held. Seeded so a fresh demo shows
+# the Markets strip populated instead of "awaiting first collection", and so the
+# benchmark path (no lots, excluded from the watchlist rail and from Data
+# Health's scope) is exercised by the demo too. Same shape as UNIVERSE.
+# Start levels are chosen so the walk *ends* near where these actually trade —
+# the series runs forward from here to today, so a start value is not a current
+# level. Fictional data that is wildly implausible undermines a screenshot even
+# when it is captioned as fictional.
+# VIX gets zero drift and much higher noise: it oscillates, it does not compound.
+# (It was briefly given drift 0.75 by transposing these two columns, and duly
+# trended 47% upward over the demo window.)
+BENCHMARKS = {
+    "ES=F":  ("S&P 500 futures", "future", "Index", "US", 7480.0, 0.09, 0.006),
+    "NQ=F":  ("Nasdaq 100 futures", "future", "Index", "US", 28360.0, 0.13, 0.009),
+    "YM=F":  ("Dow futures", "future", "Index", "US", 51700.0, 0.08, 0.005),
+    "^VIX":  ("Volatility index", "index", "Volatility", "US", 14.6, 0.0, 0.045),
+}
+
 # (symbol, account, side, days_ago, quantity, price_factor, fees)
 # price_factor multiplies that day's simulated close, so a lot's price is
 # plausible against the series without hardcoding numbers.
@@ -128,7 +146,9 @@ def simulate_prices(seed: int = 20260813) -> dict[str, list[tuple[datetime, floa
     now = datetime.now(timezone.utc)
     today = now.replace(hour=SNAPSHOT_HOUR_UTC, minute=0, second=0, microsecond=0)
     out: dict[str, list[tuple[datetime, float]]] = {}
-    for sym, (_n, _a, _s, _c, start, drift, vol) in UNIVERSE.items():
+    # Benchmarks get a series on the same walk, so the demo strip has a sparkline
+    # and a previous-session close to compute a change against.
+    for sym, (_n, _a, _s, _c, start, drift, vol) in {**UNIVERSE, **BENCHMARKS}.items():
         price = start
         series: list[tuple[datetime, float]] = []
         for offset in range(TRADING_DAYS, -1, -1):
@@ -166,6 +186,18 @@ def seed(conn, prices: dict[str, list[tuple[datetime, float]]]) -> dict[str, int
             ON CONFLICT (symbol) DO NOTHING
             """,
             (sym, name, asset_type, sector, country, sym in WATCHLIST_ONLY),
+        )
+        counts["instruments"] += 1
+
+    for sym, (name, asset_type, sector, country, *_rest) in BENCHMARKS.items():
+        run(
+            conn,
+            """
+            INSERT INTO instruments(symbol, name, asset_type, sector, country, benchmark)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
+            ON CONFLICT (symbol) DO UPDATE SET benchmark = TRUE
+            """,
+            (sym, name, asset_type, sector, country),
         )
         counts["instruments"] += 1
 

@@ -11,7 +11,31 @@ a computation change you should read before applying.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **A Markets strip** on the portfolio view: index futures and volatility, so the
+  dashboard says something during the hours your own holdings have no prints.
+  Futures quote nearly 23 hours; a pre-market equity quote frequently does not
+  exist at all, which is why this answers "what is happening before the open" and
+  extended-hours equity prices would not.
+  - Symbols come from a setting (`market_overview_symbols`, editable in
+    Manage → Settings) as `SYMBOL:Label`. Any yfinance symbol works. Clearing the
+    field hides the strip.
+  - Collected by `snapshot_prices.py --benchmarks` every 15 minutes, Sun–Fri,
+    **ignoring the collector window** — the window describes when *your* market
+    trades, and gating futures on it would leave the strip nine hours stale at
+    exactly the hour you look.
+  - **Benchmarks cannot reach the portfolio.** They have no lots, so the P&L
+    engines never see them; a new `instruments.benchmark` flag keeps them out of
+    the watchlist rail and Data Health's per-symbol scope; and a benchmark run
+    writes **no** row to `snapshot_runs`, so the MCP cutoff and Data Health
+    freshness keep meaning "the portfolio's prices" rather than "a futures fetch".
+  - A symbol with no history yet reads "no data yet" rather than 0.00%.
+
+**Note on upgrading to this:** it is a feature, so it lands in 1.1.0 — and the
+compose default pins `:1.0`, which floats across patches but **not** across minor
+versions. That is deliberate (no surprise features), and it means you have to set
+`PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1.1` to pick it up.
 
 ## [1.0.3] — 2026-08-14
 

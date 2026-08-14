@@ -331,3 +331,19 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .stk__meta{font-size:11.5px;color:var(--muted)}
 .stk--up .stk__days{color:var(--up)}
 .stk--down .stk__days{color:var(--down)}
+
+/* ── market overview strip ─────────────────────────────────────
+   Four context cards, not holdings. Collapses to two columns then one; the
+   sparkline is decoration and may be absent (a symbol with one snapshot has no
+   line to draw), so nothing below it depends on its height. */
+.mkt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.mkt{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:13px 14px}
+.mkt__top{display:flex;align-items:baseline;gap:10px}
+.mkt__top b{font-size:14px;letter-spacing:-.01em}
+.mkt__pct{margin-left:auto;font-size:13px;font-weight:600;white-space:nowrap}
+.mkt__bot{display:flex;align-items:baseline;gap:10px;margin-top:3px}
+.mkt__bot .num:first-child{font-size:18px;letter-spacing:-.02em}
+.mkt__bot .num:last-child{margin-left:auto;font-size:12px}
+.mkt .muted{color:var(--muted);font-weight:500}
+.mkt__spark{margin-top:8px;min-height:46px}
+.mkt__spark svg{width:100%;height:46px;display:block}
