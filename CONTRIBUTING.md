@@ -78,6 +78,37 @@ Add a numbered file under `sql/migrations/` **and** make the same change in
 `schema.sql`; existing ones apply migrations in order. See
 `sql/migrations/README.md`.
 
+## Cutting a release
+
+Write the entry into `[Unreleased]` as you go. When you cut it into a numbered
+section, **re-read what you are freezing for present-tense claims about anything
+that floats.**
+
+A changelog entry may name a version — that is the file's whole job, which is why
+`CHANGELOG.md` is exempt from CI's pin grep. **It may not say what a floating tag
+*currently* resolves to.** The tag moves; the frozen entry cannot follow it.
+
+This is not hypothetical. The 1.1.3 entry said `:1` "resolves to the current
+1.1.2". It was true when written into `[Unreleased]`, and the release cut that
+froze it was the release that falsified it — `:1` resolves to 1.1.3, the version
+that sentence is printed inside. Name the line (`the current 1.1 line`) or the
+release, not the resolution.
+
+Two conventions for fixing an entry after it ships:
+
+- **A stale factual aside is edited in place.** Nobody acted on it, and leaving a
+  wrong number to preserve a record of a wrong number helps no one.
+- **An instruction a reader may already have followed is annotated, not
+  rewritten** — a dated `> Correction, YYYY-MM-DD` note underneath. Quietly
+  editing a step someone has already run is the failure this file exists to
+  prevent. Where an instruction contains a stale version, bound the version and
+  leave the action alone.
+
+None of this is enforced. A guard that could catch it would have to forbid the
+file from naming versions, which would break it. This is documentation, and
+documentation is weaker than CI — the test counts and the image pins are guarded
+because they could be.
+
 ## Commits and PRs
 
 Explain *why* in the message, not just what — the diff already says what. Keep
