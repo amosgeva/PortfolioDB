@@ -36,6 +36,7 @@ drift finding and should not be reported as one).
 from __future__ import annotations
 
 import html
+import html.parser
 import re
 import sys
 import urllib.error
@@ -125,7 +126,50 @@ FIRST_PARTY_HOSTS = ("portfoliodb.app", "www.portfoliodb.app")
 # created the hole above.
 FIRST_PARTY_PATHS = ("/_next/", "/static/")
 
-SCRIPT_SRC = re.compile(r"""<script[^>]+src=["']([^"']+)["']""", re.I)
+
+class ScriptCollector(html.parser.HTMLParser):
+    """Collect every `<script src=...>` the page declares.
+
+    A real parser rather than a regex, because all four blind spots found in
+    this guard in one afternoon were in how it *located* the thing to judge,
+    never in the judging:
+
+      1. fetched with `Accept: */*`  -> asserted on a page no browser receives
+      2. only absolute off-site URLs -> missed same-origin `/cdn-cgi/`
+      3. substring-matched paths as hosts -> cleared any vendor under `/static/`
+      4. required quoted attributes  -> could not see `<script src=https://...>`
+
+    (4) is why this is a parser now. Unquoted attribute values are valid HTML5,
+    and the risk is not that an injector omits quotes deliberately — it is that
+    **any minifier legally strips quotes** around values with no spaces. If that
+    is ever switched on, at build time or by an edge toggle, a regex requiring
+    quotes stops seeing *every* script on the page at once and keeps exiting 0
+    while blind. Today's incident was a dashboard toggle changing what the edge
+    serves with no commit; a toggle that reformats attributes is the same event.
+
+    `HTMLParser` handles unquoted values, newlines inside the tag, uppercase
+    tags and attributes, and duplicate attributes, without a fifth patch.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sources: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "script":
+            return
+        for name, value in attrs:
+            if name.lower() == "src" and value and value.strip():
+                self.sources.append(value.strip())
+
+
+def script_sources(markup: str) -> list[str]:
+    collector = ScriptCollector()
+    try:
+        collector.feed(markup)
+    except Exception:  # a parse error must not read as "no scripts found"
+        raise SystemExit("::error::could not parse the page HTML — guard cannot assert anything")
+    return collector.sources
 
 # `/cdn-cgi/` is Cloudflare's reserved path. Nothing our build produces is
 # served from it, so a script there is edge-injected by definition: Rocket
@@ -149,7 +193,7 @@ def injected_scripts(markup: str) -> list[str]:
     check that reads the repo.
     """
     found = []
-    for src in SCRIPT_SRC.findall(markup):
+    for src in script_sources(markup):
         parts = urllib.parse.urlsplit(src)
         if parts.scheme or parts.netloc:
             # Absolute (or protocol-relative). Judge it on the host alone.
