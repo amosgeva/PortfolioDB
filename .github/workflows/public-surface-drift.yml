@@ -1,0 +1,47 @@
+name: Public surface drift
+
+# The CI guards on hand-maintained counts and patch pins cover README.md and
+# docs/*.md. They stop at the repo boundary, and portfoliodb.app is a separate
+# project — so the surface a stranger reads *first* was the one nothing checked.
+# Within a day of launch it published a test count that appears in no tracked
+# file and sits below the measured floor.
+#
+# Deliberately NOT on pull_request or push. The site is a network resource on
+# someone else's deploy cadence: a Cloudflare blip must never redden a build for
+# a code change that had nothing to do with it. A failure here means the *site*
+# drifted, and the fix is on the site, not in this repo.
+on:
+  schedule:
+    # Daily, off the hour — drift is measured in days, and the site is edited
+    # far less often than this repo.
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Public surface to check'
+        required: false
+        default: 'https://portfoliodb.app/'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-surface-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: Site vs repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      # Stdlib only, on purpose: this job must keep working when the site is the
+      # only thing that changed, without a dependency install standing between
+      # us and the answer.
+      - name: Check the published artefact
+        run: python tools/check_public_surfaces.py "${{ inputs.url || 'https://portfoliodb.app/' }}"
