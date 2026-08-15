@@ -13,6 +13,30 @@ a computation change you should read before applying.
 
 Nothing yet.
 
+## [1.1.2] — 2026-08-15
+
+**The application image is unchanged in substance** — nothing in this release
+ships inside it. It is a repo-surface release: a link, and a guard.
+
+### Added
+
+- **A scheduled check that the marketing site does not contradict this repo.**
+  CI already refuses hand-maintained test counts and hand-written patch pins in
+  `README.md` and `docs/*.md`, because both went stale repeatedly. That guard
+  stopped at the repo boundary, and `portfoliodb.app` — a separate project — was
+  the surface a stranger reads *first*. It now gets checked daily against the
+  **published page**, not a source tree, because merged is not deployed.
+  - It matches rendered text rather than markup, so a claim cannot hide inside a
+    tag: `<strong>494</strong> tests` is caught where a raw grep misses it.
+  - It accepts a floor and rejects a precise count — `500+ tests` and
+    `over 500 tests` pass, `494 tests` fails.
+  - It never runs on a push or a pull request. The site is a network resource on
+    someone else's deploy cadence, and an outage exits 2 rather than reporting a
+    drift finding that is not one.
+- **A link to `portfoliodb.app` on the README's first screen.** The GitHub
+  `homepage` field is invisible on mobile, in a terminal, on the package page and
+  in any fork.
+
 ## [1.1.1] — 2026-08-14
 
 ### Fixed
@@ -212,7 +236,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.2
 [1.1.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.1
 [1.1.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.0
 [1.0.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.0.3
