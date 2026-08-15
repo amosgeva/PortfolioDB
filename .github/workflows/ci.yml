@@ -71,15 +71,21 @@ jobs:
       # Same failure as the test counts, one release later: a patch tag written by
       # hand into prose. `:1.0.1` sat in the README as the "pin harder" example
       # while 1.0.3 shipped the reviewed disclaimer — so a reader following our own
-      # advice literally got an image without it. The docs name the floating `:1.0`
+      # advice literally got an image without it. The docs name the floating `:1`
       # and point at the releases page for an exact build; CHANGELOG and
       # server.json are exempt because there an exact version is the whole point.
-      - name: No hand-written patch pins in the docs or compose
+      #
+      # The minor component is now caught too, because it rots the same way and
+      # takes longer to notice: `:1.0` survived 1.1.0 and 1.1.1 in compose while
+      # the README's feature list described a 1.1 feature, and the upgrade command
+      # this repo prints — `docker compose pull` — cannot cross a minor boundary,
+      # so nobody who installed it would ever have been moved off.
+      - name: No hand-written minor or patch pins in the docs or compose
         run: |
-          if git grep -nE 'portfoliodb:[0-9]+\.[0-9]+\.[0-9]+' -- \
+          if git grep -nE 'portfoliodb:[0-9]+\.[0-9]+' -- \
                'README.md' 'docs/*.md' 'docker-compose*.yml' '.env.template' '.github' \
                ':!docs/internal'; then
-            echo "::error::Name the floating :1.0 instead, or link the releases page."
+            echo "::error::Name the floating :1 instead, or link the releases page."
             exit 1
           fi
           echo "no hand-written patch pins outside CHANGELOG/server.json"

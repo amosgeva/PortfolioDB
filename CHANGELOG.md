@@ -30,6 +30,13 @@ a computation change you should read before applying.
     `apply_schema.py` — 1.1.0 added `sql/migrations/002_market_benchmarks.sql`,
     and skipping it is what produced the traceback fixed in 1.1.1.
 
+### Changed
+
+- **CI now rejects a written-down *minor* pin, not just a patch pin.** The patch
+  guard added in 1.0.3 would never have caught `:1.0`, because `:1.0` is not a
+  patch pin — it is a slower version of the same rot, and it outlived two minor
+  releases unnoticed. Only the bare major may be written down now.
+
 ## [1.1.2] — 2026-08-15
 
 **The application image is unchanged in substance** — nothing in this release

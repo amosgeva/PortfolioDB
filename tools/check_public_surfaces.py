@@ -60,8 +60,13 @@ TEST_COUNT = re.compile(
 
 # Same failure as the counts, one release later: `:1.0.1` sat in the README as
 # the "pin harder" example while 1.0.3 shipped the reviewed disclaimer. The docs
-# name the floating `:1.0`; a patch pin on the site would rot the same way.
-PATCH_PIN = re.compile(r"portfoliodb:\d+\.\d+\.\d+")
+# name the floating `:1`; a patch pin on the site would rot the same way.
+#
+# The minor component rots too, and slower, which is worse: `:1.0` outlived two
+# minor releases in compose before anyone noticed, because nothing was *wrong* on
+# the page — the install just quietly delivered a line behind the feature list.
+# So this rejects `:1.0` as well as `:1.0.3`, and only the bare major passes.
+PATCH_PIN = re.compile(r"portfoliodb:\d+\.\d+(?:\.\d+)?")
 
 # The launch plan is "post a link". A link with no card previews as grey text in
 # every feed it lands in, so the card is not cosmetic — it is the first frame of
@@ -114,7 +119,7 @@ def check(markup: str) -> list[str]:
         )
 
     for match in dict.fromkeys(PATCH_PIN.findall(text) + PATCH_PIN.findall(markup)):
-        failures.append(f'site pins "{match}" — name the floating `:1.0` and link the releases page.')
+        failures.append(f'site pins "{match}" — name the floating `:1` and link the releases page.')
 
     if not OG_IMAGE.search(markup):
         failures.append(
