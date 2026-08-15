@@ -247,6 +247,25 @@ def test_first_party_is_required_not_defaulted():
         guard.injected_scripts("<html></html>")
 
 
+# Also deliberately absent, and the most consequential of the three, so read it
+# before assuming this file protects the property it most looks like it does:
+# **nothing here covers `main()` passing the URL that was *requested* rather than
+# the one that answered.** `check(markup, first_party_hosts(url))` is what stops
+# a hijacked surface that redirects from vouching for its own injected origin —
+# and swapping `url` for `landed` reintroduces that hole with all 32 cases still
+# green. Measured, not assumed:
+#
+#     baseline                                  32 passed
+#     revert host parsing to substring matching  3 failed
+#     drop the union, fixed known hosts only     2 failed
+#     requested -> landed                       32 passed   <- silent
+#
+# Every case here is a pure function over markup; the wiring lives in `main()`,
+# and reaching it means monkeypatching `fetch`. Covering it is invention rather
+# than transcription, which is the same standard that removed the two below.
+# So it is written down instead — because "the guard's adversarial set is in the
+# repo" would otherwise read as covering this, and it does not.
+#
 # Also deliberately absent: the parse-failure path in `script_sources()`, which
 # exits non-zero rather than returning an empty list so that "no scripts found"
 # and "could not read the page" cannot look identical. It is real behaviour and
