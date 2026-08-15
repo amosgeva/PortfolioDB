@@ -11,7 +11,24 @@ a computation change you should read before applying.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **A fresh `docker compose up` installed the 1.0 line, not 1.1.** The compose
+  default was `ghcr.io/amosgeva/portfoliodb:1.0`, which resolves to 1.0.3 — so
+  anyone following the quick start got an image without the Markets strip, while
+  the README's "What it does" list described it. It is now `:1`, which resolves
+  to the current 1.1.2.
+  - Nothing about `:1.0` was deliberate: the comment above it in compose, and
+    both sentences about it in the README, all described major-line behaviour
+    ("never a surprise major") — which is `:1`. Only the value said otherwise.
+  - **This was not self-correcting.** `docker compose pull`, the upgrade this
+    repo prints, cannot cross a minor boundary, so an install pinned at `:1.0`
+    would have stayed on 1.0.x indefinitely.
+  - **If you already installed from `:1.0`**, you are on 1.0.3. Pull this compose
+    file (or set `PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1` in `.env`),
+    then `docker compose pull && docker compose up -d` and run
+    `apply_schema.py` — 1.1.0 added `sql/migrations/002_market_benchmarks.sql`,
+    and skipping it is what produced the traceback fixed in 1.1.1.
 
 ## [1.1.2] — 2026-08-15
 

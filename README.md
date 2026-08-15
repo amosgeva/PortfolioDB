@@ -189,10 +189,10 @@ To upgrade later: `docker compose pull && docker compose up -d` then
 [CHANGELOG.md](CHANGELOG.md) first — it records anything that changes how a
 number is computed.
 
-The compose file already pins the minor line — `PORTFOLIODB_IMAGE` defaults to
-`ghcr.io/amosgeva/portfoliodb:1.0`, not `:latest`, so an upgrade brings patches
-and never a surprise major. To hold a single exact build instead, take the patch
-tag from the [release you want](https://github.com/amosgeva/PortfolioDB/releases)
+The compose file already pins the major line — `PORTFOLIODB_IMAGE` defaults to
+`ghcr.io/amosgeva/portfoliodb:1`, not `:latest`, so an upgrade brings features and
+fixes and never a surprise major. To hold a single exact build instead, take the
+patch tag from the [release you want](https://github.com/amosgeva/PortfolioDB/releases)
 and set `PORTFOLIODB_IMAGE` to it. Note the image tags carry no `v` even though
 the git tags and releases do.
 
