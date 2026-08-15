@@ -149,6 +149,22 @@ class ScriptCollector(html.parser.HTMLParser):
 
     `HTMLParser` handles unquoted values, newlines inside the tag, uppercase
     tags and attributes, and duplicate attributes, without a fifth patch.
+
+    **The boundary, stated rather than patched toward.** This asserts on markup
+    as served. It cannot see a script the page builds at runtime —
+    `document.write('<script src=...>')` executes and is invisible here, because
+    `HTMLParser` treats everything inside `<script>` as CDATA.
+
+    That is not a shape nobody guessed; it is the edge of what a static fetch
+    can do, and no version of this file could cross it. Chasing it means
+    scanning script bodies for markup, which is the regex that was just removed,
+    and it would reintroduce false positives the parser fixed for free: a script
+    tag inside an HTML comment is markup, not execution, and is correctly
+    ignored now where a regex flagged it.
+
+    A known limit written down beats a check contorted to cover it. If runtime
+    injection ever needs covering, it needs a headless browser, not a wider
+    pattern here.
     """
 
     def __init__(self) -> None:
