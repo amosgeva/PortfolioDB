@@ -89,6 +89,34 @@ LARGE_CARD = re.compile(
 MCP_FEATURE = re.compile(r"\bMCP\b")
 MCP_TOKEN = re.compile(r"PORTFOLIODB_MCP_TOKEN")
 
+# "No telemetry" is on the page, on the social card, and in the repo
+# description. It is the claim this audience checks first and the one it is
+# least forgiving about, because checking costs ten seconds of devtools.
+#
+# It is also the claim we were worst at verifying. Three of us cleared it
+# independently — empty console, no vendor in 591 KB of built chunks, repeated
+# curls of the live page — and all three were structurally incapable of finding
+# what was there. The console stays silent because a beacon is a Network event.
+# The chunks are clean because Cloudflare injects *after* our build, at the
+# edge. The curls were clean because they did not send `Accept: text/html`.
+#
+# So this does not look for one vendor. Any third-party script origin on a page
+# claiming no telemetry is a finding, whether we put it there or a dashboard
+# toggle did. The site is self-hosted fonts and its own bundle; it has no
+# legitimate reason to load executable code from anywhere else.
+NO_TELEMETRY = re.compile(r"no telemetry", re.I)
+FIRST_PARTY = ("portfoliodb.app", "/_next/", "/static/")
+SCRIPT_SRC = re.compile(r"""<script[^>]+src=["']([^"']+)["']""", re.I)
+
+
+def third_party_scripts(markup: str) -> list[str]:
+    """Script origins the page loads from somewhere other than itself."""
+    external = []
+    for src in SCRIPT_SRC.findall(markup):
+        if src.startswith(("http://", "https://")) and not any(p in src for p in FIRST_PARTY):
+            external.append(re.sub(r"^https?://([^/]+).*", r"\1", src))
+    return sorted(dict.fromkeys(external))
+
 
 def rendered_text(markup: str) -> str:
     """HTML to the text a reader actually sees, so markup cannot hide a claim."""
@@ -98,7 +126,28 @@ def rendered_text(markup: str) -> str:
 
 
 def fetch(url: str) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "portfoliodb-drift-guard"})
+    # `Accept: text/html` is load-bearing, not politeness. Cloudflare injects
+    # edge-side HTML — the Web Analytics RUM beacon among it — only when the
+    # request accepts HTML. It keys on this header, not on User-Agent: measured
+    # 2026-08-15 against the live site, varying one header at a time.
+    #
+    #   UA alone                    -> 0 matches
+    #   UA + Accept: text/html      -> 1
+    #   UA + Sec-Fetch-Mode         -> 0
+    #   Accept: text/html, no UA    -> 1
+    #
+    # urllib defaults to `Accept: */*`, so this guard spent its whole life
+    # fetching a document no browser is ever served. It reported the site clean
+    # for a day while a third-party analytics script was live on it, and so did
+    # every hand-run `curl -A "Mozilla/5.0"`. A guard that asserts on a variant
+    # of the page nobody receives is worse than no guard, because it is believed.
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "portfoliodb-drift-guard",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
         return response.read().decode("utf-8", errors="replace")
 
@@ -135,6 +184,22 @@ def check(markup: str) -> list[str]:
         failures.append(
             "site sells MCP but never names PORTFOLIODB_MCP_TOKEN — its install cannot reach the "
             "feature it advertises (the server raises on an empty token)."
+        )
+
+    # Reported whether or not the page says "no telemetry", because a third
+    # party executing on this site is worth knowing about either way — but the
+    # message names the contradiction when the claim is present, since that is
+    # what turns a dependency into a credibility problem.
+    for origin in third_party_scripts(markup):
+        claim = (
+            'site says "no telemetry" and '
+            if NO_TELEMETRY.search(text)
+            else "site "
+        )
+        failures.append(
+            f"{claim}loads a third-party script from {origin}. This is served to browsers "
+            "(Accept: text/html) and is invisible to a source grep, because Cloudflare injects "
+            "at the edge after the build. Disable it at the dashboard, or change the copy."
         )
 
     return failures
