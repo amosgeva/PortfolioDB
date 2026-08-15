@@ -62,7 +62,7 @@ import urllib.request
 # Both live hostnames, because both answer 200 with the byte-identical document
 # and neither redirects to the other (measured 2026-08-15).
 #
-# This is the single list of hostnames that are us — FIRST_PARTY_HOSTS below is
+# This is the single list of hostnames that are us — OUR_HOSTS below is
 # derived from it rather than repeated. Two constants that must agree, kept in
 # step by a comment asking the next person to remember, is the exact failure
 # this repo already guards against three other times: the README's test count,
@@ -153,12 +153,48 @@ NO_TELEMETRY = re.compile(r"no telemetry", re.I)
 # disagreeing is how a newly-added surface would get its own bundle reported as
 # a third-party origin — a false positive, and a guard that cries wolf gets
 # switched off.
-FIRST_PARTY_HOSTS = tuple(
-    dict.fromkeys(
-        urllib.parse.urlsplit(url).netloc.split("@")[-1].split(":")[0].lower()
-        for url in DEFAULT_URLS
-    )
-)
+#
+# These hosts are *always* ours. They are not the whole first-party set for a
+# given run — see first_party_hosts() below, which adds the surface actually
+# being checked.
+def host_of(url: str) -> str:
+    """The hostname alone: userinfo and port stripped, lowercased.
+
+    Never a substring test against the whole URL. `https://portfoliodb.app@evil.test/`
+    reads as first-party to a human skimming and resolves to `evil.test`; parsing
+    is what makes that fall out for free instead of needing its own rule.
+    """
+    return urllib.parse.urlsplit(url).netloc.split("@")[-1].split(":")[0].lower()
+
+
+OUR_HOSTS = tuple(dict.fromkeys(host_of(url) for url in DEFAULT_URLS))
+
+
+def first_party_hosts(url: str) -> tuple[str, ...]:
+    """Hosts whose scripts are ours, *for the surface being checked*.
+
+    `OUR_HOSTS` alone is right for the scheduled run and wrong for the dispatch
+    path — which exists precisely to point this at a surface that is not in
+    `DEFAULT_URLS`. Aimed at a preview deploy, the guard reported that deploy's
+    own bundle as a third-party origin:
+
+        https://portfoliodb-app.workers.dev/_next/static/chunks/main.js
+        -> ['portfoliodb-app.workers.dev']
+
+    The host serving the document is first-party for that document by
+    definition, so that is a pure false positive — in the one file that argues
+    twice that a guard which cries wolf gets switched off.
+
+    Union rather than replacement, because the apex and www serve the identical
+    page: checking one must not report an absolute URL to the other as
+    third-party.
+
+    Taken from the URL *requested*, never the one that answered. Trusting the
+    landed host would let a redirect widen the allowlist — a hijacked surface
+    would vouch for its own injected origin, and the redirect reporting added
+    alongside this exists to make redirects visible rather than absorbed.
+    """
+    return tuple(dict.fromkeys(OUR_HOSTS + (host_of(url),)))
 
 # Path prefixes belong to *relative* sources only, where there is no host to
 # parse and the path is genuinely ours. Applying them to absolute URLs is what
@@ -239,21 +275,26 @@ def script_sources(markup: str) -> list[str]:
 EDGE_INJECTED = "/cdn-cgi/"
 
 
-def injected_scripts(markup: str) -> list[str]:
+def injected_scripts(markup: str, first_party: tuple[str, ...]) -> list[str]:
     """Scripts the page executes that our build did not put there.
 
     Two shapes, because they fail differently: an absolute URL to someone
     else's origin, and a same-origin `/cdn-cgi/` path. Both arrive through a
     vendor toggle rather than a merge, which is why neither is visible to any
     check that reads the repo.
+
+    `first_party` is required rather than defaulted to `OUR_HOSTS`. A default
+    here is the same failure this file already carries three warnings about:
+    the caller silently gets a host set that has nothing to do with the page it
+    just fetched, and the answer looks the same either way.
     """
     found = []
     for src in script_sources(markup):
         parts = urllib.parse.urlsplit(src)
         if parts.scheme or parts.netloc:
             # Absolute (or protocol-relative). Judge it on the host alone.
-            host = parts.netloc.split("@")[-1].split(":")[0].lower()
-            if host not in FIRST_PARTY_HOSTS:
+            host = host_of(src)
+            if host not in first_party:
                 found.append(host or src)
         elif EDGE_INJECTED in parts.path:
             found.append(f"{parts.path} (Cloudflare edge injection, same-origin)")
@@ -302,7 +343,15 @@ def fetch(url: str) -> tuple[str, str]:
         return response.url, response.read().decode("utf-8", errors="replace")
 
 
-def check(markup: str) -> list[str]:
+def check(markup: str, first_party: tuple[str, ...]) -> list[str]:
+    """Every drift finding on one surface.
+
+    Takes the surface's first-party host set rather than reading a module
+    constant, because it never learned which URL produced the markup it was
+    handed — so the script-origin check judged every surface against the two
+    hostnames in `DEFAULT_URLS`, including the dispatch runs that exist to check
+    a third one.
+    """
     text = rendered_text(markup)
     failures = []
 
@@ -340,7 +389,7 @@ def check(markup: str) -> list[str]:
     # party executing on this site is worth knowing about either way — but the
     # message names the contradiction when the claim is present, since that is
     # what turns a dependency into a credibility problem.
-    for origin in injected_scripts(markup):
+    for origin in injected_scripts(markup, first_party):
         claim = (
             'site says "no telemetry" and '
             if NO_TELEMETRY.search(text)
@@ -373,7 +422,7 @@ def main(argv: list[str]) -> int:
             continue
 
         where = url if landed == url else f"{url} (redirected to {landed})"
-        failures = check(markup)
+        failures = check(markup, first_party_hosts(url))
         # Findings are prefixed with the surface now that there is more than
         # one. An unattributed "site says ..." would send someone to fix the
         # apex for a finding that only exists on www.
