@@ -108,14 +108,35 @@ NO_TELEMETRY = re.compile(r"no telemetry", re.I)
 FIRST_PARTY = ("portfoliodb.app", "/_next/", "/static/")
 SCRIPT_SRC = re.compile(r"""<script[^>]+src=["']([^"']+)["']""", re.I)
 
+# `/cdn-cgi/` is Cloudflare's reserved path. Nothing our build produces is
+# served from it, so a script there is edge-injected by definition: Rocket
+# Loader, Email Obfuscation and Bot Fight Mode all land here, and all three are
+# dashboard toggles rather than commits.
+#
+# It is checked separately because it is **same-origin**, and the third-party
+# check below cannot see it — that check keys on an absolute off-site URL, which
+# is the one shape this week's beacon happened to take. Catching only the shape
+# that already bit us is how the previous version of this guard passed for a
+# day. Not currently triggered; added while the reason is still legible.
+EDGE_INJECTED = "/cdn-cgi/"
 
-def third_party_scripts(markup: str) -> list[str]:
-    """Script origins the page loads from somewhere other than itself."""
-    external = []
+
+def injected_scripts(markup: str) -> list[str]:
+    """Scripts the page executes that our build did not put there.
+
+    Two shapes, because they fail differently: an absolute URL to someone
+    else's origin, and a same-origin `/cdn-cgi/` path. Both arrive through a
+    vendor toggle rather than a merge, which is why neither is visible to any
+    check that reads the repo.
+    """
+    found = []
     for src in SCRIPT_SRC.findall(markup):
-        if src.startswith(("http://", "https://")) and not any(p in src for p in FIRST_PARTY):
-            external.append(re.sub(r"^https?://([^/]+).*", r"\1", src))
-    return sorted(dict.fromkeys(external))
+        if src.startswith(("http://", "https://")):
+            if not any(part in src for part in FIRST_PARTY):
+                found.append(re.sub(r"^https?://([^/]+).*", r"\1", src))
+        elif EDGE_INJECTED in src:
+            found.append(f"{src} (Cloudflare edge injection, same-origin)")
+    return sorted(dict.fromkeys(found))
 
 
 def rendered_text(markup: str) -> str:
@@ -190,16 +211,16 @@ def check(markup: str) -> list[str]:
     # party executing on this site is worth knowing about either way — but the
     # message names the contradiction when the claim is present, since that is
     # what turns a dependency into a credibility problem.
-    for origin in third_party_scripts(markup):
+    for origin in injected_scripts(markup):
         claim = (
             'site says "no telemetry" and '
             if NO_TELEMETRY.search(text)
             else "site "
         )
         failures.append(
-            f"{claim}loads a third-party script from {origin}. This is served to browsers "
-            "(Accept: text/html) and is invisible to a source grep, because Cloudflare injects "
-            "at the edge after the build. Disable it at the dashboard, or change the copy."
+            f"{claim}executes a script our build did not produce: {origin}. This is served to "
+            "browsers (Accept: text/html) and is invisible to a source grep, because it is "
+            "injected at the edge after the build. Disable it at the dashboard, or change the copy."
         )
 
     return failures
