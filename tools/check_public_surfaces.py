@@ -39,6 +39,7 @@ import html
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DEFAULT_URL = "https://portfoliodb.app/"
@@ -105,7 +106,25 @@ MCP_TOKEN = re.compile(r"PORTFOLIODB_MCP_TOKEN")
 # toggle did. The site is self-hosted fonts and its own bundle; it has no
 # legitimate reason to load executable code from anywhere else.
 NO_TELEMETRY = re.compile(r"no telemetry", re.I)
-FIRST_PARTY = ("portfoliodb.app", "/_next/", "/static/")
+
+# Matched against the parsed **host**, never as a substring of the whole URL.
+# The first version of this check tested `"portfoliodb.app" in src` alongside
+# path fragments, which cleared far more than it meant to:
+#
+#   https://cdn.some-vendor.com/static/analytics.js   -> contains "/static/"
+#   https://portfoliodb.app.evil.test/t.js            -> contains "portfoliodb.app"
+#
+# Both would have passed as first-party. This week's beacon only tripped it by
+# luck — `https://static.cloudflareinsights.com/` has `//static.`, not
+# `/static/` — and `/static/` is one of the most common CDN paths there is. A
+# vendor one path segment different would have been waved through.
+FIRST_PARTY_HOSTS = ("portfoliodb.app", "www.portfoliodb.app")
+
+# Path prefixes belong to *relative* sources only, where there is no host to
+# parse and the path is genuinely ours. Applying them to absolute URLs is what
+# created the hole above.
+FIRST_PARTY_PATHS = ("/_next/", "/static/")
+
 SCRIPT_SRC = re.compile(r"""<script[^>]+src=["']([^"']+)["']""", re.I)
 
 # `/cdn-cgi/` is Cloudflare's reserved path. Nothing our build produces is
@@ -131,11 +150,16 @@ def injected_scripts(markup: str) -> list[str]:
     """
     found = []
     for src in SCRIPT_SRC.findall(markup):
-        if src.startswith(("http://", "https://")):
-            if not any(part in src for part in FIRST_PARTY):
-                found.append(re.sub(r"^https?://([^/]+).*", r"\1", src))
-        elif EDGE_INJECTED in src:
-            found.append(f"{src} (Cloudflare edge injection, same-origin)")
+        parts = urllib.parse.urlsplit(src)
+        if parts.scheme or parts.netloc:
+            # Absolute (or protocol-relative). Judge it on the host alone.
+            host = parts.netloc.split("@")[-1].split(":")[0].lower()
+            if host not in FIRST_PARTY_HOSTS:
+                found.append(host or src)
+        elif EDGE_INJECTED in parts.path:
+            found.append(f"{parts.path} (Cloudflare edge injection, same-origin)")
+        elif not parts.path.startswith(FIRST_PARTY_PATHS):
+            found.append(f"{parts.path} (unrecognised same-origin script path)")
     return sorted(dict.fromkeys(found))
 
 
