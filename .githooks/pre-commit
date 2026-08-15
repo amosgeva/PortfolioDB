@@ -59,4 +59,15 @@ if ! out=$(cd app && "$python" -m pytest tests/ -q --no-header 2>&1); then
 fi
 echo "$out" | tail -1
 
+# The drift guard's own cases. No database and no network — every case is a pure
+# function over markup — so this is fast and cannot fail because something else
+# is down.
+echo "pre-commit: tools/tests"
+if ! out=$("$python" -m pytest tools/tests/ -q --no-header 2>&1); then
+    echo "$out" | tail -25
+    echo "pre-commit: drift guard suite failed" >&2
+    exit 1
+fi
+echo "$out" | tail -1
+
 echo "pre-commit: ok"
