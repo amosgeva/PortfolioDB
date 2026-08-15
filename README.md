@@ -4,6 +4,8 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Container image](https://img.shields.io/badge/ghcr.io-portfoliodb-2496ed?logo=docker&logoColor=white)](https://github.com/amosgeva/PortfolioDB/pkgs/container/portfoliodb)
 
+**[portfoliodb.app](https://portfoliodb.app)** — the project's front page.
+
 **Keep your own up-to-date record of what you hold, across every broker you use,
 in one place you control.** Split across two brokers and a pension account, the
 only place your actual position exists is a spreadsheet you maintain by hand.
