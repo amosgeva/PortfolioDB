@@ -1,6 +1,6 @@
 """Assert the marketing site does not contradict this repo.
 
-    python tools/check_public_surfaces.py [URL]
+    python tools/check_public_surfaces.py [URL ...]
 
 CI already guards `README.md` and `docs/*.md` against hand-maintained counts and
 hand-written patch pins, because both went stale three times in three days. That
@@ -29,8 +29,24 @@ Two things make this work rather than merely look like it works:
   redden a build for a code change that had nothing to do with it. A red run here
   means the *site* drifted, and the fix is on the site.
 
-Exit 0 clean, 1 on drift, 2 if the site could not be fetched (an outage is not a
-drift finding and should not be reported as one).
+Exit 0 clean, 1 on drift, 2 if a surface could not be fetched (an outage is not a
+drift finding and should not be reported as one). Drift outranks an outage: with
+several surfaces, a real finding on one must not be masked by the other being
+briefly unreachable.
+
+**"The site" is more than one URL.** Every check run during the 2026-08-15
+telemetry incident — three people, a dozen commands, and the first version of
+this guard — fetched `https://portfoliodb.app/` and reported on "the site".
+`www.portfoliodb.app` also answers 200 and serves the page directly rather than
+redirecting, so a stranger can land on a surface nothing was looking at. That
+matters for this failure specifically because **Cloudflare Web Analytics is
+configured per hostname**: the entry that was switched off covers the apex, and
+an entry for `www` would be a separate row with its own automatic-installation
+toggle.
+
+So the default is every hostname a reader can reach, checked in one run. Not two
+workflow steps: a failing apex would short-circuit `www` and hide a problem the
+two surfaces almost certainly share, turning one fix into two round trips.
 """
 
 from __future__ import annotations
@@ -43,7 +59,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-DEFAULT_URL = "https://portfoliodb.app/"
+# Both live hostnames, because both answer 200 with the byte-identical document
+# and neither redirects to the other (measured 2026-08-15).
+#
+# This is the single list of hostnames that are us — FIRST_PARTY_HOSTS below is
+# derived from it rather than repeated. Two constants that must agree, kept in
+# step by a comment asking the next person to remember, is the exact failure
+# this repo already guards against three other times: the README's test count,
+# the compose pin, the docs' image tag. Adding a surface here should not be able
+# to leave the script-origin check judging it third-party.
+DEFAULT_URLS = (
+    "https://portfoliodb.app/",
+    "https://www.portfoliodb.app/",
+)
 TIMEOUT = 30
 
 # The rule is not "no numbers" — it is "no *precise* count of something that
@@ -119,7 +147,18 @@ NO_TELEMETRY = re.compile(r"no telemetry", re.I)
 # luck — `https://static.cloudflareinsights.com/` has `//static.`, not
 # `/static/` — and `/static/` is one of the most common CDN paths there is. A
 # vendor one path segment different would have been waved through.
-FIRST_PARTY_HOSTS = ("portfoliodb.app", "www.portfoliodb.app")
+#
+# Derived from DEFAULT_URLS, not typed out again: a host we serve the page from
+# is a host our own scripts legitimately come from, and the two lists silently
+# disagreeing is how a newly-added surface would get its own bundle reported as
+# a third-party origin — a false positive, and a guard that cries wolf gets
+# switched off.
+FIRST_PARTY_HOSTS = tuple(
+    dict.fromkeys(
+        urllib.parse.urlsplit(url).netloc.split("@")[-1].split(":")[0].lower()
+        for url in DEFAULT_URLS
+    )
+)
 
 # Path prefixes belong to *relative* sources only, where there is no host to
 # parse and the path is genuinely ours. Applying them to absolute URLs is what
@@ -230,7 +269,7 @@ def rendered_text(markup: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(detagged))
 
 
-def fetch(url: str) -> str:
+def fetch(url: str) -> tuple[str, str]:
     # `Accept: text/html` is load-bearing, not politeness. Cloudflare injects
     # edge-side HTML — the Web Analytics RUM beacon among it — only when the
     # request accepts HTML. It keys on this header, not on User-Agent: measured
@@ -253,8 +292,14 @@ def fetch(url: str) -> str:
             "Accept": "text/html,application/xhtml+xml",
         },
     )
+    # The URL that answered is returned alongside the body, because urllib
+    # follows redirects silently. If `www` is ever pointed at the apex, this
+    # would otherwise print "www...: no drift" for a document fetched from
+    # somewhere else — the same mistake as attributing a result to a state that
+    # did not produce it, which is what made today's isolation table so easy to
+    # misread after the fix landed.
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-        return response.read().decode("utf-8", errors="replace")
+        return response.url, response.read().decode("utf-8", errors="replace")
 
 
 def check(markup: str) -> list[str]:
@@ -311,22 +356,38 @@ def check(markup: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    url = argv[1] if len(argv) > 1 else DEFAULT_URL
-    try:
-        markup = fetch(url)
-    except (urllib.error.URLError, TimeoutError) as exc:
-        print(f"::warning::could not fetch {url} ({exc}) — not a drift finding")
-        return 2
+    urls = argv[1:] or list(DEFAULT_URLS)
 
-    failures = check(markup)
-    for failure in failures:
-        print(f"::error::{failure}")
-    if failures:
-        print(f"\n{len(failures)} drift finding(s) against {url}")
+    drifted = False
+    unreachable = False
+    # Every surface is checked even after one of them fails, so a single run
+    # reports the whole picture. The findings are almost always the same on both
+    # hostnames — they serve the same document — and discovering that one host
+    # at a time would be a self-inflicted second round trip.
+    for url in dict.fromkeys(urls):
+        try:
+            landed, markup = fetch(url)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            print(f"::warning::could not fetch {url} ({exc}) — not a drift finding")
+            unreachable = True
+            continue
+
+        where = url if landed == url else f"{url} (redirected to {landed})"
+        failures = check(markup)
+        # Findings are prefixed with the surface now that there is more than
+        # one. An unattributed "site says ..." would send someone to fix the
+        # apex for a finding that only exists on www.
+        for failure in failures:
+            print(f"::error::{where}: {failure}")
+        if failures:
+            print(f"\n{len(failures)} drift finding(s) against {where}")
+            drifted = True
+        else:
+            print(f"{where}: no drift against the repo")
+
+    if drifted:
         return 1
-
-    print(f"{url}: no drift against the repo")
-    return 0
+    return 2 if unreachable else 0
 
 
 if __name__ == "__main__":
