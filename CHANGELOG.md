@@ -11,6 +11,10 @@ a computation change you should read before applying.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.1.3] — 2026-08-15
+
 ### Fixed
 
 - **A fresh `docker compose up` installed the 1.0 line, not 1.1.** The compose
@@ -36,6 +40,14 @@ a computation change you should read before applying.
   guard added in 1.0.3 would never have caught `:1.0`, because `:1.0` is not a
   patch pin — it is a slower version of the same rot, and it outlived two minor
   releases unnoticed. Only the bare major may be written down now.
+
+### Upgrading
+
+**The compose file is fetched from `main`, so this fix is already live for a new
+install** — it does not wait on this release. Re-download `docker-compose.yml` if
+you installed before it, or set `PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1`
+in `.env`. No migration in this release; if you are crossing 1.0.x → 1.1.x, run
+`apply_schema.py` afterwards for 1.1.0's migration.
 
 ## [1.1.2] — 2026-08-15
 
@@ -260,7 +272,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.3
 [1.1.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.2
 [1.1.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.1
 [1.1.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.0
