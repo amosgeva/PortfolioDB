@@ -15,14 +15,21 @@
 # Shared by every service running the app image (see app/Dockerfile: one image,
 # different commands).
 x-app-base: &app-base
-  # Defaults to the 1.0 line rather than :latest — a released build with a
-  # revision anyone can resolve, floating forward across patch releases but never
-  # across a major. The README tells you to pin rather than track latest; this
-  # agrees with it. To hold one exact build, set PORTFOLIODB_IMAGE in .env to the
-  # patch tag from the release you want. Image tags carry no `v`, unlike the git
-  # tags. No patch number is written down here on purpose: the one that used to be
-  # went stale in four hours.
-  image: ${PORTFOLIODB_IMAGE:-ghcr.io/amosgeva/portfoliodb:1.0}
+  # Defaults to the 1 line rather than :latest — a released build with a revision
+  # anyone can resolve, floating forward across patch *and minor* releases but
+  # never across a major. The README tells you to pin rather than track latest;
+  # this agrees with it. To hold one exact build, set PORTFOLIODB_IMAGE in .env to
+  # the patch tag from the release you want. Image tags carry no `v`, unlike the
+  # git tags. No patch number is written down here on purpose: the one that used
+  # to be went stale in four hours.
+  #
+  # `:1.0` sat here through 1.1.0 and 1.1.1, which meant a fresh install got the
+  # 1.0 line while the README's feature list already described the Markets strip,
+  # and `docker compose pull` — the upgrade this file tells you to run — never
+  # crossed the minor boundary to fix it. Nothing about that was deliberate: the
+  # sentence above it, and the two in the README, all described `:1`. The minor
+  # component is the part that must not be written down here.
+  image: ${PORTFOLIODB_IMAGE:-ghcr.io/amosgeva/portfoliodb:1}
   restart: unless-stopped
   # The whole .env reaches the container this way — LLM keys, the FD key, the
   # display name, the timezone — so adding a key never means editing compose.
