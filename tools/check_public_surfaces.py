@@ -68,6 +68,15 @@ PATCH_PIN = re.compile(r"portfoliodb:\d+\.\d+\.\d+")
 # the funnel. Guarded permanently so it cannot silently disappear on a redeploy.
 OG_IMAGE = re.compile(r"""<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["']""", re.I)
 
+# `summary` renders a small square thumbnail; `summary_large_image` renders the
+# card. Pinned separately from the image because nothing in the site's source
+# sets it — Next infers it from the presence of `twitter-image.png`, so it is
+# one file rename away from silently reverting to a thumbnail with the card
+# still sitting in the repo, present and unused.
+LARGE_CARD = re.compile(
+    r"""<meta[^>]+name=["']twitter:card["'][^>]+content=["']summary_large_image["']""", re.I
+)
+
 # The site sells the MCP server as its differentiator and hands the reader an
 # install that never names the variable that server refuses to start without
 # (app/mcp/auth.py raises on an empty token). The highest-intent visitor is the
@@ -110,6 +119,11 @@ def check(markup: str) -> list[str]:
     if not OG_IMAGE.search(markup):
         failures.append(
             "site has no og:image/twitter:image — a posted link previews as grey text in every feed."
+        )
+    elif not LARGE_CARD.search(markup):
+        failures.append(
+            "site has a card image but twitter:card is not summary_large_image — it previews as a "
+            "small square thumbnail instead of the card."
         )
 
     if MCP_FEATURE.search(text) and not MCP_TOKEN.search(text):
