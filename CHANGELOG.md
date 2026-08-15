@@ -6,30 +6,51 @@ stored, or what an upgrade requires — because the README tells you to upgrade 
 run it against your own records.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Versions follow [semver](https://semver.org/): a major bump means a migration or
-a computation change you should read before applying.
+Versions follow [semver](https://semver.org/). **Read the entry before you
+upgrade whatever the bump size** — a migration or a computation change can arrive
+in a *minor*, and one already has: 1.1.0 added
+`sql/migrations/002_market_benchmarks.sql`. The compose default floats the major
+line (`:1`), so `docker compose pull` crosses a minor boundary on its own. A
+major means something the upgrade cannot do for you at all. Every entry that
+needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **This file's own header said only a major bump carries a migration.** It did
+  not: 1.1.0 was a minor and added `sql/migrations/002_market_benchmarks.sql`.
+  Under `:1.0` the contradiction never reached anyone, because a default install
+  could not cross a minor. Floating the default to `:1` in 1.1.3 makes it
+  reachable — a reader who took the header at face value would pull a minor, skip
+  the schema step, and land on the traceback 1.1.1 turned into a legible error.
+  The header now says to read the entry whatever the bump size, and the 1.1.0
+  entry carries a dated correction rather than a rewrite.
+- **An entry may name a version; it may not say what a floating tag *currently*
+  resolves to.** The 1.1.3 entry said `:1` "resolves to the current 1.1.2" — true
+  when it was written into `[Unreleased]`, and falsified by the release it was cut
+  into. `CHANGELOG.md` is exempt from CI's pin grep on purpose, because a
+  changelog must name versions; this is the narrower rule that survives that
+  exemption. The sentence now names the 1.1 line, which does not move.
 
 ## [1.1.3] — 2026-08-15
 
 ### Fixed
 
 - **A fresh `docker compose up` installed the 1.0 line, not 1.1.** The compose
-  default was `ghcr.io/amosgeva/portfoliodb:1.0`, which resolves to 1.0.3 — so
+  default was `ghcr.io/amosgeva/portfoliodb:1.0`, which resolved to 1.0.3 — so
   anyone following the quick start got an image without the Markets strip, while
   the README's "What it does" list described it. It is now `:1`, which resolves
-  to the current 1.1.2.
+  to the current 1.1 line.
   - Nothing about `:1.0` was deliberate: the comment above it in compose, and
     both sentences about it in the README, all described major-line behaviour
     ("never a surprise major") — which is `:1`. Only the value said otherwise.
   - **This was not self-correcting.** `docker compose pull`, the upgrade this
     repo prints, cannot cross a minor boundary, so an install pinned at `:1.0`
     would have stayed on 1.0.x indefinitely.
-  - **If you already installed from `:1.0`**, you are on 1.0.3. Pull this compose
-    file (or set `PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1` in `.env`),
+  - **If you already installed from `:1.0`**, you are on the 1.0 line, whatever
+    it last shipped — 1.0.3 as of this release. Pull this compose file (or set
+    `PORTFOLIODB_IMAGE=ghcr.io/amosgeva/portfoliodb:1` in `.env`),
     then `docker compose pull && docker compose up -d` and run
     `apply_schema.py` — 1.1.0 added `sql/migrations/002_market_benchmarks.sql`,
     and skipping it is what produced the traceback fixed in 1.1.1.
@@ -147,6 +168,13 @@ minor versions**, so a default install does *not* pick this up automatically.
 That is deliberate — no surprise features — and it means changing
 `PORTFOLIODB_IMAGE` to `ghcr.io/amosgeva/portfoliodb:1.1` (or `:1`, which floats
 across minors within 1.x).
+
+> **Correction, 2026-08-15.** The paragraph above is left as written because it
+> is what this release shipped, but two of its claims are no longer true. The
+> compose default is now `:1`, so a default install *does* pick this up — see
+> [1.1.3]. And "that is deliberate" was wrong when written: nothing chose
+> `:1.0` over `:1`; the surrounding prose described the major line and only the
+> value disagreed.
 
 ## [1.0.3] — 2026-08-14
 
