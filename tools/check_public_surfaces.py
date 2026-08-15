@@ -1,6 +1,6 @@
 """Assert the marketing site does not contradict this repo.
 
-    python tools/check_public_surfaces.py [URL]
+    python tools/check_public_surfaces.py [URL ...]
 
 CI already guards `README.md` and `docs/*.md` against hand-maintained counts and
 hand-written patch pins, because both went stale three times in three days. That
@@ -29,8 +29,24 @@ Two things make this work rather than merely look like it works:
   redden a build for a code change that had nothing to do with it. A red run here
   means the *site* drifted, and the fix is on the site.
 
-Exit 0 clean, 1 on drift, 2 if the site could not be fetched (an outage is not a
-drift finding and should not be reported as one).
+Exit 0 clean, 1 on drift, 2 if a surface could not be fetched (an outage is not a
+drift finding and should not be reported as one). Drift outranks an outage: with
+several surfaces, a real finding on one must not be masked by the other being
+briefly unreachable.
+
+**"The site" is more than one URL.** Every check run during the 2026-08-15
+telemetry incident — three people, a dozen commands, and the first version of
+this guard — fetched `https://portfoliodb.app/` and reported on "the site".
+`www.portfoliodb.app` also answers 200 and serves the page directly rather than
+redirecting, so a stranger can land on a surface nothing was looking at. That
+matters for this failure specifically because **Cloudflare Web Analytics is
+configured per hostname**: the entry that was switched off covers the apex, and
+an entry for `www` would be a separate row with its own automatic-installation
+toggle.
+
+So the default is every hostname a reader can reach, checked in one run. Not two
+workflow steps: a failing apex would short-circuit `www` and hide a problem the
+two surfaces almost certainly share, turning one fix into two round trips.
 """
 
 from __future__ import annotations
@@ -43,7 +59,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-DEFAULT_URL = "https://portfoliodb.app/"
+# Both live hostnames, because both answer 200 with the byte-identical document
+# and neither redirects to the other (measured 2026-08-15).
+#
+# This is the single list of hostnames that are us — OUR_HOSTS below is
+# derived from it rather than repeated. Two constants that must agree, kept in
+# step by a comment asking the next person to remember, is the exact failure
+# this repo already guards against three other times: the README's test count,
+# the compose pin, the docs' image tag. Adding a surface here should not be able
+# to leave the script-origin check judging it third-party.
+DEFAULT_URLS = (
+    "https://portfoliodb.app/",
+    "https://www.portfoliodb.app/",
+)
 TIMEOUT = 30
 
 # The rule is not "no numbers" — it is "no *precise* count of something that
@@ -119,7 +147,54 @@ NO_TELEMETRY = re.compile(r"no telemetry", re.I)
 # luck — `https://static.cloudflareinsights.com/` has `//static.`, not
 # `/static/` — and `/static/` is one of the most common CDN paths there is. A
 # vendor one path segment different would have been waved through.
-FIRST_PARTY_HOSTS = ("portfoliodb.app", "www.portfoliodb.app")
+#
+# Derived from DEFAULT_URLS, not typed out again: a host we serve the page from
+# is a host our own scripts legitimately come from, and the two lists silently
+# disagreeing is how a newly-added surface would get its own bundle reported as
+# a third-party origin — a false positive, and a guard that cries wolf gets
+# switched off.
+#
+# These hosts are *always* ours. They are not the whole first-party set for a
+# given run — see first_party_hosts() below, which adds the surface actually
+# being checked.
+def host_of(url: str) -> str:
+    """The hostname alone: userinfo and port stripped, lowercased.
+
+    Never a substring test against the whole URL. `https://portfoliodb.app@evil.test/`
+    reads as first-party to a human skimming and resolves to `evil.test`; parsing
+    is what makes that fall out for free instead of needing its own rule.
+    """
+    return urllib.parse.urlsplit(url).netloc.split("@")[-1].split(":")[0].lower()
+
+
+OUR_HOSTS = tuple(dict.fromkeys(host_of(url) for url in DEFAULT_URLS))
+
+
+def first_party_hosts(url: str) -> tuple[str, ...]:
+    """Hosts whose scripts are ours, *for the surface being checked*.
+
+    `OUR_HOSTS` alone is right for the scheduled run and wrong for the dispatch
+    path — which exists precisely to point this at a surface that is not in
+    `DEFAULT_URLS`. Aimed at a preview deploy, the guard reported that deploy's
+    own bundle as a third-party origin:
+
+        https://portfoliodb-app.workers.dev/_next/static/chunks/main.js
+        -> ['portfoliodb-app.workers.dev']
+
+    The host serving the document is first-party for that document by
+    definition, so that is a pure false positive — in the one file that argues
+    twice that a guard which cries wolf gets switched off.
+
+    Union rather than replacement, because the apex and www serve the identical
+    page: checking one must not report an absolute URL to the other as
+    third-party.
+
+    Taken from the URL *requested*, never the one that answered. Trusting the
+    landed host would let a redirect widen the allowlist — a hijacked surface
+    would vouch for its own injected origin, and the redirect reporting added
+    alongside this exists to make redirects visible rather than absorbed.
+    """
+    return tuple(dict.fromkeys(OUR_HOSTS + (host_of(url),)))
 
 # Path prefixes belong to *relative* sources only, where there is no host to
 # parse and the path is genuinely ours. Applying them to absolute URLs is what
@@ -200,21 +275,26 @@ def script_sources(markup: str) -> list[str]:
 EDGE_INJECTED = "/cdn-cgi/"
 
 
-def injected_scripts(markup: str) -> list[str]:
+def injected_scripts(markup: str, first_party: tuple[str, ...]) -> list[str]:
     """Scripts the page executes that our build did not put there.
 
     Two shapes, because they fail differently: an absolute URL to someone
     else's origin, and a same-origin `/cdn-cgi/` path. Both arrive through a
     vendor toggle rather than a merge, which is why neither is visible to any
     check that reads the repo.
+
+    `first_party` is required rather than defaulted to `OUR_HOSTS`. A default
+    here is the same failure this file already carries three warnings about:
+    the caller silently gets a host set that has nothing to do with the page it
+    just fetched, and the answer looks the same either way.
     """
     found = []
     for src in script_sources(markup):
         parts = urllib.parse.urlsplit(src)
         if parts.scheme or parts.netloc:
             # Absolute (or protocol-relative). Judge it on the host alone.
-            host = parts.netloc.split("@")[-1].split(":")[0].lower()
-            if host not in FIRST_PARTY_HOSTS:
+            host = host_of(src)
+            if host not in first_party:
                 found.append(host or src)
         elif EDGE_INJECTED in parts.path:
             found.append(f"{parts.path} (Cloudflare edge injection, same-origin)")
@@ -230,7 +310,7 @@ def rendered_text(markup: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(detagged))
 
 
-def fetch(url: str) -> str:
+def fetch(url: str) -> tuple[str, str]:
     # `Accept: text/html` is load-bearing, not politeness. Cloudflare injects
     # edge-side HTML — the Web Analytics RUM beacon among it — only when the
     # request accepts HTML. It keys on this header, not on User-Agent: measured
@@ -253,11 +333,25 @@ def fetch(url: str) -> str:
             "Accept": "text/html,application/xhtml+xml",
         },
     )
+    # The URL that answered is returned alongside the body, because urllib
+    # follows redirects silently. If `www` is ever pointed at the apex, this
+    # would otherwise print "www...: no drift" for a document fetched from
+    # somewhere else — the same mistake as attributing a result to a state that
+    # did not produce it, which is what made today's isolation table so easy to
+    # misread after the fix landed.
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-        return response.read().decode("utf-8", errors="replace")
+        return response.url, response.read().decode("utf-8", errors="replace")
 
 
-def check(markup: str) -> list[str]:
+def check(markup: str, first_party: tuple[str, ...]) -> list[str]:
+    """Every drift finding on one surface.
+
+    Takes the surface's first-party host set rather than reading a module
+    constant, because it never learned which URL produced the markup it was
+    handed — so the script-origin check judged every surface against the two
+    hostnames in `DEFAULT_URLS`, including the dispatch runs that exist to check
+    a third one.
+    """
     text = rendered_text(markup)
     failures = []
 
@@ -295,7 +389,7 @@ def check(markup: str) -> list[str]:
     # party executing on this site is worth knowing about either way — but the
     # message names the contradiction when the claim is present, since that is
     # what turns a dependency into a credibility problem.
-    for origin in injected_scripts(markup):
+    for origin in injected_scripts(markup, first_party):
         claim = (
             'site says "no telemetry" and '
             if NO_TELEMETRY.search(text)
@@ -311,22 +405,38 @@ def check(markup: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    url = argv[1] if len(argv) > 1 else DEFAULT_URL
-    try:
-        markup = fetch(url)
-    except (urllib.error.URLError, TimeoutError) as exc:
-        print(f"::warning::could not fetch {url} ({exc}) — not a drift finding")
-        return 2
+    urls = argv[1:] or list(DEFAULT_URLS)
 
-    failures = check(markup)
-    for failure in failures:
-        print(f"::error::{failure}")
-    if failures:
-        print(f"\n{len(failures)} drift finding(s) against {url}")
+    drifted = False
+    unreachable = False
+    # Every surface is checked even after one of them fails, so a single run
+    # reports the whole picture. The findings are almost always the same on both
+    # hostnames — they serve the same document — and discovering that one host
+    # at a time would be a self-inflicted second round trip.
+    for url in dict.fromkeys(urls):
+        try:
+            landed, markup = fetch(url)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            print(f"::warning::could not fetch {url} ({exc}) — not a drift finding")
+            unreachable = True
+            continue
+
+        where = url if landed == url else f"{url} (redirected to {landed})"
+        failures = check(markup, first_party_hosts(url))
+        # Findings are prefixed with the surface now that there is more than
+        # one. An unattributed "site says ..." would send someone to fix the
+        # apex for a finding that only exists on www.
+        for failure in failures:
+            print(f"::error::{where}: {failure}")
+        if failures:
+            print(f"\n{len(failures)} drift finding(s) against {where}")
+            drifted = True
+        else:
+            print(f"{where}: no drift against the repo")
+
+    if drifted:
         return 1
-
-    print(f"{url}: no drift against the repo")
-    return 0
+    return 2 if unreachable else 0
 
 
 if __name__ == "__main__":

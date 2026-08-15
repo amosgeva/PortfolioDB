@@ -52,6 +52,14 @@ jobs:
       - name: MCP suite (fast)
         run: python -m pytest app/mcp/tests/ -m "not slow" -q
 
+      # The drift guard's own adversarial cases. This runs on pull_request,
+      # unlike the guard itself: the cases are pure functions over markup with
+      # no network in them, so they cannot redden a build because the site or
+      # Cloudflare had a moment. Only `public-surface-drift.yml` touches the
+      # network, and only on a schedule.
+      - name: Drift guard cases (no network)
+        run: python -m pytest tools/tests/ -q
+
       # Hand-maintained counts in prose went stale three times in 24 hours, so
       # instead of maintaining them we assert that none exist. Any "NNN tests"
       # claim in a tracked markdown file fails here — the vaguer true statement

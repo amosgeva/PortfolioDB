@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Public surface to check'
+        description: 'Public surface to check (blank = every live hostname)'
         required: false
-        default: 'https://portfoliodb.app/'
+        default: ''
 
 permissions:
   contents: read
@@ -43,5 +43,16 @@ jobs:
       # Stdlib only, on purpose: this job must keep working when the site is the
       # only thing that changed, without a dependency install standing between
       # us and the answer.
-      - name: Check the published artefact
-        run: python tools/check_public_surfaces.py "${{ inputs.url || 'https://portfoliodb.app/' }}"
+      # No argument means the script's own default: every hostname a reader can
+      # land on, currently the apex and www. Both answer 200 and neither
+      # redirects, and Cloudflare Web Analytics is configured per hostname — so
+      # checking only the apex proved less than we were reading it as proving.
+      #
+      # The dispatch input goes through `env` rather than straight into the
+      # `run:` string. It is attacker-controllable text being pasted into a
+      # shell command, and `${URL:+"$URL"}` expands to nothing at all when it is
+      # blank, which is exactly the "use the defaults" case.
+      - name: Check the published artefacts
+        env:
+          URL: ${{ inputs.url }}
+        run: python tools/check_public_surfaces.py ${URL:+"$URL"}
