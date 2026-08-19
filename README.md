@@ -1,4 +1,4 @@
-# PortfolioDB
+# PortfolioDB — The Self-Hosted Portfolio Ledger You Own
 
 [![CI](https://github.com/amosgeva/PortfolioDB/actions/workflows/ci.yml/badge.svg)](https://github.com/amosgeva/PortfolioDB/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
