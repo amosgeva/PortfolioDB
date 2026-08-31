@@ -1,0 +1,17 @@
+# Dependencies for the tools/ scripts. Kept out of app/requirements.txt because
+# nothing here ships in the image or runs in CI — these are hand-run utilities.
+#
+#   pip install -r tools/requirements.txt
+#
+# Two separate floors apply, and the higher one wins:
+#
+#   API     >=10.1 — make-social-card.py calls ImageFont.load_default(px), and
+#                    the size argument only arrived in Pillow 10.1. On anything
+#                    older that line is a TypeError at render time.
+#   Security >=12.3 — everything below it carries known CVEs, including
+#                    CVE-2023-50447 (arbitrary code execution) and a run of
+#                    heap-corruption and DoS issues in the image and font
+#                    decoders. A dependency scanner resolves the lowest version
+#                    a specifier allows, so the floor has to be the secure one,
+#                    not merely the one that makes the call signature work.
+Pillow>=12.3,<14

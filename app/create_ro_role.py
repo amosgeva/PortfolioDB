@@ -52,10 +52,15 @@ def main() -> int:
     conn.autocommit = True          # the script carries its own DO block
     try:
         with conn.cursor() as cur:
-            cur.execute(sql.replace(PLACEHOLDER, password))
-            # The SQL only creates the role when absent, so set the password
-            # explicitly — otherwise re-running silently keeps the old one and
-            # the .env lines printed below would be wrong.
+            # The real password never goes into SQL *text*. CREATE ROLE lives
+            # inside a DO block, whose body is a string literal and so cannot
+            # take a bound parameter — splicing a caller-supplied --password in
+            # there would break on a quote and inject on a crafted one. The
+            # throwaway satisfies the syntax; the ALTER below sets the password
+            # for real, bound, and runs whether the role was just created or
+            # already existed (re-running must not silently keep the old one,
+            # or the .env lines printed below would be wrong).
+            cur.execute(sql.replace(PLACEHOLDER, secrets.token_urlsafe(18)))
             cur.execute("ALTER ROLE portfoliodb_ro WITH PASSWORD %s", (password,))
     finally:
         conn.close()

@@ -1,5 +1,6 @@
 """Render docs/images/social-preview.png — the repo's GitHub social card.
 
+    pip install -r tools/requirements.txt
     python tools/make-social-card.py
 
 Committed because a review found "no source file for the card in the repo — the
