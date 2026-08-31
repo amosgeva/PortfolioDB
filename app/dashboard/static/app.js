@@ -151,7 +151,7 @@
     var p = etParts();
     var dow = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[p.weekday];
     var dateStr = p.year + '-' + p.month + '-' + p.day;
-    var mins = (parseInt(p.hour, 10) % 24) * 60 + parseInt(p.minute, 10);
+    var mins = (Number.parseInt(p.hour, 10) % 24) * 60 + Number.parseInt(p.minute, 10);
     if (dow === 0 || dow === 6) return { level: 'closed', label: 'Closed' };
     if (US_HOLIDAYS[dateStr]) return { level: 'closed', label: 'Holiday' };
     if (mins >= 570 && mins < 960) return { level: 'open', label: 'Market open' };   // 09:30–16:00
@@ -1042,7 +1042,7 @@
     $('#losers').innerHTML = losers.length ? losers.map(function (s, i) { return moverRow(s, i+1); }).join('') : '<div class="empty">No data.</div>';
   }
   var heatState = { sector: 'All', query: '' };
-  var SECTORS = (function () { var set = {}; list().forEach(function (s) { set[s.sector] = 1; }); return Object.keys(set).sort(); })();
+  var SECTORS = (function () { var set = {}; list().forEach(function (s) { set[s.sector] = 1; }); return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); }); })();
   function tileHTML(s) { return '<div class="heat__tile" data-sym="' + s.sym + '" style="background:' + heatColor(s.dayPct) + '" title="' + esc(s.name) + ' · ' + F.money(s.price) +
     '"><div><b>' + s.sym + '</b><div class="nm">' + esc(s.name) + '</div></div><div class="pc">' + F.pct(s.dayPct) + '</div></div>'; }
   function heatVisible(s) { if (heatState.sector !== 'All' && s.sector !== heatState.sector) return false;
@@ -1123,10 +1123,10 @@
     var s = get(symIn.value.trim().toUpperCase()); hint.textContent = s ? (s.name + ' · now ' + F.money(s.price)) : ''; });
   if (priceIn) priceIn.addEventListener('input', function () { setInvalid(priceIn, priceErr, ''); });
   if (form) form.addEventListener('submit', function (e) { e.preventDefault();
-    var v = (symIn.value||'').trim().toUpperCase(); var s = get(v); var n = parseFloat(priceIn.value); var ok = true;
+    var v = (symIn.value||'').trim().toUpperCase(); var s = get(v); var n = Number.parseFloat(priceIn.value); var ok = true;
     if (!v) { setInvalid(symIn, symErr, 'Enter a symbol.'); ok = false; }
     else if (!s) { setInvalid(symIn, symErr, 'Unknown symbol in this portfolio.'); ok = false; }
-    if (isNaN(n) || n <= 0) { setInvalid(priceIn, priceErr, 'Enter a price above $0.'); ok = false; }
+    if (Number.isNaN(n) || n <= 0) { setInvalid(priceIn, priceErr, 'Enter a price above $0.'); ok = false; }
     if (!ok) return;
     var cond = condIn.value, target = +n.toFixed(2);
     var met = cond === 'above' ? s.price >= target : s.price <= target;

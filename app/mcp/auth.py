@@ -26,7 +26,7 @@ _APP_DIR = Path(__file__).resolve().parent.parent
 if str(_APP_DIR) not in sys.path:
     sys.path.append(str(_APP_DIR))
 
-from db import _load_env_file_if_needed  # noqa: E402
+from db import _load_env_file_if_needed, parse_env_line  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -97,13 +97,11 @@ def _load_env_file_for_mcp() -> None:
     env_path = _APP_DIR.parent / ".env"
     if not env_path.exists():
         return
-    import re
-    line_re = re.compile(r"^\s*([^#][^=]+?)\s*=\s*(.+?)\s*$")
     for line in env_path.read_text(encoding="utf-8").splitlines():
-        m = line_re.match(line)
-        if not m:
+        parsed = parse_env_line(line)
+        if parsed is None:
             continue
-        key, val = m.group(1), m.group(2)
+        key, val = parsed
         if key.startswith("PORTFOLIODB_MCP_") and not os.getenv(key):
             os.environ[key] = val
 

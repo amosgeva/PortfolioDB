@@ -19,6 +19,7 @@ from psycopg2 import sql
 from app.mcp.deps import get_conn
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
+from app.mcp.services.common import is_nan
 from app.mcp.services.cutoff import Cutoff
 
 
@@ -266,13 +267,13 @@ def unrealized_pnl(
     rows = []
     for _, r in held.iterrows():
         cost = float(r["open_cost"])
-        upnl = float(r["unrealized_pnl"]) if r["unrealized_pnl"] == r["unrealized_pnl"] else None
+        upnl = None if is_nan(r["unrealized_pnl"]) else float(r["unrealized_pnl"])
         rows.append({
             "symbol": r["symbol"],
             "qty": float(r["qty"]),
             "open_cost": cost,
-            "last_price": float(r["last_price"]) if r["last_price"] == r["last_price"] else None,
-            "market_value": float(r["market_value"]) if r["market_value"] == r["market_value"] else None,
+            "last_price": None if is_nan(r["last_price"]) else float(r["last_price"]),
+            "market_value": None if is_nan(r["market_value"]) else float(r["market_value"]),
             "unrealized_pnl": upnl,
             "unrealized_pct": (upnl / cost * 100.0) if (upnl is not None and cost) else None,
         })
@@ -298,7 +299,7 @@ def pnl_by_symbol(
     for _, r in df.iterrows():
         realized = float(r["realized_pnl"])
         unrealized = (
-            float(r["unrealized_pnl"]) if r["unrealized_pnl"] == r["unrealized_pnl"] else 0.0
+            0.0 if is_nan(r["unrealized_pnl"]) else float(r["unrealized_pnl"])
         )
         cost = float(r["open_cost"])
         rows.append({

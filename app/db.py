@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +18,31 @@ class DbConfig:
     password: str
 
 
-_ENV_LINE = re.compile(r"^\s*([^#][^=]+?)\s*=\s*(.+?)\s*$")
+def parse_env_line(line: str) -> tuple[str, str] | None:
+    """Split one `KEY=VALUE` .env line, or None if the line isn't one.
+
+    Blank lines, comments and lines with no `=` are skipped, and a key with an
+    empty value is treated as absent — matching the regex this replaces.
+
+    It replaces a regex rather than joining it because
+    `^\\s*([^#][^=]+?)\\s*=\\s*(.+?)\\s*$` backtracks super-linearly: two lazy
+    quantifiers each flanked by `\\s*` give the engine a lot of ways to fail a
+    long line. Nothing hostile reaches a local .env, so this was never an
+    exploitable ReDoS, but a partition is faster, exact, and legible.
+
+    Lives here, in the one module every entry point already imports, because
+    four files had grown their own copy of that regex: this one, llm.py,
+    mcp/auth.py and streamlit_app.py. They differ only in which keys they keep,
+    which is the caller's business, not the parser's.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    key, _, value = stripped.partition("=")
+    key, value = key.strip(), value.strip()
+    if not key or not value:
+        return None
+    return key, value
 
 
 def _load_env_file_if_needed() -> None:
@@ -38,10 +61,10 @@ def _load_env_file_if_needed() -> None:
         return
     try:
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            m = _ENV_LINE.match(line)
-            if not m:
+            parsed = parse_env_line(line)
+            if parsed is None:
                 continue
-            key, val = m.group(1), m.group(2)
+            key, val = parsed
             if key.startswith("PORTFOLIODB_") and not os.getenv(key):
                 os.environ[key] = val
     except Exception:

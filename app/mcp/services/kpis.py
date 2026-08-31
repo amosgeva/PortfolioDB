@@ -31,6 +31,7 @@ from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import income as income_service
 from app.mcp.services import positions as positions_service
 from app.mcp.services import prices as prices_service
+from app.mcp.services.common import is_nan
 from app.mcp.services.cutoff import Cutoff
 
 
@@ -88,7 +89,7 @@ def portfolio_kpis(
     for _, row in df.iterrows():
         sym = row["symbol"]
         qty = float(row["qty"])
-        last = float(row["last_price"]) if row["last_price"] == row["last_price"] else 0.0
+        last = 0.0 if is_nan(row["last_price"]) else float(row["last_price"])
         prev = prev_map.get(sym)
         if prev is not None:
             daily_change_usd += qty * (last - prev)

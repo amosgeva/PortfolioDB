@@ -201,8 +201,12 @@ class TestOneCutoffEverywhere:
     def test_repeated_calls_are_identical(self, review, stub):
         stub()
         c = make_cutoff()
-        assert (review.portfolio_review_snapshot(cutoff=c)
-                == review.portfolio_review_snapshot(cutoff=c))
+        # Named locals rather than one inline comparison: the assertion is
+        # about repeat calls agreeing, which the inline form hides behind what
+        # looks like `x == x`.
+        first = review.portfolio_review_snapshot(cutoff=c)
+        second = review.portfolio_review_snapshot(cutoff=c)
+        assert first == second
 
 
 class TestReconciliation:

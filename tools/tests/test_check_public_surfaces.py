@@ -10,7 +10,15 @@ judged, and every one was validated by cases that lived only in a chat log:
   4. required quoted attributes        -> could not see `<script src=https://...>`
   5. compared every surface to a constant host list -> flagged a preview
      deploy's own bundle as third-party
-  6. (the boundary, stated rather than patched toward)
+  6. required `name` before `content` in the card tag -> could not see a valid
+     reversed <meta>, and would have failed the check for no reason
+  7. (the boundary, stated rather than patched toward)
+
+Case (6) was found on 2026-08-31 while replacing that pattern for an unrelated
+reason (super-linear backtracking). It is recorded here because it is the same
+*kind* of defect as 1-5 — the guard failing to locate the thing it judges — and
+because not writing down a defect found by accident is precisely the forgetting
+this file exists to stop.
 
 The guard exists because humans forget. Its correctness was being held in place
 by humans remembering. This file is the fix for that, and it is the *only* thing
@@ -235,6 +243,47 @@ def test_first_party_follows_the_surface_being_checked():
     assert APEX == guard.OUR_HOSTS
     assert WWW == guard.OUR_HOSTS
     assert set(PREVIEW) == set(guard.OUR_HOSTS) | {"portfoliodb-app.workers.dev"}
+
+
+@pytest.mark.parametrize(
+    "markup,expected",
+    [
+        pytest.param(
+            '<meta name="twitter:card" content="summary_large_image">',
+            True,
+            id="canonical order",
+        ),
+        pytest.param(
+            '<meta content="summary_large_image" name="twitter:card">',
+            True,
+            id="DEFECT 6 reversed attributes",
+        ),
+        pytest.param(
+            "<meta name='twitter:card' content='summary_large_image'/>",
+            True,
+            id="single quotes, self-closing",
+        ),
+        pytest.param(
+            '<meta name="twitter:card" content="summary">',
+            False,
+            id="small thumbnail, not the card",
+        ),
+        pytest.param(
+            '<meta name="twitter:card"><meta content="summary_large_image">',
+            False,
+            id="split across two tags is not a declaration",
+        ),
+    ],
+)
+def test_large_card_detection(markup, expected):
+    """Defect (6): attribute order is arbitrary in HTML, so it cannot gate the check.
+
+    The reversed case is the one that matters — it is valid markup that a
+    generator may emit at any time, and the old pattern read it as a missing
+    card. The two-tag case guards the other direction: both attributes have to
+    be on the *same* tag to mean anything.
+    """
+    assert guard.has_large_card(markup) is expected
 
 
 def test_first_party_is_required_not_defaulted():
