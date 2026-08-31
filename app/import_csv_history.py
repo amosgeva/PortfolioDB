@@ -42,16 +42,29 @@ import argparse
 import csv
 import glob
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-import pytz
 from dateutil import parser as dtparser
 
 from db import connect, execute, load_config
 
 
-NY_TZ = pytz.timezone("America/New_York")
+# zoneinfo, not pytz. A bare `pytz.timezone("America/New_York")` carries the
+# LMT offset (-4:56, the earliest one in the database) until .localize() picks a
+# real one, and this module handed exactly that object to dateutil as a tzinfos
+# value — so every row with an explicit EST/EDT token was converted at -4:56.
+# ZoneInfo has no such stand-in state: it resolves the offset from the datetime.
+NY_TZ = ZoneInfo("America/New_York")
+
+# The token in the file states its own offset, so honour it literally rather
+# than re-deriving one from the date. It also sidesteps the ambiguous hour each
+# November, where the date alone cannot say which side of the fold a row is on.
+_TZ_TOKENS = {
+    "EST": timezone(timedelta(hours=-5)),
+    "EDT": timezone(timedelta(hours=-4)),
+}
 
 
 def infer_account(comment: str | None, default_account: str, tagged_accounts: list[str]) -> str:
@@ -77,17 +90,15 @@ def parse_snapshot_ts(date_str: str, time_str: str) -> datetime:
     # time_str: 15:59 EDT
     s = f"{date_str.strip()} {time_str.strip()}"
     # Handle timezone tokens like 'EST'/'EDT' explicitly.
-    tzinfos = {
-        "EST": NY_TZ,
-        "EDT": NY_TZ,
-    }
-    dt = dtparser.parse(s, tzinfos=tzinfos)
+    dt = dtparser.parse(s, tzinfos=_TZ_TOKENS)
 
-    # If tzinfo missing, assume New York time.
+    # If tzinfo missing, assume New York time. `.replace()` is the zoneinfo
+    # equivalent of pytz's .localize(): ZoneInfo works out EST vs EDT from the
+    # datetime itself, so there is no separate localise step to forget.
     if dt.tzinfo is None:
-        dt = NY_TZ.localize(dt)
+        dt = dt.replace(tzinfo=NY_TZ)
 
-    return dt.astimezone(pytz.UTC)
+    return dt.astimezone(timezone.utc)
 
 
 BUY_WORDS = {"BUY", "B", "BOT", "BOUGHT", "PURCHASE"}
