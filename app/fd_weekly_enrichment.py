@@ -394,12 +394,14 @@ def main() -> int:
     total_cost = 0.0
 
     db_conn = None
+    persistence_failed = False
     if not args.no_persist:
         try:
             db_conn = connect(load_config())
         except Exception as exc:
             print(f"⚠️ fd_store DB connect failed, continuing without persistence: {exc}")
             db_conn = None
+            persistence_failed = True
 
     def _persist(sym: str, section: str, data: dict[str, Any], fetched_at: datetime | None) -> None:
         nonlocal persisted
@@ -409,12 +411,16 @@ def main() -> int:
         persisted += n
 
     planned = {(sym, sec): (cost, status) for sym, sec, cost, status in cost_rows}
+    attempted = 0
+    failed = 0
     try:
         for sym in symbols:
             fetched[sym] = {}
             for section in sections_for(sym, profile=args.profile, top_movers=top_movers):
                 planned_cost, planned_status = planned.get((sym, section), (0.0, "skipped-budget"))
                 if planned_status == "skipped-budget":
+                    # A deliberate cap, not a failure — excluded from the counts
+                    # the exit code is derived from.
                     fetched[sym][section] = {"_error": "skipped by daily cost cap"}
                     continue
                 cached_payload, fresh = read_cache(sym, section)
@@ -431,8 +437,15 @@ def main() -> int:
                         cached_fetched_at = None
                     _persist(sym, section, data, cached_fetched_at)
                     continue
+                attempted += 1
                 data = request_json(api_key, section, sym)
                 fetched[sym][section] = data
+                if isinstance(data, dict) and data.get("_error"):
+                    # request_json never raises — it retries, then hands back an
+                    # {_error: ...} payload. Without counting them here a total
+                    # API outage looks exactly like a clean run. Counting only;
+                    # the caching and cost accounting below are left as they were.
+                    failed += 1
                 write_cache(sym, section, data)
                 billable += 1
                 total_cost += planned_cost
@@ -445,6 +458,27 @@ def main() -> int:
     print(format_report(symbols, fetched, total_cost, billable, cached))
     if not args.no_persist:
         print(f"DB persistence: {persisted} row(s) upserted across fd_* tables.")
+
+    # Exit code contract. This runs on a schedule, so it has to distinguish "the
+    # job is broken" from "one symbol was flaky" — a run that goes red on every
+    # transient API hiccup gets muted, and then a real outage goes unnoticed too.
+    # Non-zero only when the run could not do the thing it was asked to do:
+    #   * persistence was requested and the database was unreachable, so nothing
+    #     was written and the fd_* tables are silently stale;
+    #   * every single fetch failed, which means the key, the network or the
+    #     vendor is down rather than one endpoint being unhappy.
+    # Partial failures stay 0 and are visible in the report above; the deliberate
+    # skips (--dry-run-cost, no API key, cost cap) return 0 further up.
+    problems = []
+    if persistence_failed:
+        problems.append("database unreachable, nothing persisted")
+    if attempted and failed == attempted:
+        problems.append(f"all {attempted} API call(s) failed")
+    if problems:
+        print("❌ Enrichment failed: " + "; ".join(problems))
+        return 1
+    if failed:
+        print(f"⚠️ Completed with {failed} of {attempted} API call(s) failed.")
     return 0
 
 

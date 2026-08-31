@@ -1,0 +1,9 @@
+# Dependencies for the tools/ scripts. Kept out of app/requirements.txt because
+# nothing here ships in the image or runs in CI — these are hand-run utilities.
+#
+#   pip install -r tools/requirements.txt
+#
+# The >=10.1 floor is load-bearing, not housekeeping: make-social-card.py calls
+# ImageFont.load_default(px), and the size argument only arrived in Pillow 10.1.
+# On anything older that line is a TypeError at render time.
+Pillow>=10.1,<14
