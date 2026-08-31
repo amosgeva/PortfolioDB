@@ -18,6 +18,12 @@ FROM python:3.13-slim
 # Pinned by version and verified by SHA-256 per architecture, so a rebuild can
 # never silently swap the binary. TARGETARCH is supplied by BuildKit, which
 # keeps this working for the multi-arch build in Phase 6.
+#
+# The curl below is -L, so it follows redirects. `--proto '=https'` and
+# `--proto-redir '=https'` keep every hop on TLS: without the second one a
+# redirect to http:// is followed happily, and the download becomes tamperable
+# by anything on the path. The sha256sum check that follows would catch a
+# swapped binary, but only after it had been written to disk.
 ARG SUPERCRONIC_VERSION=v0.2.33
 ARG TARGETARCH
 RUN set -eu; \
@@ -27,7 +33,8 @@ RUN set -eu; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \
-    curl -fsSL -o /usr/local/bin/supercronic \
+    curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      -o /usr/local/bin/supercronic \
       "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH:-amd64}"; \
     echo "${sha}  /usr/local/bin/supercronic" | sha256sum -c -; \
     chmod +x /usr/local/bin/supercronic; \

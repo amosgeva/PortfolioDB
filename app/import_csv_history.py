@@ -43,6 +43,7 @@ import csv
 import glob
 import os
 from datetime import datetime
+from pathlib import Path
 
 import pytz
 from dateutil import parser as dtparser
@@ -183,6 +184,35 @@ def insert_snapshot(conn, ts_utc: datetime, symbol: str, last_price: float, dry_
     )
 
 
+def contained_matches(base_dir: Path, pattern: str) -> tuple[list[str], int]:
+    """Glob `pattern` under `base_dir`, dropping anything that escapes it.
+
+    Returns (sorted file paths, count ignored).
+
+    --dir and --pattern are both caller-supplied and were joined straight into
+    a glob, so `--pattern '../../*.csv'` read outside the directory the
+    operator named — the finding behind this function. Resolving both sides and
+    requiring base_dir to be a genuine parent closes that, and because
+    .resolve() collapses symlinks it also means a link pointing out of the tree
+    is excluded rather than quietly followed.
+
+    Separated from main() so the containment is testable on its own: it is the
+    only security-relevant logic in this script, and it should not need a
+    database and a CSV corpus to exercise.
+    """
+    files: list[str] = []
+    escaped = 0
+    for match in glob.glob(os.path.join(str(base_dir), pattern)):
+        resolved = Path(match).resolve()
+        if not resolved.is_file():
+            continue
+        if base_dir not in resolved.parents:
+            escaped += 1
+            continue
+        files.append(str(resolved))
+    return sorted(files), escaped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True)
@@ -195,7 +225,14 @@ def main():
     args = ap.parse_args()
     tagged_accounts = [t.strip() for t in args.tagged_accounts.split(",") if t.strip()]
 
-    files = sorted(glob.glob(os.path.join(args.dir, args.pattern)))
+    base_dir = Path(args.dir).resolve()
+    if not base_dir.is_dir():
+        print(f"--dir is not a directory: {base_dir}")
+        return
+
+    files, escaped = contained_matches(base_dir, args.pattern)
+    if escaped:
+        print(f"Ignored {escaped} match(es) resolving outside {base_dir}.")
     if not files:
         print("No files found")
         return
