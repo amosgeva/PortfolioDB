@@ -13,7 +13,6 @@ Run via the repo-root launcher (loads .env, serves on 0.0.0.0:8501):
 
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -24,6 +23,10 @@ from pathlib import Path
 import streamlit as st
 
 import branding
+# db is a leaf module — it reads the environment inside load_config(), never at
+# import time — so pulling the .env line parser from it here cannot defeat the
+# _load_dotenv() ordering the imports below depend on.
+from db import parse_env_line
 
 
 def _load_dotenv() -> None:
@@ -34,11 +37,10 @@ def _load_dotenv() -> None:
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if not env_path.exists():
         return
-    line_re = re.compile(r"^\s*([^#][^=]+?)\s*=\s*(.+?)\s*$")
     for line in env_path.read_text(encoding="utf-8").splitlines():
-        m = line_re.match(line)
-        if m and not os.getenv(m.group(1)):
-            os.environ[m.group(1)] = m.group(2)
+        parsed = parse_env_line(line)
+        if parsed and not os.getenv(parsed[0]):
+            os.environ[parsed[0]] = parsed[1]
 
 
 _load_dotenv()

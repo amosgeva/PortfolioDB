@@ -108,9 +108,28 @@ OG_IMAGE = re.compile(r"""<meta[^>]+(?:property|name)=["'](?:og:image|twitter:im
 # sets it — Next infers it from the presence of `twitter-image.png`, so it is
 # one file rename away from silently reverting to a thumbnail with the card
 # still sitting in the repo, present and unused.
-LARGE_CARD = re.compile(
-    r"""<meta[^>]+name=["']twitter:card["'][^>]+content=["']summary_large_image["']""", re.I
-)
+_META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
+_CARD_NAME = re.compile(r"""name=["']twitter:card["']""", re.I)
+_CARD_LARGE = re.compile(r"""content=["']summary_large_image["']""", re.I)
+
+
+def has_large_card(markup: str) -> bool:
+    """True when one <meta> tag declares twitter:card = summary_large_image.
+
+    Was a single pattern with `[^>]+` on both sides of the name attribute,
+    which backtracks super-linearly on a long line of markup — and, worse for a
+    drift guard, only matched when `name` happened to precede `content`. HTML
+    attribute order is arbitrary, so the reversed-but-valid
+
+        <meta content="summary_large_image" name="twitter:card">
+
+    read as a missing card and would have failed the check for no reason.
+    Scanning tag by tag is both linear and order-independent.
+    """
+    return any(
+        _CARD_NAME.search(tag) and _CARD_LARGE.search(tag)
+        for tag in _META_TAG.findall(markup)
+    )
 
 # The site sells the MCP server as its differentiator and hands the reader an
 # install that never names the variable that server refuses to start without
@@ -373,7 +392,7 @@ def check(markup: str, first_party: tuple[str, ...]) -> list[str]:
         failures.append(
             "site has no og:image/twitter:image — a posted link previews as grey text in every feed."
         )
-    elif not LARGE_CARD.search(markup):
+    elif not has_large_card(markup):
         failures.append(
             "site has a card image but twitter:card is not summary_large_image — it previews as a "
             "small square thumbnail instead of the card."

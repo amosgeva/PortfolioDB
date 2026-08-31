@@ -191,7 +191,13 @@ class TestKpiBinding:
         monkeypatch.setattr(kpis, "_income_total", lambda *_a, **_kw: 0.0)
 
         c = make_cutoff()
-        assert kpis.portfolio_kpis("fifo", cutoff=c) == kpis.portfolio_kpis("fifo", cutoff=c)
+        # Two separate calls, named, so it is visible that the point is
+        # determinism — the same cutoff must produce the same snapshot twice.
+        # Written inline it reads as a tautology, and a static analyser calls
+        # it one (S5863: same actual and expected expression).
+        first = kpis.portfolio_kpis("fifo", cutoff=c)
+        second = kpis.portfolio_kpis("fifo", cutoff=c)
+        assert first == second
 
 
 class TestAnalyticsBinding:

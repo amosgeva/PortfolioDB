@@ -20,13 +20,12 @@ module only owns "given system blocks + messages, produce text".
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Iterator
 
 import settings
+from db import parse_env_line
 
-_ENV_LINE = re.compile(r"^\s*([^#][^=]+?)\s*=\s*(.+?)\s*$")
 _env_loaded = False
 
 
@@ -42,11 +41,12 @@ def _load_env_file_once() -> None:
     env_path = Path(__file__).resolve().parent.parent / ".env"
     try:
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            m = _ENV_LINE.match(line)
-            if m and not os.getenv(m.group(1)):
-                os.environ[m.group(1)] = m.group(2)
+            parsed = parse_env_line(line)
+            if parsed and not os.getenv(parsed[0]):
+                os.environ[parsed[0]] = parsed[1]
     except OSError:
         pass
+
 
 PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "custom")
 

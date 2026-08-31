@@ -9,9 +9,24 @@ analytics._window_since), and the FD section → table registry
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+
+
+def is_nan(value: Any) -> bool:
+    """True only for a NaN float (or Decimal NaN).
+
+    NaN is the one value that compares unequal to itself, so this used to be
+    spelled `v != v` inline at six call sites. That reads like a typo — and a
+    static analyser agrees, flagging it as an accidental self-comparison — so
+    the idiom lives here once, under a name that says what it means.
+
+    Anything else, None included, is not NaN: callers rely on that to tell a
+    missing price apart from an unquotable one.
+    """
+    return isinstance(value, (float, Decimal)) and math.isnan(float(value))
 
 # FD enrichment tables, keyed by section name. The values double as the
 # hardcoded identifier whitelist for freshness queries — never interpolate
@@ -63,7 +78,7 @@ def clean_record(r: dict[str, Any] | None) -> dict[str, Any] | None:
     for k, v in r.items():
         if v is None:
             out[k] = None
-        elif isinstance(v, float) and (v != v):  # NaN
+        elif is_nan(v):
             out[k] = None
         elif isinstance(v, (datetime, date)):  # pd.Timestamp subclasses datetime
             out[k] = v.isoformat()
