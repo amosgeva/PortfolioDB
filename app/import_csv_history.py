@@ -42,15 +42,29 @@ import argparse
 import csv
 import glob
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
-import pytz
 from dateutil import parser as dtparser
 
 from db import connect, execute, load_config
 
 
-NY_TZ = pytz.timezone("America/New_York")
+# zoneinfo, not pytz. A bare `pytz.timezone("America/New_York")` carries the
+# LMT offset (-4:56, the earliest one in the database) until .localize() picks a
+# real one, and this module handed exactly that object to dateutil as a tzinfos
+# value — so every row with an explicit EST/EDT token was converted at -4:56.
+# ZoneInfo has no such stand-in state: it resolves the offset from the datetime.
+NY_TZ = ZoneInfo("America/New_York")
+
+# The token in the file states its own offset, so honour it literally rather
+# than re-deriving one from the date. It also sidesteps the ambiguous hour each
+# November, where the date alone cannot say which side of the fold a row is on.
+_TZ_TOKENS = {
+    "EST": timezone(timedelta(hours=-5)),
+    "EDT": timezone(timedelta(hours=-4)),
+}
 
 
 def infer_account(comment: str | None, default_account: str, tagged_accounts: list[str]) -> str:
@@ -76,17 +90,15 @@ def parse_snapshot_ts(date_str: str, time_str: str) -> datetime:
     # time_str: 15:59 EDT
     s = f"{date_str.strip()} {time_str.strip()}"
     # Handle timezone tokens like 'EST'/'EDT' explicitly.
-    tzinfos = {
-        "EST": NY_TZ,
-        "EDT": NY_TZ,
-    }
-    dt = dtparser.parse(s, tzinfos=tzinfos)
+    dt = dtparser.parse(s, tzinfos=_TZ_TOKENS)
 
-    # If tzinfo missing, assume New York time.
+    # If tzinfo missing, assume New York time. `.replace()` is the zoneinfo
+    # equivalent of pytz's .localize(): ZoneInfo works out EST vs EDT from the
+    # datetime itself, so there is no separate localise step to forget.
     if dt.tzinfo is None:
-        dt = NY_TZ.localize(dt)
+        dt = dt.replace(tzinfo=NY_TZ)
 
-    return dt.astimezone(pytz.UTC)
+    return dt.astimezone(timezone.utc)
 
 
 BUY_WORDS = {"BUY", "B", "BOT", "BOUGHT", "PURCHASE"}
@@ -183,6 +195,57 @@ def insert_snapshot(conn, ts_utc: datetime, symbol: str, last_price: float, dry_
     )
 
 
+def contained_matches(base_dir: Path, pattern: str) -> tuple[list[str], int]:
+    """Glob `pattern` under `base_dir`, dropping anything that escapes it.
+
+    Returns (sorted file paths, count ignored).
+
+    --dir and --pattern are both caller-supplied and were joined straight into
+    a glob, so `--pattern '../../*.csv'` read outside the directory the
+    operator named — the finding behind this function. Resolving both sides and
+    requiring base_dir to be a genuine parent closes that, and because
+    .resolve() collapses symlinks it also means a link pointing out of the tree
+    is excluded rather than quietly followed.
+
+    Separated from main() so the containment is testable on its own: it is the
+    only security-relevant logic in this script, and it should not need a
+    database and a CSV corpus to exercise.
+
+    Two layers, in this order, because the order is the point:
+
+    1. The pattern is rejected outright if it is absolute or contains a `..`
+       segment. This happens BEFORE the glob, so a traversal pattern never
+       reaches the filesystem at all. Filtering afterwards was the first
+       attempt and it is not equivalent: glob still walks `../..` to build the
+       match list, so the process touches directories the operator never named
+       even though nothing outside is returned.
+    2. Surviving matches are still resolved and re-checked against base_dir,
+       because step 1 cannot see through a symlink — a link *inside* the
+       directory can still point out of it, and only the resolved path says so.
+
+    Raises ValueError for a rejected pattern; returns (sorted paths, ignored).
+    """
+    if os.path.isabs(pattern) or any(
+        segment == ".." for segment in pattern.replace("\\", "/").split("/")
+    ):
+        raise ValueError(
+            f"--pattern must stay inside --dir; refusing {pattern!r} "
+            "(absolute paths and '..' segments are not allowed)"
+        )
+
+    files: list[str] = []
+    escaped = 0
+    for match in glob.glob(os.path.join(str(base_dir), pattern)):
+        resolved = Path(match).resolve()
+        if not resolved.is_file():
+            continue
+        if base_dir not in resolved.parents:
+            escaped += 1
+            continue
+        files.append(str(resolved))
+    return sorted(files), escaped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True)
@@ -195,7 +258,18 @@ def main():
     args = ap.parse_args()
     tagged_accounts = [t.strip() for t in args.tagged_accounts.split(",") if t.strip()]
 
-    files = sorted(glob.glob(os.path.join(args.dir, args.pattern)))
+    base_dir = Path(args.dir).resolve()
+    if not base_dir.is_dir():
+        print(f"--dir is not a directory: {base_dir}")
+        return
+
+    try:
+        files, escaped = contained_matches(base_dir, args.pattern)
+    except ValueError as exc:
+        print(f"Refusing to run: {exc}")
+        return
+    if escaped:
+        print(f"Ignored {escaped} match(es) resolving outside {base_dir}.")
     if not files:
         print("No files found")
         return

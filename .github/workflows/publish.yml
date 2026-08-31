@@ -8,9 +8,12 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Read-only by default. `packages: write` is granted to the publish job alone,
+# below — at workflow level it also reached the `test` job, which calls the
+# shared CI workflow. That handed a registry-write token to every test step and
+# every action they pull, for a job whose whole output is a pass or a fail.
 permissions:
   contents: read
-  packages: write
 
 # Third-party actions below are pinned to full commit SHAs, with the release
 # they correspond to in a trailing comment. A tag like @v3 is mutable: this job
@@ -43,6 +46,10 @@ jobs:
     if: github.repository == 'amosgeva/PortfolioDB'
     needs: test
     runs-on: ubuntu-latest
+    # The only job that pushes, so the only job that can.
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v5
 
