@@ -16,7 +16,72 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.1.4] — 2026-08-31
+
+### Fixed
+
+- **CSV imports recorded snapshot timestamps at the wrong offset whenever the
+  file named its timezone.** `import_csv_history.py` built its timezone lookup
+  from a bare `pytz.timezone("America/New_York")`. A pytz zone object carries
+  **LMT** — the earliest offset in the database, −4:56 for New York — until
+  `.localize()` replaces it, and a value handed to a parser as a lookup never
+  gets that call. So every row whose Time column carried an `EST` or `EDT` token
+  was converted at −4:56:
+
+  | Time column | correct UTC | recorded | error |
+  | --- | --- | --- | --- |
+  | `16:00 EST` | 21:00 | 20:56 | 4 minutes early |
+  | `15:59 EDT` | 19:59 | 20:55 | 56 minutes late |
+
+  - **Rows with no timezone token were always correct**, because that path did
+    call `.localize()`. That is why this lasted: a spot-check against any export
+    that omitted the token showed nothing wrong, and the two error sizes look
+    like different bugs rather than one.
+  - Both wrong values land on a `:56`/`:55` minute, so an EST row and an EDT row
+    are indistinguishable by eye — but they are wrong in *opposite directions*
+    and need opposite corrections. Anything that rounds the minute repairs one
+    group and worsens the other.
+  - The importer now uses `zoneinfo`. An explicit `EST`/`EDT` token maps to a
+    fixed −5/−4, because the token states its own offset and re-deriving one from
+    the date would silently move a row by an hour; a row with no token falls back
+    to `ZoneInfo("America/New_York")`, which resolves the offset from the
+    datetime itself.
+  - **This fixes the importer, not rows already imported.** See **Upgrading**.
+
+- **`create_ro_role.py --password` broke on a password containing a quote.** The
+  read-only role's password was substituted into SQL *text* to fill the
+  placeholder in `sql/create_ro_role.sql`, because the `CREATE ROLE` there sits
+  inside a `DO` block, whose body is a string literal and cannot take a bound
+  parameter. A quote in the password broke the statement; a crafted one could
+  inject. The password is now bound to the `ALTER ROLE` that already followed,
+  and the placeholder gets a throwaway. `--generate` was never affected — the
+  generated value has no quote in it. `sql/create_ro_role.sql` is unchanged, so
+  applying it by hand with `psql` works exactly as before.
+
+- **`.env` lines with a one-character key were silently ignored.** All four
+  loaders — the database credentials, the LLM keys, the MCP token, and the
+  dashboard's — shared a regex that required a key of at least two characters,
+  so `K=v` was skipped without a word. They now share one parser that does not.
+
 ### Changed
+
+- **`fd_weekly_enrichment.py` reports failure instead of always exiting 0.** It
+  returned success through a revoked API key, an unreachable database and a dead
+  network alike, because its fetch helper turns every error into a payload rather
+  than raising. It now exits non-zero when the run could not do what it was asked
+  — persistence was requested and the database was unreachable, or every call
+  that reached the vendor failed. Partial failures still exit 0 and are reported
+  in the output, so a single flaky endpoint does not turn a weekly job red. **If
+  you schedule this script, it can now fail a job that previously always
+  passed** — that is the point, but it may be the first time you see it.
+
+- **`import_csv_history.py --pattern` refuses to leave `--dir`.** `--dir` and
+  `--pattern` were joined straight into a glob, so `--pattern '../../*.csv'` read
+  files outside the directory named and imported them with nothing in the output
+  saying where they came from. Absolute patterns and any `..` segment are now
+  rejected before the glob runs, and surviving matches are re-checked against the
+  resolved directory so a symlink pointing out of the tree is excluded too. A
+  recursive `**/*.csv` inside `--dir` still works.
 
 - **This file's own header said only a major bump carries a migration.** It did
   not: 1.1.0 was a minor and added `sql/migrations/002_market_benchmarks.sql`.
@@ -32,6 +97,56 @@ needs a schema step says so under **Upgrading**.
   into. `CHANGELOG.md` is exempt from CI's pin grep on purpose, because a
   changelog must name versions; this is the narrower rule that survives that
   exemption. The sentence now names the 1.1 line, which does not move.
+
+### Security
+
+- **The image build now pins every download hop to HTTPS.** The supercronic
+  fetch used `curl -fsSL`, which follows redirects, with nothing constraining the
+  scheme a redirect could move to — a redirect to `http://` was followed happily.
+  The SHA-256 check that follows would still have caught a swapped binary, but
+  only after writing it to disk. `--proto '=https' --proto-redir '=https'
+  --tlsv1.2` now applies to every hop.
+- **The publish workflow no longer hands a registry-write token to the test
+  job.** `packages: write` sat at workflow level, so the job that only runs the
+  test suite — and every action it pulls — held a token that can push to GHCR.
+  It is now granted to the publishing job alone. No effect on the published
+  image; it narrows what a compromised action in CI could reach.
+
+### Upgrading
+
+No migration in this release. `docker compose pull && docker compose up -d`.
+
+**If you have ever imported CSVs with `import_csv_history.py`, your existing
+`price_snapshots` timestamps may be wrong** — the fix above corrects the importer
+but does not touch rows already stored. Whether you are affected depends on
+whether your CSVs named a timezone in the Time column.
+
+To check, assuming your export's times fall on the hour:
+
+```sql
+SELECT to_char(ts AT TIME ZONE 'UTC', 'HH24:MI') AS utc_time, count(*)
+FROM price_snapshots
+WHERE source = 'csv'
+GROUP BY 1 ORDER BY 2 DESC;
+```
+
+A `:56` or `:55` where you expect `:00` or `:59` is the LMT signature. Correcting
+those rows means deciding, per row, which side of US daylight saving its date
+falls on — rows imported between the March and November transitions are **56
+minutes late**, the rest are **4 minutes early** — and then rewriting `ts`, which
+is half of `price_snapshots`' primary key and a column this project otherwise
+only ever appends to. Take a backup first. There is no automated repair in this
+release, deliberately: the correction is not uniform and a wrong one is worse
+than the current state, which is at least consistent.
+
+For a market-close export the error stays inside the correct day, so daily and
+longer-period figures are unaffected: cost basis and realized P&L come from
+`lots` and never touch this column at all, and a shift of under an hour does not
+change which snapshot is the day's latest. What moves is intra-day ordering and
+anything compared against a market-close boundary. The exception worth knowing:
+a 56-minute shift on a row already within an hour of midnight UTC lands on the
+next date, so an export timestamped late in the evening ET can be attributed to
+the wrong day.
 
 ## [1.1.3] — 2026-08-15
 
