@@ -199,7 +199,29 @@ def contained_matches(base_dir: Path, pattern: str) -> tuple[list[str], int]:
     Separated from main() so the containment is testable on its own: it is the
     only security-relevant logic in this script, and it should not need a
     database and a CSV corpus to exercise.
+
+    Two layers, in this order, because the order is the point:
+
+    1. The pattern is rejected outright if it is absolute or contains a `..`
+       segment. This happens BEFORE the glob, so a traversal pattern never
+       reaches the filesystem at all. Filtering afterwards was the first
+       attempt and it is not equivalent: glob still walks `../..` to build the
+       match list, so the process touches directories the operator never named
+       even though nothing outside is returned.
+    2. Surviving matches are still resolved and re-checked against base_dir,
+       because step 1 cannot see through a symlink — a link *inside* the
+       directory can still point out of it, and only the resolved path says so.
+
+    Raises ValueError for a rejected pattern; returns (sorted paths, ignored).
     """
+    if os.path.isabs(pattern) or any(
+        segment == ".." for segment in pattern.replace("\\", "/").split("/")
+    ):
+        raise ValueError(
+            f"--pattern must stay inside --dir; refusing {pattern!r} "
+            "(absolute paths and '..' segments are not allowed)"
+        )
+
     files: list[str] = []
     escaped = 0
     for match in glob.glob(os.path.join(str(base_dir), pattern)):
@@ -230,7 +252,11 @@ def main():
         print(f"--dir is not a directory: {base_dir}")
         return
 
-    files, escaped = contained_matches(base_dir, args.pattern)
+    try:
+        files, escaped = contained_matches(base_dir, args.pattern)
+    except ValueError as exc:
+        print(f"Refusing to run: {exc}")
+        return
     if escaped:
         print(f"Ignored {escaped} match(es) resolving outside {base_dir}.")
     if not files:

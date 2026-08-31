@@ -17,8 +17,6 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pathlib import Path
-
 from import_csv_history import contained_matches
 
 
@@ -44,26 +42,29 @@ def test_normal_pattern_finds_the_directory_contents(tree):
     assert escaped == 0
 
 
-@pytest.mark.parametrize("pattern", ["../*.csv", "../../*.csv", "../**/*.csv"])
-def test_no_traversal_pattern_reaches_outside_the_directory(tree, pattern):
-    """The property is containment, not emptiness.
+@pytest.mark.parametrize(
+    "pattern",
+    ["../*.csv", "../../*.csv", "../**/*.csv", r"..\*.csv", "a/../../*.csv"],
+)
+def test_traversal_patterns_are_refused_before_the_glob(tree, pattern):
+    """Rejected up front, not filtered afterwards.
 
-    `../**/*.csv` walks up and back down again, so it legitimately matches
-    files that really are inside --dir. What must never appear is a file that
-    is not: the decoys one and two levels up.
+    Filtering the results was the first attempt and it is not equivalent: glob
+    still walks `../..` to build the match list, so the process reads
+    directories the operator never named even though nothing outside comes
+    back. Sonar's S8707 asks for validation *before* the filesystem access, and
+    on that it is right.
+
+    Backslashes are checked too: they are a separator on Windows, and on Linux
+    a literal backslash-dot-dot filename should not be quietly accepted either.
     """
-    files, _escaped = contained_matches(tree.resolve(), pattern)
-    assert "SIBLING.csv" not in _names(files)
-    assert "OUTSIDE.csv" not in _names(files)
-    base = tree.resolve()
-    assert all(base in Path(f).parents for f in files)
+    with pytest.raises(ValueError, match="must stay inside"):
+        contained_matches(tree.resolve(), pattern)
 
 
-@pytest.mark.parametrize("pattern", ["../*.csv", "../../*.csv"])
-def test_traversal_is_reported_not_silent(tree, pattern):
-    """A dropped match has to be countable — silence is the original bug."""
-    _files, escaped = contained_matches(tree.resolve(), pattern)
-    assert escaped > 0
+def test_absolute_patterns_are_refused(tree, tmp_path):
+    with pytest.raises(ValueError, match="must stay inside"):
+        contained_matches(tree.resolve(), str(tmp_path / "*.csv"))
 
 
 def test_a_sibling_directory_is_not_reachable(tree):
