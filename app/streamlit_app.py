@@ -23,6 +23,7 @@ from pathlib import Path
 import streamlit as st
 
 import branding
+import version as app_version
 # db is a leaf module — it reads the environment inside load_config(), never at
 # import time — so pulling the .env line parser from it here cannot defeat the
 # _load_dotenv() ordering the imports below depend on.
@@ -284,6 +285,8 @@ def build_html(payload: dict, initial_view: str = "portfolio") -> str:
         .replace("__SVG_PULSE__", SVG["pulse"])
         .replace("__SVG_STATS__", SVG["stats"])
         .replace("__USER_NAME__", escape(branding.display_name()))
+        .replace("__APP_VERSION__", escape(app_version.release_version()))
+        .replace("__APP_BUILD__", escape(app_version.build_stamp()))
         .replace("__USER_INITIALS__", escape(branding.display_initials()))
         .replace("__DATA_JSON__", data_json)
         .replace("__APP_JS__", APP_JS)

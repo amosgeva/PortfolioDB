@@ -59,6 +59,7 @@ a{color:inherit;text-decoration:none}
 .rail__foot{margin-top:auto;padding:14px 16px;display:flex;align-items:center;gap:11px;border-top:1px solid oklch(32% 0.03 264)}
 .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,oklch(62% 0.13 200),oklch(55% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff;flex:0 0 auto}
 .rail__user b{font-size:13px;display:block}.rail__user span{font-size:11px;color:var(--rail-muted)}
+.rail__build{padding:0 16px 12px;font-size:10px;letter-spacing:.04em;color:var(--rail-muted);opacity:.75;font-variant-numeric:tabular-nums}
 .main{display:flex;flex-direction:column;min-width:0}
 .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:18px;padding:14px 28px;background:var(--topbar-bg);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
 .topbar__title h1{font-size:19px;font-weight:700;letter-spacing:-.02em}

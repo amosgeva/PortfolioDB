@@ -26,11 +26,9 @@ independently-latest behaviour, so existing callers are unaffected.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -39,6 +37,7 @@ from app.mcp.deps import get_conn
 # Importing deps (above) puts app/ on sys.path, so the bare settings module
 # resolves here just like corporate_actions does in the sibling services.
 import settings as _settings
+import version
 
 # Reporting timezone for the whole application — the window the snapshot
 # collector runs in and the day boundary every daily series uses. Resolved
@@ -255,55 +254,11 @@ def meta(cutoff: Cutoff, *, method: str | None = None, **extra: Any) -> dict[str
 
 @lru_cache(maxsize=1)
 def app_version() -> str:
-    """Best-effort build identifier for the provenance block.
+    """Build identifier for the provenance block.
 
-    PORTFOLIODB_APP_VERSION wins, so a container image can stamp itself.
-    Otherwise the commit is read straight out of the .git directory — no
-    subprocess. Shelling out to `git describe` would put process execution on
-    a request path in a server that is otherwise read-only and does nothing but
-    query Postgres; reading two small files gets the same answer without that.
-
-    Returns 'unknown' when neither is available (a deployed tree with no .git).
-    An unidentified build is worth reporting honestly and is not worth failing
-    a request over. Cached: the answer cannot change within a process.
+    The logic moved to app/version.py so the dashboard can read it without
+    importing this module, which pulls in app.mcp.deps. Kept here as a cached
+    wrapper: the answer cannot change within a server process, and callers
+    (and tests, via .cache_clear()) already depend on that.
     """
-    pinned = os.getenv("PORTFOLIODB_APP_VERSION")
-    if pinned:
-        return pinned
-    return _git_head_sha() or "unknown"
-
-
-def _git_head_sha(short: int = 7) -> str | None:
-    """Current commit from .git, or None if it cannot be determined.
-
-    Handles the three shapes HEAD takes: a symbolic ref into refs/heads, a
-    detached raw SHA, and a branch whose ref has been packed into packed-refs.
-    """
-    repo_root = Path(__file__).resolve().parents[3]
-    git_dir = repo_root / ".git"
-    try:
-        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-
-    if not head.startswith("ref:"):
-        # Detached HEAD — the file already holds the SHA.
-        return head[:short] or None
-
-    ref = head[4:].strip()
-    try:
-        return (git_dir / ref).read_text(encoding="utf-8").strip()[:short] or None
-    except OSError:
-        pass
-
-    # Ref was packed away by `git gc`; scan packed-refs for it.
-    try:
-        for line in (git_dir / "packed-refs").read_text(encoding="utf-8").splitlines():
-            if line.startswith(("#", "^")):
-                continue
-            sha, _, name = line.partition(" ")
-            if name.strip() == ref:
-                return sha[:short] or None
-    except OSError:
-        return None
-    return None
+    return version.build_stamp()
