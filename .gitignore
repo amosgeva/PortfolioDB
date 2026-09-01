@@ -60,6 +60,15 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+# coverage.py drops a SQLite db wherever it is run, and the two suites run from
+# different working directories — so a single `pytest --cov` leaves one at the
+# repo root and one in app/. Neither was ignored, so both were one `git add -A`
+# away from being committed. coverage.xml is listed for the day SonarCloud
+# coverage reporting gets wired up; it is the report that upload would consume.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 dist/
 build/
 .venv/
