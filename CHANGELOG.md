@@ -16,6 +16,43 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-09-01
+
+### Added
+
+- **The dashboard shows which release it is running.** Bottom of the sidebar,
+  under your name. Until now the only way to answer that was to inspect the
+  container, which is a poor answer to a question you ask precisely when
+  something looks wrong.
+  - The number is the release alone — `1.1.6`. Hovering it gives the exact
+    build, which for a published image is the tag and the commit
+    (`v1.1.6@<sha>`), and for a checkout is the commit on its own.
+  - It reads `server.json`, the same file this project already bumps at every
+    release, so there is no second version to keep in step. That file now ships
+    inside the image, which it did not before.
+  - A build that cannot identify itself says `unknown` rather than showing
+    nothing. That is the honest answer and it is the case you most want to see.
+
+### Changed
+
+- **`app_version()` moved out of the MCP service tree into `app/version.py`.**
+  It lived in `app/mcp/services/cutoff.py`, which imports a database pool and a
+  package that shadows the official `mcp` SDK on the dashboard's import path —
+  not something to pull in to render a footer line. Both the dashboard and the
+  MCP provenance block now read from one small module. No behaviour changes:
+  the MCP `app_version` field reports exactly what it did before.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+**1.1.5 was not re-issued.** It is published, and an image tagged `1.1.5`
+keeps meaning the build that shipped as 1.1.5 — including for anyone who
+already pulled it. Re-pointing that tag would have been especially wrong in
+this release, whose whole subject is a footer that tells you which version you
+are running: two different builds both answering `1.1.5` would break the
+feature at the first question it is asked.
+
 ## [1.1.5] — 2026-09-01
 
 ### Fixed
