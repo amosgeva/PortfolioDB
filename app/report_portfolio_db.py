@@ -15,9 +15,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, time, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pandas as pd
 
@@ -36,6 +39,62 @@ def _dec(x) -> Decimal:
 class Snapshot:
     ts: datetime
     prices: dict[str, dict]
+
+
+# Below this many priced symbols the daily briefing treats the snapshot as
+# incomplete and tries to collect fresh prices before reporting.
+MIN_PRICED_SYMBOLS = 10
+
+# Where the collector lives, relative to this file — never an absolute path.
+SNAPSHOT_SCRIPT = Path(__file__).resolve().parent / "snapshot_prices.py"
+
+
+def collect_fresh_prices() -> None:
+    """Best-effort price collection before a daily briefing.
+
+    This was a subprocess call to a hardcoded
+    `C:\\Windows\\...\\powershell.exe` running
+    `C:\\Install\\PortfolioDB\\run_snapshot.ps1` — an operator-specific path
+    pointing at a launcher that is gitignored, so it exists on exactly one
+    machine. Everywhere else (a fresh clone, the container, CI) the call failed
+    into a bare `except: pass` and the briefing carried on with whatever stale
+    snapshot it had, saying nothing.
+
+    The wrapper was redundant besides. It re-implemented two things the Python
+    now does for itself: reading PORTFOLIODB_PASSWORD out of .env, which
+    db.load_config handles, and a weekday/hours guard, which is
+    app/market_window.py's job.
+
+    So: run the collector directly with the interpreter already in hand.
+    Deliberately without --ignore-window — the collector refuses outside the
+    configured window, and that refusal is meant to be one rule every caller
+    obeys, including this one. A briefing run at midnight should report stale
+    prices, not manufacture a snapshot.
+
+    Failures are reported rather than swallowed. The briefing still runs: a
+    missing refresh is a degraded report, not a reason to produce none.
+    """
+    # Both elements of the command are fixed by this module, not by anything a
+    # caller supplies: sys.executable is the interpreter already running, and
+    # SNAPSHOT_SCRIPT is derived from __file__. No shell (shell=False is the
+    # default), so nothing is word-split or glob-expanded either. The audit
+    # rules below fire on any subprocess call whose argv is not a literal
+    # string, which this deliberately is not — a literal would reintroduce the
+    # hardcoded path this change exists to remove.
+    try:
+        proc = subprocess.run(  # nosec B603  # nosemgrep
+            [sys.executable, str(SNAPSHOT_SCRIPT)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            tail = detail[-1] if detail else f"exit {proc.returncode}"
+            print(f"⚠️ Price collection did not run ({tail}). Using the existing snapshot.")
+    except Exception as exc:
+        print(f"⚠️ Price collection could not be started ({exc}). Using the existing snapshot.")
 
 
 def unrealized_pct(pnl, cost):
@@ -182,21 +241,11 @@ def main():
     cfg = load_config()
 
     with connect(cfg) as conn:
-        # Guard: if we have too few symbols in the latest snapshot, run a fresh snapshot collection first.
+        # Guard: if too few symbols are priced, try to collect fresh ones first.
         snap = get_snapshot(conn, mode=args.mode)
-        if args.mode == 'daily':
-            if len(snap.prices) < 10:
-                # Run snapshot collection (best-effort) and reload snapshot
-                import subprocess
-                try:
-                    subprocess.run([
-                        'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-                        '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                        '-File', 'C:\\Install\\PortfolioDB\\run_snapshot.ps1'
-                    ], check=False, capture_output=True, text=True)
-                except Exception:
-                    pass
-                snap = get_snapshot(conn, mode=args.mode)
+        if args.mode == "daily" and len(snap.prices) < MIN_PRICED_SYMBOLS:
+            collect_fresh_prices()
+            snap = get_snapshot(conn, mode=args.mode)
 
         prev_map = get_prev_snapshot_map(conn, snap.ts)
         day_start_ts, day_start_map = get_day_start_snapshot_map(conn, ts=snap.ts)
