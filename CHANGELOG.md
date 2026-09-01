@@ -16,6 +16,58 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.1.5] — 2026-09-01
+
+### Fixed
+
+- **`report_portfolio_db.py` failed to run for most of each day, in both
+  `--mode daily` and `--mode eod`.** It chose its snapshot with `MAX(ts)` over
+  `price_snapshots`, which since 1.1.0 also holds the Markets-strip benchmarks.
+  Those index futures are collected around the clock, while the symbols you hold
+  stop after the US close — so for most of the day the newest row in that table
+  is a benchmark-only instant at which nothing in your portfolio has a price:
+
+  ```
+  09:30  n=3   ES=F, NQ=F, YM=F     <- what MAX(ts) selected
+  23:13  n=13  the actual holdings
+  ```
+
+  With no symbol priced, every derived column became object dtype, pandas fell
+  back to element-wise Python arithmetic, and dividing by the zero cost basis of
+  a fully-closed position raised `ZeroDivisionError` instead of returning `inf`.
+  Snapshot selection now excludes benchmarks, so the report asks the question it
+  means: when were the *holdings* last priced.
+
+- **On the runs where that report did work, it printed `inf%`.** The same
+  division, with at least one symbol priced, stayed in numpy and produced
+  infinity rather than raising — once for every fully-closed position, which is
+  most of the symbol list on a mature ledger. A position with no cost basis now
+  reports no percentage instead of an infinite one.
+  - Only the displayed percentage was ever affected. Cost basis and realized
+    P&L come from `lots` and never touch that column.
+
+- **The daily briefing's price refresh only ever worked on one machine.** When
+  the snapshot looked thin, the report shelled out to a hardcoded
+  `powershell.exe` running a `run_snapshot.ps1` that is gitignored — so it does
+  not exist in a clone, in the container, or anywhere but its author's box. The
+  call sat inside a bare `except: pass`, so everywhere else the refresh failed
+  silently and the briefing reported stale prices without saying so. It now runs
+  the collector directly with the interpreter already in hand.
+  - It still declines outside the configured collector window, deliberately.
+    A briefing run at midnight should tell you the prices are old, not
+    manufacture a snapshot.
+  - A refresh that cannot run now says so in the output, and is bounded by a
+    timeout so a stuck collector cannot hang the report.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+Nothing stored changes. If you use `report_portfolio_db.py`, it should now run
+whenever you ask it to rather than only in the window after a price collection,
+and the percentages next to closed positions will be blank where they used to
+read `inf%`.
+
 ## [1.1.4] — 2026-08-31
 
 ### Fixed
