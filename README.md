@@ -1,6 +1,8 @@
 # PortfolioDB — The Self-Hosted Portfolio Ledger You Own
 
 [![CI](https://github.com/amosgeva/PortfolioDB/actions/workflows/ci.yml/badge.svg)](https://github.com/amosgeva/PortfolioDB/actions/workflows/ci.yml)
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=amosgeva_PortfolioDB&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=amosgeva_PortfolioDB)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=amosgeva_PortfolioDB&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=amosgeva_PortfolioDB)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Container image](https://img.shields.io/badge/ghcr.io-portfoliodb-2496ed?logo=docker&logoColor=white)](https://github.com/amosgeva/PortfolioDB/pkgs/container/portfoliodb)
 
