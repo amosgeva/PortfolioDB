@@ -38,10 +38,45 @@ class Snapshot:
     prices: dict[str, dict]
 
 
+def unrealized_pct(pnl, cost):
+    """Unrealized P&L as a percent of cost basis; NaN where there is no cost.
+
+    A fully-closed position has open_cost 0, and "inf%" is not a return — this
+    report was printing exactly that for every closed symbol on the runs where
+    it did not crash outright.
+
+    The to_numeric calls carry as much weight as the zero guard. `price_of`
+    yields None for any symbol missing from the snapshot, and when *no* symbol
+    has a price the derived columns become object dtype. Pandas then divides
+    element-wise in Python, where x / 0.0 raises ZeroDivisionError rather than
+    returning inf the way numpy does — which is how a cosmetic inf became a
+    crash. Coercing to numeric first keeps the columns float64 in every case.
+    """
+    pnl = pd.to_numeric(pnl, errors="coerce")
+    cost = pd.to_numeric(cost, errors="coerce")
+    return (pnl / cost.where(cost != 0)) * 100
+
+
+# The newest row in price_snapshots is not necessarily a portfolio snapshot.
+# Benchmarks for the Markets strip (index futures, added in 1.1.0) are collected
+# around the clock on their own cadence, while the held symbols stop after the
+# US close — so for most of the day MAX(ts) names a benchmark-only instant at
+# which nothing in the portfolio has a price. Joining instruments and excluding
+# benchmarks asks the question this report actually means: when were the
+# *holdings* last priced. The FK on price_snapshots.symbol guarantees the join
+# never drops a row.
+_LATEST_PORTFOLIO_TS = """
+    SELECT MAX(ps.ts) AS ts
+    FROM price_snapshots ps
+    JOIN instruments i ON i.symbol = ps.symbol
+    WHERE NOT i.benchmark
+"""
+
+
 def get_snapshot(conn, *, mode: str) -> Snapshot:
     if mode == "daily":
-        # Latest snapshot in DB
-        row = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots")
+        # Latest snapshot that priced something the portfolio can hold.
+        row = fetch_all(conn, _LATEST_PORTFOLIO_TS)
         ts = row[0]["ts"]
         if ts is None:
             raise RuntimeError("No price snapshots found")
@@ -50,7 +85,7 @@ def get_snapshot(conn, *, mode: str) -> Snapshot:
         now_il = datetime.now(IL_TZ)
         target_il = datetime.combine(now_il.date(), time(23, 5)).replace(tzinfo=IL_TZ)
         target_utc = target_il.astimezone(UTC)
-        row = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots WHERE ts <= %s", (target_utc,))
+        row = fetch_all(conn, _LATEST_PORTFOLIO_TS + " AND ps.ts <= %s", (target_utc,))
         ts = row[0]["ts"]
         if ts is None:
             raise RuntimeError(f"No price snapshots found at or before {target_il.isoformat()}")
@@ -202,13 +237,13 @@ def main():
         fifo["last_price"] = fifo["symbol"].map(price_of)
         fifo["market_value"] = fifo["qty"] * fifo["last_price"]
         fifo["unrealized_pnl"] = fifo["market_value"] - fifo["open_cost"]
-        fifo["unrealized_pct"] = (fifo["unrealized_pnl"] / fifo["open_cost"]) * 100
+        fifo["unrealized_pct"] = unrealized_pct(fifo["unrealized_pnl"], fifo["open_cost"])
 
         avg = avg_all.copy()
         avg["last_price"] = avg["symbol"].map(price_of)
         avg["market_value"] = avg["qty"] * avg["last_price"]
         avg["unrealized_pnl"] = avg["market_value"] - avg["open_cost"]
-        avg["unrealized_pct"] = (avg["unrealized_pnl"] / avg["open_cost"]) * 100
+        avg["unrealized_pct"] = unrealized_pct(avg["unrealized_pnl"], avg["open_cost"])
 
         # Only rows with prices contribute to market value/unrealized
         fifo = fifo.dropna(subset=["last_price"]).copy()
