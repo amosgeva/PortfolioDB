@@ -14,8 +14,8 @@ swallowed.
 """
 
 import os
-import subprocess
 import sys
+from subprocess import CompletedProcess, TimeoutExpired
 
 import pytest
 
@@ -49,7 +49,7 @@ def test_the_command_runs_python_not_a_shell_launcher(monkeypatch):
     def fake_run(cmd, **kw):
         seen["cmd"] = cmd
         seen["kw"] = kw
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
     rp.collect_fresh_prices()
@@ -72,7 +72,7 @@ def test_the_market_window_is_left_to_the_collector(monkeypatch):
     seen = {}
     monkeypatch.setattr(rp.subprocess, "run",
                         lambda cmd, **kw: seen.setdefault("cmd", cmd) or
-                        subprocess.CompletedProcess(cmd, 0, "", ""))
+                        CompletedProcess(cmd, 0, "", ""))
     rp.collect_fresh_prices()
     assert "--ignore-window" not in seen["cmd"]
 
@@ -82,7 +82,7 @@ def test_a_bounded_wait(monkeypatch):
     seen = {}
     monkeypatch.setattr(rp.subprocess, "run",
                         lambda cmd, **kw: seen.update(kw) or
-                        subprocess.CompletedProcess(cmd, 0, "", ""))
+                        CompletedProcess(cmd, 0, "", ""))
     rp.collect_fresh_prices()
     assert seen.get("timeout"), "no timeout — a stuck collector would block the briefing"
     assert seen.get("check") is False, "a failed refresh must not abort the report"
@@ -100,9 +100,9 @@ def test_failures_are_reported_and_survivable(monkeypatch, capsys, outcome):
     """Degraded, not silent, and never fatal — the old code was silent."""
     def fake_run(cmd, **kw):
         if outcome == "nonzero":
-            return subprocess.CompletedProcess(cmd, 2, "", "collector said no")
+            return CompletedProcess(cmd, 2, "", "collector said no")
         if outcome == "timeout":
-            raise subprocess.TimeoutExpired(cmd, 180)
+            raise TimeoutExpired(cmd, 180)
         raise OSError("no interpreter")
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
@@ -116,7 +116,7 @@ def test_failures_are_reported_and_survivable(monkeypatch, capsys, outcome):
 def test_success_says_nothing(monkeypatch, capsys):
     """Only failures are worth a line in a report someone reads daily."""
     monkeypatch.setattr(rp.subprocess, "run",
-                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "ok", ""))
+                        lambda cmd, **kw: CompletedProcess(cmd, 0, "ok", ""))
     rp.collect_fresh_prices()
     assert capsys.readouterr().out == ""
 

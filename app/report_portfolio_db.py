@@ -74,8 +74,15 @@ def collect_fresh_prices() -> None:
     Failures are reported rather than swallowed. The briefing still runs: a
     missing refresh is a degraded report, not a reason to produce none.
     """
+    # Both elements of the command are fixed by this module, not by anything a
+    # caller supplies: sys.executable is the interpreter already running, and
+    # SNAPSHOT_SCRIPT is derived from __file__. No shell (shell=False is the
+    # default), so nothing is word-split or glob-expanded either. The audit
+    # rules below fire on any subprocess call whose argv is not a literal
+    # string, which this deliberately is not — a literal would reintroduce the
+    # hardcoded path this change exists to remove.
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603  # nosemgrep
             [sys.executable, str(SNAPSHOT_SCRIPT)],
             check=False,
             capture_output=True,
