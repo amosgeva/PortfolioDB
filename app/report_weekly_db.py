@@ -13,17 +13,15 @@ Usage:
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-
-import pytz
 
 import fd_store
 from db import connect, fetch_all, load_config
 from portfolio import compute_fifo_merged
 from reporting_utils import IL_TZ, money, pct, utf8_stdout
 
-UTC = pytz.UTC
+UTC = timezone.utc
 
 
 def D(x) -> Decimal:
@@ -190,7 +188,7 @@ def main():
 
     now_il = datetime.now(IL_TZ)
     week_start_date = now_il.date() - timedelta(days=now_il.weekday())
-    start_il = IL_TZ.localize(datetime.combine(week_start_date, time(16, 15)))
+    start_il = datetime.combine(week_start_date, time(16, 15)).replace(tzinfo=IL_TZ)
     start_utc = start_il.astimezone(UTC)
 
     cfg = load_config()

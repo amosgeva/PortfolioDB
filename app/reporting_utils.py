@@ -11,12 +11,16 @@ from __future__ import annotations
 import contextlib
 import sys
 
-import pytz
-
 import reporting_tz
 
 # Historical name — the value now follows PORTFOLIODB_TZ.
-IL_TZ = pytz.timezone(reporting_tz.tz_name())
+#
+# reporting_tz already resolves this correctly with zoneinfo; wrapping the
+# name in pytz built a second, more dangerous copy of the same zone. A bare
+# pytz zone carries LMT (+2:21 for Jerusalem) until .localize() replaces it,
+# so every caller had to remember that. The same pattern, un-remembered,
+# mis-stamped 1,129 price snapshots from the CSV importer before 1.1.4.
+IL_TZ = reporting_tz.tzinfo()
 
 
 def utf8_stdout() -> None:

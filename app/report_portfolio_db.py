@@ -16,17 +16,16 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from decimal import Decimal
 
-import pytz
 import pandas as pd
 
 from db import connect, fetch_all, load_config
 from portfolio import compute_fifo_merged, compute_avg_cost_merged
 from reporting_utils import IL_TZ, money as fmt_money, utf8_stdout
 
-UTC = pytz.UTC
+UTC = timezone.utc
 
 
 def _dec(x) -> Decimal:
@@ -49,7 +48,7 @@ def get_snapshot(conn, *, mode: str) -> Snapshot:
     elif mode == "eod":
         # Snapshot <= today 23:05 IL time
         now_il = datetime.now(IL_TZ)
-        target_il = IL_TZ.localize(datetime.combine(now_il.date(), time(23, 5)))
+        target_il = datetime.combine(now_il.date(), time(23, 5)).replace(tzinfo=IL_TZ)
         target_utc = target_il.astimezone(UTC)
         row = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots WHERE ts <= %s", (target_utc,))
         ts = row[0]["ts"]
@@ -101,7 +100,7 @@ def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int
     """
     ts_il = ts.astimezone(IL_TZ)
     day = ts_il.date()
-    start_il = IL_TZ.localize(datetime.combine(day, time(start_hhmm[0], start_hhmm[1])))
+    start_il = datetime.combine(day, time(start_hhmm[0], start_hhmm[1])).replace(tzinfo=IL_TZ)
     start_utc = start_il.astimezone(UTC)
 
     row = fetch_all(conn, "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s", (start_utc,))
