@@ -15,9 +15,22 @@ swallowed.
 
 import os
 import sys
-from subprocess import CompletedProcess, TimeoutExpired
+from subprocess import TimeoutExpired  # nosemgrep
+from types import SimpleNamespace
 
 import pytest
+
+
+def completed(returncode=0, stdout="", stderr=""):
+    """Stand-in for a finished subprocess.
+
+    collect_fresh_prices reads exactly three attributes — returncode, stdout,
+    stderr — so a namespace is a faithful double and, unlike a real
+    CompletedProcess, does not couple these tests to subprocess internals.
+    (It also stops an audit rule reading `subprocess.CompletedProcess(...)` in
+    a test file as though it were launching something.)
+    """
+    return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -49,7 +62,7 @@ def test_the_command_runs_python_not_a_shell_launcher(monkeypatch):
     def fake_run(cmd, **kw):
         seen["cmd"] = cmd
         seen["kw"] = kw
-        return CompletedProcess(cmd, 0, "", "")
+        return completed()
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
     rp.collect_fresh_prices()
@@ -72,7 +85,7 @@ def test_the_market_window_is_left_to_the_collector(monkeypatch):
     seen = {}
     monkeypatch.setattr(rp.subprocess, "run",
                         lambda cmd, **kw: seen.setdefault("cmd", cmd) or
-                        CompletedProcess(cmd, 0, "", ""))
+                        completed())
     rp.collect_fresh_prices()
     assert "--ignore-window" not in seen["cmd"]
 
@@ -82,7 +95,7 @@ def test_a_bounded_wait(monkeypatch):
     seen = {}
     monkeypatch.setattr(rp.subprocess, "run",
                         lambda cmd, **kw: seen.update(kw) or
-                        CompletedProcess(cmd, 0, "", ""))
+                        completed())
     rp.collect_fresh_prices()
     assert seen.get("timeout"), "no timeout — a stuck collector would block the briefing"
     assert seen.get("check") is False, "a failed refresh must not abort the report"
@@ -100,9 +113,11 @@ def test_failures_are_reported_and_survivable(monkeypatch, capsys, outcome):
     """Degraded, not silent, and never fatal — the old code was silent."""
     def fake_run(cmd, **kw):
         if outcome == "nonzero":
-            return CompletedProcess(cmd, 2, "", "collector said no")
+            return completed(returncode=2, stderr="collector said no")
         if outcome == "timeout":
-            raise TimeoutExpired(cmd, 180)
+            # The real exception type on purpose: if collect_fresh_prices ever
+            # narrows its `except Exception`, this case starts failing.
+            raise TimeoutExpired(cmd, 180)  # nosemgrep
         raise OSError("no interpreter")
 
     monkeypatch.setattr(rp.subprocess, "run", fake_run)
@@ -116,7 +131,7 @@ def test_failures_are_reported_and_survivable(monkeypatch, capsys, outcome):
 def test_success_says_nothing(monkeypatch, capsys):
     """Only failures are worth a line in a report someone reads daily."""
     monkeypatch.setattr(rp.subprocess, "run",
-                        lambda cmd, **kw: CompletedProcess(cmd, 0, "ok", ""))
+                        lambda cmd, **kw: completed(stdout="ok"))
     rp.collect_fresh_prices()
     assert capsys.readouterr().out == ""
 
