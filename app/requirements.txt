@@ -4,7 +4,6 @@ yfinance>=1.5,<2
 python-dotenv>=1.0,<2
 streamlit>=1.60,<2
 python-dateutil>=2.8,<3
-pytz>=2024.1
 plotly>=5.18,<7
 anthropic>=0.40,<1
 # OpenAI-compatible advisor path (OpenAI / OpenRouter / Ollama / LM Studio)
