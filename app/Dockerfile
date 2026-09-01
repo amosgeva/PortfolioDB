@@ -67,6 +67,9 @@ RUN pip install -r /app/app/requirements.txt
 COPY app /app/app
 COPY docker/crontab /app/docker/crontab
 COPY sql /app/sql
+# server.json carries the release number the dashboard footer reads
+# (app/version.py). It is also the MCP registry manifest.
+COPY server.json /app/server.json
 
 # The licence travels with the binary. An image is a distribution of the program,
 # and the AGPL wants its terms to reach whoever received it — someone who pulled

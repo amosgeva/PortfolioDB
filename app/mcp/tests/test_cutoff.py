@@ -137,65 +137,12 @@ class TestAppVersion:
     def test_falls_back_to_unknown_without_env_or_git(self, monkeypatch):
         """A deployed tree with no .git reports honestly rather than failing."""
         monkeypatch.delenv("PORTFOLIODB_APP_VERSION", raising=False)
-        monkeypatch.setattr(cutoff_service, "_git_head_sha", lambda: None)
+        monkeypatch.setattr(cutoff_service.version, "git_head_sha", lambda: None)
         cutoff_service.app_version.cache_clear()
         try:
             assert cutoff_service.app_version() == "unknown"
         finally:
             cutoff_service.app_version.cache_clear()
-
-
-class TestGitHeadSha:
-    """Read the commit from .git directly — no subprocess on a request path."""
-
-    def _git_dir(self, tmp_path, monkeypatch):
-        # _git_head_sha walks up three parents from the module file, so point it
-        # at a scratch tree shaped the same way.
-        fake_module = tmp_path / "app" / "mcp" / "services" / "cutoff.py"
-        fake_module.parent.mkdir(parents=True)
-        fake_module.write_text("", encoding="utf-8")
-        monkeypatch.setattr(cutoff_service, "__file__", str(fake_module))
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        return git_dir
-
-    def test_reads_a_symbolic_ref(self, tmp_path, monkeypatch):
-        git_dir = self._git_dir(tmp_path, monkeypatch)
-        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-        ref = git_dir / "refs" / "heads"
-        ref.mkdir(parents=True)
-        (ref / "main").write_text("abcdef1234567890\n", encoding="utf-8")
-
-        assert cutoff_service._git_head_sha() == "abcdef1"
-
-    def test_reads_a_detached_head(self, tmp_path, monkeypatch):
-        git_dir = self._git_dir(tmp_path, monkeypatch)
-        (git_dir / "HEAD").write_text("abcdef1234567890\n", encoding="utf-8")
-
-        assert cutoff_service._git_head_sha() == "abcdef1"
-
-    def test_falls_back_to_packed_refs(self, tmp_path, monkeypatch):
-        """`git gc` moves refs into packed-refs and deletes the loose file."""
-        git_dir = self._git_dir(tmp_path, monkeypatch)
-        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-        (git_dir / "packed-refs").write_text(
-            "# pack-refs with: peeled fully-peeled sorted\n"
-            "1111111111111111 refs/heads/other\n"
-            "9999999999999999 refs/heads/main\n"
-            "^aaaaaaaaaaaaaaaa\n",
-            encoding="utf-8",
-        )
-
-        assert cutoff_service._git_head_sha() == "9999999"
-
-    def test_returns_none_without_a_git_directory(self, tmp_path, monkeypatch):
-        self._git_dir(tmp_path, monkeypatch).rmdir()
-        assert cutoff_service._git_head_sha() is None
-
-    def test_returns_none_when_the_ref_cannot_be_resolved(self, tmp_path, monkeypatch):
-        git_dir = self._git_dir(tmp_path, monkeypatch)
-        (git_dir / "HEAD").write_text("ref: refs/heads/gone\n", encoding="utf-8")
-        assert cutoff_service._git_head_sha() is None
 
 
 class TestResolve:
