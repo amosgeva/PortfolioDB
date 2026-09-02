@@ -34,7 +34,25 @@
   // Five steps darkened so the white ticker lettering on .sym-badge clears WCAG
   // AA. Hues are unchanged: each symbol keeps the colour it has always had, a
   // shade deeper. Range tightens from 2.94-6.29 to 4.5-6.29.
-  var PALETTE = ['#4f46e5','#07819e','#12873d','#db2777','#cc4d0a','#7c3aed','#0c857a','#dc2626','#2563eb','#9e6c03'];
+  // One categorical ramp for every chart, solved in OKLCH rather than picked.
+  // Each hue sits at L 56-64% so it clears 3:1 on BOTH --surface values: the old
+  // hand-picked hexes ranged L 45-85% and six of nine fell below 3:1 on white,
+  // with the Cash slice at 1.48:1 - a slice you could not see. Each also carries
+  // a 4.5:1 label so treemap tiles stay readable. Chroma is held to 0.110-0.115
+  // across the set so it reads as one family rather than ten highlighters.
+  // Hues stay >=18 degrees clear of --up (152), --down (26) and --accent (264):
+  // in a ledger a category must never borrow the colour that means profit, loss
+  // or "clickable". Index 9 is reserved for the Other bucket so a symbol can
+  // never be handed the same colour as the aggregate it might be sitting in.
+  // Interleaved, not sorted by hue. Slices take consecutive indices, so a ramp
+  // in hue order hands adjacent slices adjacent hues - the sector donut came
+  // out a continuous cyan-blue-violet-pink sweep, a sequential ramp pretending
+  // to be a categorical one. This order keeps consecutive steps >=77 degrees
+  // apart. Hue order is 193,340,242,52,312,218,5,288,88, then 120 for Other.
+  var CAT = ['#00a19f','#a45b8d','#277bb2','#ac6231','#8f63a9','#009cba','#af596f','#756cb8','#927102','#6b7d23'];
+  var CAT_OTHER = CAT[9];
+  // Cash is not a holding, so it is the one slice carrying no hue at all.
+  var CAT_CASH = '#72767d';
   // symLots carries every lot per symbol (payload builds it from the same rows
   // the P&L engine uses), so a truncated list can state what it is truncating.
   function lotTotal(sym) { return ((DATA.symLots || {})[sym] || []).length; }
@@ -43,7 +61,9 @@
     for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) n += m[k].length;
     return n;
   }
-  function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return PALETTE[h % PALETTE.length]; }
+  // Hashes over CAT[0..8] only: index 9 belongs to the Other bucket, and a
+  // symbol tinted the same as the aggregate beside it reads as a duplicate.
+  function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return CAT[h % 9]; }
   // The label colour for an arbitrary fill, measured rather than listed. The
   // treemap used to name two hex values as exceptions and give everything else
   // white, which silently broke the moment the palette changed. This returns
@@ -193,7 +213,11 @@
       var c = document.createElement('canvas'); c.width = 64; c.height = 64;
       var x = c.getContext('2d');
       x.beginPath(); x.arc(32, 32, 24, 0, Math.PI * 2);
-      x.fillStyle = dp >= 0 ? '#16a34a' : '#dc2626'; x.fill();
+      // A tab strip is light or dark by OS theme, not by ours, so this dot has to
+      // clear 3:1 on both. The old pair failed one each way (green 2.94 on a light
+      // strip, red 2.52 on a dark one); these are the --up/--down hues re-solved at
+      // the lightness that clears both (3.29/3.31 and 3.30/3.30).
+      x.fillStyle = dp >= 0 ? '#0c994f' : '#ed4a46'; x.fill();
       var link = pd.querySelector('link[rel~="icon"]');
       if (!link) { link = pd.createElement('link'); link.rel = 'icon'; pd.head.appendChild(link); }
       link.href = c.toDataURL('image/png');
@@ -698,10 +722,10 @@
 
   // ---- allocation donut / treemap ----
   var allocDim = 'position', allocMode = 'donut';
-  // Indigo and violet were the only two steps where neither white nor ink could
-  // reach 4.5:1 on the slice (4.47 and 4.23 at best); both are a shade deeper so
-  // a label can sit on them. Hues untouched.
-  var ALLOC_PALETTE = ['#575ad4','#0ea5e9','#10b981','#f59e0b','#ef4444','#7a51d8','#14b8a6','#94a3b8'];
+  // The same ramp as every other chart, minus the reserved Other slot. The label
+  // contrast the old comment protected is now a constraint the ramp is solved
+  // against, so it holds for all ten steps instead of two.
+  var ALLOC_PALETTE = CAT.slice(0, 9);
   function renderAlloc() {
     var slices, total;
     if (allocDim === 'position') {
@@ -709,23 +733,40 @@
       var t = totals(rs); total = t.mktVal + CASH;
       if (total <= 0) { $('#alloc').innerHTML = '<div class="empty">No positions to allocate.</div>'; return; }
       var top = rs.slice(0, 6); var otherVal = rs.slice(6).reduce(function (a, r) { return a + r.mktVal; }, 0);
-      slices = top.map(function (r) { return { label: r.sym, val: r.mktVal, color: symColor(r.sym) }; });
-      if (otherVal > 0) slices.push({ label: 'Other', val: otherVal, color: '#94a3b8' });
-      if (CASH > 0) slices.push({ label: 'Cash', val: CASH, color: '#cbd5e1' });
+      // symColor hashes, so it keeps a symbol's colour stable across views - but
+      // six symbols landing in nine buckets collide about nine times in ten, and
+      // two identically coloured arcs make the legend ambiguous. Keep the hash
+      // where it lands free and walk to the next free step where it does not:
+      // stable identity in the common case, always distinct inside one chart.
+      var taken = {};
+      slices = top.map(function (r) {
+        var c = symColor(r.sym);
+        for (var g = 0; taken[c] && g < 9; g++) c = CAT[(CAT.indexOf(c) + 1) % 9];
+        taken[c] = 1;
+        return { label: r.sym, val: r.mktVal, color: c };
+      });
+      if (otherVal > 0) slices.push({ label: 'Other', val: otherVal, color: CAT_OTHER });
+      if (CASH > 0) slices.push({ label: 'Cash', val: CASH, color: CAT_CASH });
     } else {
       var rows = ((DATA.alloc || {})[allocDim]) || [];
       var topR = rows.slice(0, 7);
       var otherR = rows.slice(7).reduce(function (a, r) { return a + r.value; }, 0);
       slices = topR.map(function (r, i) { return { label: r.key, val: r.value, color: ALLOC_PALETTE[i % ALLOC_PALETTE.length] }; });
-      if (otherR > 0) slices.push({ label: 'Other', val: otherR, color: '#cbd5e1' });
+      if (otherR > 0) slices.push({ label: 'Other', val: otherR, color: CAT_OTHER });
       total = slices.reduce(function (a, s) { return a + s.val; }, 0);
       if (total <= 0) { $('#alloc').innerHTML = '<div class="empty">No allocation data for this view.</div>'; return; }
     }
     if (allocMode === 'map') { $('#alloc').innerHTML = treemapHTML(slices, total); return; }
     var C = 2*Math.PI*54, off = 0;
+    // Every step of the ramp sits at one lightness, so two adjacent arcs can
+    // measure ~1:1 against each other however well each reads on the card. Hue
+    // alone cannot carry a boundary, so the boundary is a gap - which the treemap
+    // already had between its tiles and the donut did not.
+    var GAP = 3;
     var ring = slices.map(function (s) { var frac = s.val/total;
+      var dash = Math.max(1.5, frac*C - GAP);
       var seg = '<circle cx="80" cy="80" r="54" fill="none" stroke="' + s.color + '" stroke-width="20" stroke-dasharray="' +
-        (frac*C).toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + (-off*C).toFixed(2) + '" transform="rotate(-90 80 80)"/>';
+        dash.toFixed(2) + ' ' + (C - dash).toFixed(2) + '" stroke-dashoffset="' + (-off*C).toFixed(2) + '" transform="rotate(-90 80 80)"/>';
       off += frac; return seg; }).join('');
     var legend = slices.map(function (s) { return '<div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);padding:3px 0">' +
       '<span style="width:9px;height:9px;border-radius:2px;background:' + s.color + '"></span><span style="flex:1">' + esc(s.label) +
@@ -897,9 +938,19 @@
       var x = i * slot + (slot - bw) / 2;
       var yTop = Y(Math.max(nd.y0, nd.y1)), yBot = Y(Math.min(nd.y0, nd.y1));
       var hgt = Math.max(1.5, yBot - yTop);
-      var color = nd.net ? 'var(--accent)' : (nd.val >= 0 ? 'var(--up)' : 'var(--down)');
+      // The total was --accent, which made the one bar everybody reads first the
+      // only bar whose colour did not say whether it was a gain or a loss, and
+      // spent the interaction colour on data. It is sign-coloured like the rest;
+      // what marks it as the total is that it alone is anchored to zero and drawn
+      // at full strength, behind a rule that separates it from the steps.
+      var color = nd.val >= 0 ? 'var(--up)' : 'var(--down)';
       svg += '<rect x="' + x.toFixed(1) + '" y="' + yTop.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + hgt.toFixed(1) +
         '" rx="3" fill="' + color + '"' + (nd.net ? '' : ' opacity=".85"') + '><title>' + nd.label + ' ' + F.money(nd.val) + '</title></rect>';
+      if (nd.net) {
+        var dx = (x - (slot - bw) / 2 + 1).toFixed(1);
+        svg += '<line x1="' + dx + '" x2="' + dx + '" y1="' + padT + '" y2="' + (H - padB + 6) +
+          '" stroke="var(--border-2)" stroke-width="1"/>';
+      }
       if (!nd.net && i < nodes.length - 1) {
         var cy = Y(nd.y1).toFixed(1);
         svg += '<line x1="' + (x + bw).toFixed(1) + '" x2="' + ((i + 1) * slot + (slot - bw) / 2).toFixed(1) + '" y1="' + cy + '" y2="' + cy +
@@ -1635,7 +1686,14 @@
     return '<div><div style="font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
       esc(label) + '</div><div style="font-size:var(--fs-base);font-weight:600;margin-top:2px">' + esc(val || '—') + '</div></div>';
   }
-  function barChart(items, key, title, color) {
+  // These three charts plot magnitude, not direction, and each has its own scale,
+  // so hue carried no information - and three arbitrary colours (indigo, green,
+  // and a raw #9b59b6 from no palette at all) invited a comparison across charts
+  // that the numbers do not support. Positive quarters take a neutral ink; only a
+  // negative quarter earns a colour, because only it means something. That also
+  // retires sign-as-opacity, which drew a loss-making quarter as the faintest bar
+  // on the chart - the exact inverse of how much it matters.
+  function barChart(items, key, title) {
     var vals = items.map(function (t) { return t[key] == null ? null : Number(t[key]); });
     if (!vals.some(function (v) { return v != null; }))
       return '<div style="flex:1"><div style="font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px">' + title + '</div><div class="empty" style="padding:14px">no data</div></div>';
@@ -1644,7 +1702,8 @@
     var W = items.length * 26, H = 80;
     var bars = nums.map(function (v, i) {
       var h = Math.abs(v) / max * 56, x = i * 26 + 4, y = v >= 0 ? (62 - h) : 62;
-      return '<rect x="' + x + '" y="' + y.toFixed(1) + '" width="16" height="' + h.toFixed(1) + '" rx="2" fill="' + color + '" opacity="' + (v < 0 ? '.5' : '1') + '"/>';
+      return '<rect x="' + x + '" y="' + y.toFixed(1) + '" width="16" height="' + h.toFixed(1) + '" rx="2" fill="' +
+        (v < 0 ? 'var(--down)' : 'var(--muted)') + '"/>';
     }).join('');
     return '<div style="flex:1;min-width:160px"><div style="font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px">' + title + '</div>' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px" preserveAspectRatio="none">' +
@@ -1699,9 +1758,9 @@
     if (fd.trend && fd.trend.length) {
       html += '<section class="card" style="margin-top:20px"><div class="card__hd"><h2>Quarterly trend</h2><span class="sub">last ' +
         fd.trend.length + ' periods</span></div><div class="card__bd" style="display:flex;gap:20px;flex-wrap:wrap">' +
-        barChart(fd.trend, 'revenue', 'Revenue', 'var(--accent)') +
-        barChart(fd.trend, 'net_income', 'Net income', 'var(--up)') +
-        barChart(fd.trend, 'fcf', 'Free cash flow', '#9b59b6') + '</div></section>';
+        barChart(fd.trend, 'revenue', 'Revenue') +
+        barChart(fd.trend, 'net_income', 'Net income') +
+        barChart(fd.trend, 'fcf', 'Free cash flow') + '</div></section>';
     }
 
     if (fd.earnings && fd.earnings.length) {
