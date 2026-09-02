@@ -39,6 +39,11 @@ needs a schema step says so under **Upgrading**.
 - The drift-checking tool refuses non-HTTP(S) URLs rather than handing whatever
   it is given to `urlopen`, which would otherwise read a local file and report
   on it as though it were the live site.
+- **`.gitignore` now covers every `.env` sidecar, not just the known suffixes.**
+  Copying your `.env` before editing it — `cp .env .env.bak` — is the obvious
+  precaution, and under the old exact-match rules that copy was **untracked but
+  not ignored**, one `git add -A` away from committing your credentials.
+  `.env.template` stays visible.
 
 ### Fixed
 
