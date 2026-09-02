@@ -189,7 +189,11 @@ def request_json(api_key: str, section: str, symbol: str) -> dict[str, Any]:
     last_err: dict[str, Any] = {"_error": "unreachable"}
     for attempt in range(1, _FETCH_ATTEMPTS + 1):
         try:
-            with urlopen(req, timeout=30) as resp:
+            # BASE_URL is the literal https constant above and the path comes
+            # from the fixed ENDPOINTS map, so the scheme cannot be anything
+            # else. No runtime guard here: one that can never fire is noise,
+            # unlike the logo fetcher's, whose URL is templated.
+            with urlopen(req, timeout=30) as resp:  # nosec B310
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as e:

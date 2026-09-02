@@ -16,6 +16,37 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Changed
+
+- **The MCP server's ad-hoc runner now binds localhost by default** instead of
+  all interfaces. `python -m app.mcp.server` is what someone types to try the
+  server out, and a default that reaches the LAN is the wrong one for a process
+  that answers questions about your ledger. Bearer auth sits in front either
+  way — this narrows the blast radius of a misconfigured token, it does not
+  close a hole.
+  - **If you rely on reaching the MCP server from another machine, set
+    `PORTFOLIODB_MCP_HOST=0.0.0.0`.** The shipped compose file already does,
+    and passes `--host` to uvicorn itself rather than going through the runner,
+    so containerised deployments are unaffected either way.
+
+### Security
+
+- **`python-dotenv` floor raised to 1.2.2** (CVE-2026-28684, arbitrary file
+  overwrite via symlink following). The old `>=1.0` range permitted affected
+  versions; a fresh install resolves to the newest match, so this closes the
+  case where a resolver, a stale mirror, or an old lockfile lands on one that
+  is vulnerable.
+- The drift-checking tool refuses non-HTTP(S) URLs rather than handing whatever
+  it is given to `urlopen`, which would otherwise read a local file and report
+  on it as though it were the live site.
+
+### Fixed
+
+- Nine `try`/`except`/`pass` blocks replaced with `contextlib.suppress`. All
+  were best-effort cleanup — returning a connection, closing a handle, dropping
+  a query parameter — and behave identically; the intent is now legible at a
+  glance rather than inferred from an empty handler.
+
 ## [1.2.2] — 2026-09-02
 
 Three unused imports removed. **Nothing you can observe changes** — no figure,
