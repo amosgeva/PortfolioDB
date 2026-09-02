@@ -1,8 +1,13 @@
 # ─── Secrets & personal data ──────────────────────────────────
+# Any .env sidecar, not just the known suffixes: `cp .env .env.bak-<stamp>`
+# before editing is the obvious thing to do, and under the old exact-match
+# rules that copy landed as an *untracked secrets file in a public repo*.
+# The .template stub is the one that must stay visible.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.template
 app/.env
+app/.env.*
 
 # Operator's filled-in investor one-pager. Contains personal financial info
 # (income, family, residency). The .template stub is committed for new clones.

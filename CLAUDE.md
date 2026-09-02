@@ -83,7 +83,7 @@ Four tables, all append-only by design:
 - `price_snapshots` — time-series quotes, PK `(symbol, ts)`, written by `snapshot_prices.py`.
 - `cash_snapshots` — manual cash balances (no auto-pull from brokers). Latest row per `account` wins.
 
-There is **no positions table**. Open quantity, cost basis, and realized P&L are always recomputed from `lots` on read.
+There is **no positions table**: open quantity, cost basis, and realized P&L are derived from `lots` on read, never stored. Caching is the one qualifier — `positions.py` memoises its lot frame for 60s (`_FRAME_CACHE_TTL_SECONDS`) and the dashboard caches its payload for 120s — so a read can be that stale, but a cache entry is a memo of the computation, not a recorded position. Don't remove those TTLs: they exist because a backfill mutates history behind the cutoff.
 
 ### P&L engines (`app/fifo.py`, `app/avg_cost.py`)
 Two parallel engines with matching `Lot` dataclasses and `run_*` entry points:
