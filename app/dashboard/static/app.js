@@ -36,6 +36,24 @@
   // shade deeper. Range tightens from 2.94-6.29 to 4.5-6.29.
   var PALETTE = ['#4f46e5','#07819e','#12873d','#db2777','#cc4d0a','#7c3aed','#0c857a','#dc2626','#2563eb','#9e6c03'];
   function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return PALETTE[h % PALETTE.length]; }
+  // The label colour for an arbitrary fill, measured rather than listed. The
+  // treemap used to name two hex values as exceptions and give everything else
+  // white, which silently broke the moment the palette changed. This returns
+  // whichever of ink or white actually clears more contrast on that fill.
+  var INK_ON_FILL = '#151b24';
+  function relLum(hex) {
+    var h = String(hex).replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];   // #fff -> #ffffff
+    var c = [0, 2, 4].map(function (i) { return parseInt(h.substr(i, 2), 16) / 255; })
+      .map(function (v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  var _inkLum = null;
+  function onFill(hex) {
+    if (_inkLum === null) _inkLum = relLum(INK_ON_FILL);
+    var L = relLum(hex);
+    return (1.05 / (L + 0.05)) >= ((L + 0.05) / (_inkLum + 0.05)) ? '#fff' : INK_ON_FILL;
+  }
   // Ticker logo over the letter badge. Prefer the self-hosted data URI from
   // the payload (DATA.logos, populated by fetch_ticker_logos.py — no
   // third-party request at runtime); fall back to the parqet CDN for symbols
@@ -672,7 +690,10 @@
 
   // ---- allocation donut / treemap ----
   var allocDim = 'position', allocMode = 'donut';
-  var ALLOC_PALETTE = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#94a3b8'];
+  // Indigo and violet were the only two steps where neither white nor ink could
+  // reach 4.5:1 on the slice (4.47 and 4.23 at best); both are a shade deeper so
+  // a label can sit on them. Hues untouched.
+  var ALLOC_PALETTE = ['#575ad4','#0ea5e9','#10b981','#f59e0b','#ef4444','#7a51d8','#14b8a6','#94a3b8'];
   function renderAlloc() {
     var slices, total;
     if (allocDim === 'position') {
@@ -720,7 +741,7 @@
       html += '<div style="display:flex;gap:4px;height:' + h + 'px">';
       row.forEach(function (s) {
         var p = s.val / total * 100;
-        var txt = (s.color === '#cbd5e1' || s.color === '#94a3b8') ? '#1e293b' : '#fff';
+        var txt = onFill(s.color);
         html += '<div title="' + esc(s.label) + ' · ' + F.money(s.val) + ' · ' + p.toFixed(1) + '%" ' +
           'style="flex:' + s.val.toFixed(2) + ' 1 0;min-width:0;background:' + s.color + ';border-radius:var(--r-sm);color:' + txt + ';' +
           'padding:8px 9px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden">' +
@@ -1191,9 +1212,19 @@
   }
 
   // ---- movers + heatmap + breadth ----
+  // Sign-and-Size, composed per theme. Hue still carries the sign and lightness
+  // and chroma still carry the magnitude — but the two themes need opposite
+  // ranges, because a tile's label has to be readable on it. One range forced
+  // onto both themes cannot work: the old L 64->44 swept through a band where
+  // neither white nor dark ink reaches 4.5:1 (worst case 4.35 around a 1% move),
+  // so every tile in the middle of the scale was illegible whatever the label
+  // colour. Light theme goes pale and takes ink; dark goes deep and takes white.
   function heatColor(p) { var m = Math.min(Math.abs(p)/3.2, 1);
     if (Math.abs(p) < 0.08) return isDark() ? 'oklch(38% 0.012 260)' : 'oklch(72% 0.015 260)';
-    return 'oklch(' + (64-m*20).toFixed(1) + '% ' + (0.05+m*0.13).toFixed(3) + ' ' + (p>=0?152:26) + ')'; }
+    var hue = p >= 0 ? 152 : 26;
+    return isDark()
+      ? 'oklch(' + (52-m*16).toFixed(1) + '% ' + (0.06+m*0.13).toFixed(3) + ' ' + hue + ')'
+      : 'oklch(' + (80-m*16).toFixed(1) + '% ' + (0.04+m*0.16).toFixed(3) + ' ' + hue + ')'; }
   function moverRow(s, rank) {
     return '<div class="mv" ' + symTrigger(s.sym) + '><span class="mv__rank">' + rank + '</span><span class="mv__sym"><b>' + s.sym + '</b><span>' + esc(s.name) +
       '</span></span><span class="mv__px">' + F.money(s.price) + '</span><span class="mv__chg ' + chgCls(s.dayPct) + '">' + F.pct(s.dayPct) + '</span></div>'; }
