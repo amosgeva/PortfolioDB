@@ -16,6 +16,40 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-09-02
+
+Static-analysis hygiene. **Nothing you can observe changes** — no figure, no
+stored value, no schema, and no rendered output differs from 1.2.0. It is tagged
+rather than left on `main` so the clean analysis baseline belongs to a release
+someone can pull.
+
+### Changed
+
+- **The dashboard front-end calls `Number.isNaN`, `Number.isFinite` and
+  `Number.parseInt` instead of the bare globals.** The globals coerce their
+  argument before testing it, which is why `isNaN("abc")` is `true` and
+  `isNaN([])` is `false`. Neither trap could fire at the five call sites
+  involved — every argument was already a number, and `Number.parseInt` *is*
+  the global — so this is a consistency fix, not a bug fix. The same file had
+  been using the `Number.*` form in three other places, and one convention is
+  worth more than five exceptions to it.
+
+- **The dashboard's news fetch carries the audit suppression its counterpart in
+  the reporting path already had**, with a comment saying why the rule cannot be
+  satisfied instead of leaving the next reader to work it out: the command's
+  first element is the interpreter already running, and hardcoding a path there
+  would break every virtualenv and container. The call itself is unchanged — no
+  shell, and every other element a literal.
+
+- Analysis config: the excluded-tests glob now matches the suites where they
+  actually live, so a parameterized `DELETE` in a test helper stops being
+  reported as a critical finding.
+
+### Upgrading
+
+No migration, and no reason to hurry. `docker compose pull && docker compose
+up -d` when convenient.
+
 ## [1.2.0] — 2026-09-02
 
 A release about the dashboard, and about one idea: a number you cannot trace is
@@ -655,7 +689,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.1
 [1.2.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.0
 [1.1.6]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.6
 [1.1.5]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.5
