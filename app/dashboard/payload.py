@@ -464,10 +464,14 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         qty_map[s] * (stocks[s]["price"] - stocks[s]["prev"])
         for s in qty_map if s in stocks and stocks[s]["prev"] is not None
     )
-    delta_last = sum(
-        qty_map[s] * (stocks[s]["price"] - second_latest[s])
-        for s in qty_map if s in stocks and s in second_latest
-    )
+    # Restricted to symbols that appear in BOTH snapshots, so the two sides have
+    # to be summed over that same set -- a portfolio total taken from the value
+    # series is a different figure over a different set, and the dashboard used
+    # to derive one that missed this by ~40c while presenting it as the terms.
+    _delta_syms = [s for s in qty_map if s in stocks and s in second_latest]
+    delta_prev = sum(qty_map[s] * second_latest[s] for s in _delta_syms)
+    delta_curr = sum(qty_map[s] * stocks[s]["price"] for s in _delta_syms)
+    delta_last = delta_curr - delta_prev
     # Total fees paid across the whole ledger (already folded into basis /
     # proceeds — this is a reporting figure, not a P&L adjustment).
     total_fees = sum(float(r["fees"]) for r in lot_rows if r.get("fees") is not None)
@@ -483,6 +487,17 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "totalValue": round(total_market + cash, 2),
         "marketValue": round(total_market, 2),
         "cash": round(cash, 2),
+        # The one KPI that is not derived from anything: it is a figure the
+        # operator typed. Its evidence is therefore which account it belongs to
+        # and when it was last entered, which only the server knows.
+        "cashAccounts": [
+            {
+                "account": r["account"],
+                "cash": round(float(r["cash"]), 2),
+                "asOf": r["ts"].isoformat() if r.get("ts") is not None else None,
+            }
+            for r in cash_rows
+        ],
         "costBasis": round(cost_basis, 2),
         "dayChange": round(day_change, 2),
         "dayChangePct": round(day_change / prev_value * 100, 2) if prev_value else 0.0,
@@ -491,6 +506,9 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "realized": round(realized, 2),
         "totalReturnPct": round((realized + unrealized) / cost_basis * 100, 2) if cost_basis else 0.0,
         "deltaLast": round(delta_last, 2),
+        "deltaLastPrev": round(delta_prev, 2),
+        "deltaLastCurr": round(delta_curr, 2),
+        "deltaLastSyms": len(_delta_syms),
         "activeCount": len(holdings),
         "watchlistCount": len(watch_rows),
         "totalFees": round(total_fees, 2),

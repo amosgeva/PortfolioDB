@@ -214,6 +214,16 @@ a{color:inherit;text-decoration:none}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
 .kpi{padding:16px 18px;position:relative;overflow:hidden}
+/* A tile that opens its own derivation has to look answerable. The cue is the
+   hairline and the lift on approach, not a link colour: --accent is for
+   interaction, and nine indigo tiles would be a wall of it. */
+[data-kpi]{cursor:pointer;transition:border-color .14s,box-shadow .14s,transform .14s}
+[data-kpi]:hover{border-color:var(--border-2);box-shadow:var(--shadow-tip);transform:translateY(-1px)}
+[data-kpi]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[data-kpi]::after{content:"";position:absolute;right:12px;top:12px;width:6px;height:6px;border-radius:var(--r-round);
+  background:var(--faint);opacity:0;transition:opacity .14s}
+[data-kpi]:hover::after,[data-kpi]:focus-visible::after{opacity:1}
+@media (prefers-reduced-motion:reduce){[data-kpi]:hover{transform:none}}
 .kpi__label{font-size:var(--fs-micro);color:var(--muted);letter-spacing:.04em;text-transform:uppercase;font-weight:500}
 .kpi__val{font-family:var(--mono);font-size:var(--fs-num-lg);font-weight:600;letter-spacing:-.02em;margin-top:7px}
 .kpi__sub{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:var(--fs-sm)}
@@ -397,6 +407,19 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .drawer__hd .nm b{font-size:var(--fs-lg);display:block}.drawer__hd .nm span{font-size:var(--fs-meta);color:var(--muted)}
 .drawer__bd{flex:1;overflow-y:auto;padding:18px;overscroll-behavior:contain}
 .drawer__px{font-family:var(--mono);font-size:var(--fs-num-lg);font-weight:600;letter-spacing:-.02em}
+/* The evidence panel: a sentence, the arithmetic, then the rows it summed. */
+.ev-what{font-size:var(--fs-sm);color:var(--fg-soft);line-height:1.55;margin:2px 0 16px}
+.ev-note{font-size:var(--fs-meta);color:var(--muted);line-height:1.5;margin:12px 0 0}
+.ev-round{font-size:var(--fs-micro);color:var(--faint);line-height:1.45;margin:8px 0 0}
+/* The value is the point of this header; on a phone the subtitle wraps into two
+   lines and pushes against it. The drawer's aria-label still says it in full. */
+@media (max-width:640px){.ev-hd-sub{display:none}}
+.ev-eq{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
+.ev-eq td{padding:5px 0}
+.ev-eq td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.ev-eq .ev-op{width:1.6em;color:var(--faint);font-family:var(--mono);text-align:center}
+.ev-eq .ev-sum td{border-top:1px solid var(--border-2);padding-top:9px;font-weight:600}
+.ev-tbl th,.ev-tbl td{font-size:var(--fs-meta)}
 .drawer__stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 16px;margin-top:16px}
 .drawer__stats .l{font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .drawer__stats .v{font-family:var(--mono);font-size:var(--fs-lg);font-weight:600;margin-top:2px}
