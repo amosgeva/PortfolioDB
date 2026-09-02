@@ -100,3 +100,11 @@ suggestions.txt
 
 # Local database dumps from `make backup` — copy them off this machine.
 backups/
+
+# Impeccable design tooling — PRODUCT.md / DESIGN.md capture product and visual
+# context for AI-assisted design work, and .impeccable/ holds its config,
+# detector suppressions and critique snapshots. Working notes for this machine,
+# not part of the app or its published documentation.
+PRODUCT.md
+DESIGN.md
+.impeccable/
