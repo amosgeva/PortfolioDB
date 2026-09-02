@@ -31,7 +31,10 @@
   }
   var F = { money: money, compact: compact, pct: pct };
 
-  var PALETTE = ['#4f46e5','#0891b2','#16a34a','#db2777','#ea580c','#7c3aed','#0d9488','#dc2626','#2563eb','#ca8a04'];
+  // Five steps darkened so the white ticker lettering on .sym-badge clears WCAG
+  // AA. Hues are unchanged: each symbol keeps the colour it has always had, a
+  // shade deeper. Range tightens from 2.94-6.29 to 4.5-6.29.
+  var PALETTE = ['#4f46e5','#07819e','#12873d','#db2777','#cc4d0a','#7c3aed','#0c857a','#dc2626','#2563eb','#9e6c03'];
   function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return PALETTE[h % PALETTE.length]; }
   // Ticker logo over the letter badge. Prefer the self-hosted data URI from
   // the payload (DATA.logos, populated by fetch_ticker_logos.py — no
@@ -299,7 +302,7 @@
   if (wlEl) wlEl.innerHTML = WL.length ? WL.map(function (sym) { var s = get(sym);
       return '<div class="wl__row" ' + symTrigger(s.sym) + '><span class="wl__sym">' + s.sym + '</span><span class="wl__px">' + F.money(s.price) +
         '</span><span class="wl__chg ' + chgCls(s.dayPct) + '">' + F.pct(s.dayPct) + '</span></div>'; }).join('')
-    : '<div style="padding:8px 10px;font-size:11.5px;color:var(--rail-muted)">No watchlist symbols</div>';
+    : '<div style="padding:8px 10px;font-size:var(--fs-meta);color:var(--rail-muted)">No watchlist symbols</div>';
 
   // ---- client-side nav ----
   var TITLES = { portfolio: ['Portfolio', 'Real-time overview of your holdings'],
@@ -589,13 +592,13 @@
       '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="8" fill="' + color + '" opacity=".18"/></svg>' +
       '<div id="pv-tip" style="position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);' +
       'background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 9px;' +
-      'box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:12px;white-space:nowrap;z-index:5"></div>' +
-      '<div class="num" style="position:absolute;top:6px;left:10px;font-size:12px;font-weight:600;pointer-events:none">' +
+      'box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div>' +
+      '<div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none">' +
       '<span style="color:' + color + '">' + pvRange + ' ' + F.pct(chg) + '</span>' +
       (maxDD >= 0.005 ? '<span style="color:var(--muted);font-weight:500">  ·  max DD −' + (maxDD*100).toFixed(1) + '%</span>' : '') + '</div>' +
       // Say it on the chart rather than only in the markup: a gap the operator
       // can see but not explain is its own kind of untrustworthy number.
-      (bad.count ? '<div style="position:absolute;bottom:4px;right:10px;font-size:11.5px;color:var(--muted);pointer-events:none">' +
+      (bad.count ? '<div style="position:absolute;bottom:4px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">' +
         CLOCK_SVG + ' ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted · see Data Health</div>' : '') +
       '</div>';
     // draw-in: reveal the line along its own length on (re)render
@@ -623,7 +626,7 @@
       var pxX = (sx / W) * rect.width, pxY = (sy / H) * rect.height;
       tip.style.left = pxX + 'px'; tip.style.top = pxY + 'px'; tip.style.opacity = '1';
       tip.innerHTML = '<div style="font-weight:600">' + F.money(pairs[i][1]) + '</div>' +
-        '<div style="color:var(--muted);font-size:11px">' + pvTipDate(pairs[i][0]) + '</div>';
+        '<div style="color:var(--muted);font-size:var(--fs-micro)">' + pvTipDate(pairs[i][0]) + '</div>';
     }
     function leave() { cross.setAttribute('opacity', '0'); cursor.setAttribute('opacity', '0'); tip.style.opacity = '0'; }
     wrap.addEventListener('mousemove', move);
@@ -679,14 +682,14 @@
       var seg = '<circle cx="80" cy="80" r="54" fill="none" stroke="' + s.color + '" stroke-width="20" stroke-dasharray="' +
         (frac*C).toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + (-off*C).toFixed(2) + '" transform="rotate(-90 80 80)"/>';
       off += frac; return seg; }).join('');
-    var legend = slices.map(function (s) { return '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0">' +
+    var legend = slices.map(function (s) { return '<div style="display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);padding:3px 0">' +
       '<span style="width:9px;height:9px;border-radius:2px;background:' + s.color + '"></span><span style="flex:1">' + esc(s.label) +
       '</span><span class="num" style="color:var(--muted)">' + (s.val/total*100).toFixed(1) + '%</span></div>'; }).join('');
     $('#alloc').innerHTML = '<div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">' +
       '<div style="position:relative;flex:0 0 auto"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="Allocation donut, total ' + F.compact(total) + '">' + ring + '</svg>' +
       '<div style="position:absolute;inset:0;display:grid;place-items:center;text-align:center"><div>' +
-      '<div class="num" style="font-size:18px;font-weight:600">' + F.compact(total) + '</div>' +
-      '<div style="font-size:10.5px;color:var(--muted);letter-spacing:.04em">TOTAL</div></div></div></div>' +
+      '<div class="num" style="font-size:var(--fs-xl);font-weight:600">' + F.compact(total) + '</div>' +
+      '<div style="font-size:var(--fs-micro);color:var(--muted);letter-spacing:.04em">TOTAL</div></div></div></div>' +
       '<div style="flex:1;min-width:150px">' + legend + '</div></div>';
   }
   // weight-proportional treemap (two greedy strips) — tile area = weight, so
@@ -705,8 +708,8 @@
         html += '<div title="' + esc(s.label) + ' · ' + F.money(s.val) + ' · ' + p.toFixed(1) + '%" ' +
           'style="flex:' + s.val.toFixed(2) + ' 1 0;min-width:0;background:' + s.color + ';border-radius:6px;color:' + txt + ';' +
           'padding:8px 9px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden">' +
-          '<b style="font-size:12px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden">' + esc(s.label) + '</b>' +
-          '<span class="num" style="font-size:11px;opacity:.92">' + p.toFixed(1) + '%</span></div>';
+          '<b style="font-size:var(--fs-meta);white-space:nowrap;text-overflow:ellipsis;overflow:hidden">' + esc(s.label) + '</b>' +
+          '<span class="num" style="font-size:var(--fs-micro)">' + p.toFixed(1) + '%</span></div>';
       });
       html += '</div>';
     });
@@ -733,7 +736,7 @@
       '<td class="num">' + F.money(r.mktVal) + '</td>' +
       '<td class="num" style="color:var(--muted)">' + F.money(r.avgCost) + '</td>' +
       '<td class="num ' + (gUp?'up':'down') + '">' + (gUp?'+':'−') + F.money(Math.abs(r.gl)) +
-        ' <span style="opacity:.7;font-size:11px">' + F.pct(r.glPct) + '</span></td>' +
+        ' <span style="font-size:var(--fs-micro)">' + F.pct(r.glPct) + '</span></td>' +
       '<td class="spark-cell">' + sparkSVG(r.hist, dUp) + '</td></tr>'; }
   function hcardHTML(r) {
     var dTag = r.dayPct == null ? '' : (r.dayPct >= 0 ? 'tag--up' : 'tag--down');
@@ -741,7 +744,7 @@
     return '<div class="hcard" ' + symTrigger(r.sym) + '><div class="hcard__top">' +
       symBadge(r.sym) +
       '<span class="nm" style="display:flex;flex-direction:column;line-height:1.25"><b>' + r.sym + '</b>' +
-      '<span style="font-size:11px;color:var(--muted)">' + esc(r.name) + '</span></span>' +
+      '<span style="font-size:var(--fs-micro);color:var(--muted)">' + esc(r.name) + '</span></span>' +
       '<span class="tag ' + dTag + '">' + F.pct(r.dayPct) + '</span></div>' +
       '<div class="hcard__row"><span class="mv">' + F.money(r.mktVal) + '</span>' +
       '<span class="num ' + (gUp?'up':'down') + '">' + (gUp?'+':'−') + F.money(Math.abs(r.gl)) + ' (' + F.pct(r.glPct) + ')</span></div>' +
@@ -893,7 +896,7 @@
       }
     }
     corrHost.innerHTML = html + '</div>' +
-      '<div style="font-size:11px;color:var(--muted);margin-top:8px">Pairwise correlation of daily returns — green moves together, red moves opposite.</div>';
+      '<div style="font-size:var(--fs-micro);color:var(--muted);margin-top:8px">Pairwise correlation of daily returns — green moves together, red moves opposite.</div>';
   }
 
   // ---- per-symbol price history chart ----
@@ -950,13 +953,13 @@
     svg += '<line id="ph-cross" x1="0" x2="0" y1="' + padT + '" y2="' + (H - padB) + '" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/>' +
       '<circle id="ph-cursor" cx="0" cy="0" r="4" fill="' + color + '" stroke="var(--surface)" stroke-width="1.5" opacity="0"/>';
     svg += '</svg>';
-    var legend = '<div style="font-size:11px;color:var(--muted);margin-top:6px">' +
+    var legend = '<div style="font-size:var(--fs-micro);color:var(--muted);margin-top:6px">' +
       '<span class="up">▲ BUY</span> &nbsp; <span class="down">▼ SELL</span>' +
       (phSpy ? ' &nbsp; · &nbsp; <span style="color:var(--warn)">┄ SPY, rebased to ' + esc(sym) + '’s start (same % scale)</span>' : '') + '</div>';
     host.innerHTML = '<div class="ph-wrap" style="position:relative;cursor:crosshair">' + svg +
       '<div id="ph-tip" style="position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);' +
       'background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 9px;' +
-      'box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:12px;white-space:nowrap;z-index:5"></div></div>' + legend;
+      'box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div></div>' + legend;
     var wrap = host.querySelector('.ph-wrap');
     var cross = host.querySelector('#ph-cross'), cursor = host.querySelector('#ph-cursor'), tip = host.querySelector('#ph-tip');
     function move(ev) {
@@ -969,7 +972,7 @@
       cursor.setAttribute('cx', sx); cursor.setAttribute('cy', sy); cursor.setAttribute('opacity', '1');
       tip.style.left = (sx / W) * rect.width + 'px'; tip.style.top = (sy / H) * rect.height + 'px'; tip.style.opacity = '1';
       tip.innerHTML = '<div style="font-weight:600">' + esc(sym) + '  ' + F.money(data[best][1]) + '</div>' +
-        '<div style="color:var(--muted);font-size:11px">' + phTipDate(data[best][0]) + '</div>';
+        '<div style="color:var(--muted);font-size:var(--fs-micro)">' + phTipDate(data[best][0]) + '</div>';
     }
     function leave() { cross.setAttribute('opacity', '0'); cursor.setAttribute('opacity', '0'); tip.style.opacity = '0'; }
     wrap.addEventListener('mousemove', move);
@@ -1141,7 +1144,7 @@
             ' <span style="color:var(--faint)">· ' + b.complete + '</span></div>' +
         '</div>';
       }).join('') +
-      '<div style="margin-top:12px;font-size:11.5px;color:var(--muted)">' +
+      '<div style="margin-top:12px;font-size:var(--fs-meta);color:var(--muted)">' +
         'Average up month ' + pctTxt(st.month.best_average_pct) +
         ' · average down month ' + pctTxt(st.month.worst_average_pct) +
       '</div>';
@@ -1181,7 +1184,7 @@
       var known = items.filter(function (s) { return s.dayPct != null; });
       var avg = known.length ? known.reduce(function (a, s) { return a + s.dayPct; }, 0) / known.length : 0;
       html += '<div class="heat__sector-title">' + esc(sec) + '<span class="num ' + (avg>=0?'up':'down') + '" style="font-weight:600">' + F.pct(avg) +
-        '</span><span style="color:var(--faint);font-weight:400;font-size:11px">' + items.length + ' names</span></div>';
+        '</span><span style="color:var(--faint);font-weight:400;font-size:var(--fs-micro)">' + items.length + ' names</span></div>';
       items.sort(function (a, b) { return b.dayPct - a.dayPct; }); html += items.map(tileHTML).join(''); });
     $('#heat').innerHTML = any ? html : '<div class="empty">No symbols match your filter.</div>'; }
   function renderChips() { var chips = ['All'].concat(SECTORS);
@@ -1319,7 +1322,7 @@
     cmdkItems.forEach(function (c, i) {
       if (c.sect !== lastSect) { html += '<div class="cmdk__sect">' + esc(c.sect) + '</div>'; lastSect = c.sect; }
       html += '<div class="cmdk__item' + (i === cmdkSel ? ' is-sel' : '') + '" data-ci="' + i + '" role="option" aria-selected="' + (i === cmdkSel) + '">' +
-        '<b>' + esc(c.label) + '</b>' + (c.detail ? '<span style="font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(c.detail) + '</span>' : '') +
+        '<b>' + esc(c.label) + '</b>' + (c.detail ? '<span style="font-size:var(--fs-meta);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(c.detail) + '</span>' : '') +
         (c.px ? '<span class="px ' + (c.upDn ? 'up' : 'down') + '">' + c.px + '</span>' : '') + '</div>';
     });
     cmdkList.innerHTML = html || '<div class="empty">No matches.</div>';
@@ -1411,7 +1414,7 @@
     });
     svg += '</svg>';
     var chg = (ys[ys.length - 1] - ys[0]) / ys[0] * 100;
-    return svg + '<div class="num" style="font-size:11.5px;margin-top:4px;color:' + color + '">' + F.pct(chg) + ' over range</div>';
+    return svg + '<div class="num" style="font-size:var(--fs-meta);margin-top:4px;color:' + color + '">' + F.pct(chg) + ' over range</div>';
   }
   function openDrawer(sym) {
     var s = get(sym); if (!s || !drawerEl) return;
@@ -1421,7 +1424,7 @@
       '<button class="iconbtn drawer__close" data-drawer-close aria-label="Close">' + X_ICON + '</button>';
     var html = '<div style="display:flex;align-items:baseline;gap:12px">' +
       '<span class="drawer__px">' + F.money(s.price) + '</span>' +
-      '<span class="num ' + chgCls(s.dayPct) + '" style="font-size:14px;font-weight:600">' + F.pct(s.dayPct) + ' today</span></div>';
+      '<span class="num ' + chgCls(s.dayPct) + '" style="font-size:var(--fs-base);font-weight:600">' + F.pct(s.dayPct) + ' today</span></div>';
     if (h) {
       var mktVal = s.price * h.qty, cost = h.avgCost * h.qty, gl = mktVal - cost, glPct = cost ? gl / cost * 100 : 0;
       var t = totals(holdingRows()); var totalVal = t.mktVal + CASH;
@@ -1431,10 +1434,10 @@
         box('Avg cost', F.money(h.avgCost)) +
         box('Market value', F.money(mktVal)) +
         box('Cost basis', F.money(cost)) +
-        box('Unrealized', (gl >= 0 ? '+' : '−') + F.money(Math.abs(gl)) + ' <span style="font-size:11px;opacity:.75">' + F.pct(glPct) + '</span>', gl >= 0 ? 'up' : 'down') +
+        box('Unrealized', (gl >= 0 ? '+' : '−') + F.money(Math.abs(gl)) + ' <span style="font-size:var(--fs-micro)">' + F.pct(glPct) + '</span>', gl >= 0 ? 'up' : 'down') +
         box('Weight', totalVal > 0 ? (mktVal / totalVal * 100).toFixed(1) + '%' : '—') + '</div>';
     } else {
-      html += '<div style="margin-top:12px;font-size:12.5px;color:var(--muted)">Watchlist symbol — no open position.</div>';
+      html += '<div style="margin-top:12px;font-size:var(--fs-sm);color:var(--muted)">Watchlist symbol — no open position.</div>';
     }
     var chart = drawerChartHTML(sym);
     if (chart) html += '<div class="drawer__sect">Price · 3M <span class="n">your trades marked</span></div>' + chart;
@@ -1454,8 +1457,8 @@
         news.map(function (n) {
           var title = n.url ? '<a href="' + esc(n.url) + '" target="_blank" rel="noopener">' + esc(n.title) + '</a>' : esc(n.title);
           return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' +
-            '<div style="font-size:13px;font-weight:600;line-height:1.4">' + title + '</div>' +
-            '<div style="font-size:11px;color:var(--muted);margin-top:3px">' + esc(n.src) + ' · ' + esc(n.time) + '</div></div>';
+            '<div style="font-size:var(--fs-sm);font-weight:600;line-height:1.4">' + title + '</div>' +
+            '<div style="font-size:var(--fs-micro);color:var(--muted);margin-top:3px">' + esc(n.src) + ' · ' + esc(n.time) + '</div></div>';
         }).join('') + '</div>';
     }
     drawerBd.innerHTML = html;
@@ -1527,13 +1530,13 @@
   function fpct(x, d) { if (x == null) return '—'; return (Number(x) * 100).toFixed(d == null ? 1 : d) + '%'; }
   function fratio(x, d) { if (x == null) return '—'; return Number(x).toFixed(d == null ? 2 : d); }
   function statBox(label, val) {
-    return '<div><div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
-      esc(label) + '</div><div style="font-size:14px;font-weight:600;margin-top:2px">' + esc(val || '—') + '</div></div>';
+    return '<div><div style="font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
+      esc(label) + '</div><div style="font-size:var(--fs-base);font-weight:600;margin-top:2px">' + esc(val || '—') + '</div></div>';
   }
   function barChart(items, key, title, color) {
     var vals = items.map(function (t) { return t[key] == null ? null : Number(t[key]); });
     if (!vals.some(function (v) { return v != null; }))
-      return '<div style="flex:1"><div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">' + title + '</div><div class="empty" style="padding:14px">no data</div></div>';
+      return '<div style="flex:1"><div style="font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px">' + title + '</div><div class="empty" style="padding:14px">no data</div></div>';
     var nums = vals.map(function (v) { return v == null ? 0 : v; });
     var max = Math.max.apply(null, nums.map(Math.abs)) || 1;
     var W = items.length * 26, H = 80;
@@ -1541,7 +1544,7 @@
       var h = Math.abs(v) / max * 56, x = i * 26 + 4, y = v >= 0 ? (62 - h) : 62;
       return '<rect x="' + x + '" y="' + y.toFixed(1) + '" width="16" height="' + h.toFixed(1) + '" rx="2" fill="' + color + '" opacity="' + (v < 0 ? '.5' : '1') + '"/>';
     }).join('');
-    return '<div style="flex:1;min-width:160px"><div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">' + title + '</div>' +
+    return '<div style="flex:1;min-width:160px"><div style="font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px">' + title + '</div>' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px" preserveAspectRatio="none">' +
       '<line x1="0" x2="' + W + '" y1="62" y2="62" stroke="var(--border)"/>' + bars + '</svg></div>';
   }
@@ -1558,8 +1561,8 @@
     if (!fd) { host.innerHTML = '<div class="empty">No fundamentals on file for ' + esc(sym) + '.</div>'; return; }
 
     var html = '<section class="card"><div class="card__bd" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">' +
-      '<div><div style="font-size:18px;font-weight:700">' + esc(fd.name) + '</div>' +
-      '<div style="font-size:12px;color:var(--muted)">' + esc(sym) + ' · ' + esc(fd.exchange) + '</div></div>' +
+      '<div><div style="font-size:var(--fs-xl);font-weight:700">' + esc(fd.name) + '</div>' +
+      '<div style="font-size:var(--fs-meta);color:var(--muted)">' + esc(sym) + ' · ' + esc(fd.exchange) + '</div></div>' +
       '<div style="flex:1"></div>' + statBox('Sector', fd.sector) + statBox('Industry', fd.industry) +
       statBox('Market cap', fd.metrics && fd.metrics.market_cap != null ? F.compact(fd.metrics.market_cap) : '—') +
       '</div></section>';
@@ -1585,8 +1588,8 @@
         '<div class="card__bd fd-groups">' +
         groups.map(function (g) {
           return '<div class="fd-group"><div class="fd-group__t">' + g[0] + '</div><div class="fd-group__grid">' +
-            g[1].map(function (c) { return '<div><div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
-              c[0] + '</div><div class="num" style="font-size:18px;font-weight:600;margin-top:3px">' + c[1] + '</div></div>'; }).join('') +
+            g[1].map(function (c) { return '<div><div style="font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
+              c[0] + '</div><div class="num" style="font-size:var(--fs-xl);font-weight:600;margin-top:3px">' + c[1] + '</div></div>'; }).join('') +
             '</div></div>';
         }).join('') + '</div></section>';
     }
