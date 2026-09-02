@@ -84,6 +84,13 @@ html{-webkit-text-size-adjust:100%}
 body,.card,.topbar,.iconbtn,.chip,.search input{transition:background-color .25s ease,border-color .25s ease}
 body{font-family:var(--font);background:var(--bg);color:var(--fg);font-size:var(--fs-base);line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 ::selection{background:var(--accent-soft)}
+/* Browser surfaces that ship with defaults belonging to no design system.
+   The placeholder was Chrome's own #757575 at 3.90:1 on --surface, under the
+   4.5 floor, on the one control the whole product routes through. The tap
+   highlight painted a dark box over every press on a phone; :active states
+   already answer the touch, so the flash is noise on top of an answer. */
+::placeholder{color:var(--faint);opacity:1}
+html{-webkit-tap-highlight-color:transparent}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
 .up{color:var(--up)}.down{color:var(--down)}
@@ -139,10 +146,27 @@ a{color:inherit;text-decoration:none}
    before flex-grow is ever consulted, so it was pinning the view title to its
    minimum while the pills kept their full width. The title grows into the gap
    instead and pushes this group right, which looks identical and ranks right. */
-.search{position:relative;width:268px;max-width:34vw;flex:0 1 auto;min-width:0}
+/* The search was the only child of the topbar allowed to shrink, so it paid for
+   everything else: 96px wide at 1100px and 132px at 1280px, leaving 0px and 36px
+   for text. A decorative subtitle was rigid while the primary control collapsed.
+   The floor is the icon (34) + the placeholder (121) + the badge (62), plus a
+   few px so the placeholder is never one pixel short of fitting. */
+.search{position:relative;width:268px;max-width:34vw;flex:0 1 auto;min-width:224px}
 .search input{width:100%;font-family:var(--font);font-size:var(--fs-sm);padding:9px 12px 9px 34px;border-radius:var(--r-ctl);border:1px solid var(--border-2);background:var(--surface);color:var(--fg);outline:none;transition:border-color .14s,box-shadow .14s}
 .search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--faint)}
+/* The shortcut used to live inside the placeholder string, which made it 163px
+   of text in a 158px slot: it truncated to "Jump to anything… Ctr", a hint cut
+   mid-word. A shortcut is a control, not prose - it sits in its own badge and
+   the placeholder is free to be just the invitation. */
+.search__k{position:absolute;right:7px;top:50%;transform:translateY(-50%);pointer-events:none;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);
+  border:1px solid var(--border-2);border-radius:var(--r-sm);padding:2px 6px;line-height:1.4;background:var(--surface-2)}
+.search:focus-within .search__k{opacity:0}
+/* Only the field that actually carries a badge pays for it: #mv-search is the
+   same component without one, and 62px of dead right padding in a 220px filter
+   would cost it a third of its room. */
+#global-search{padding-right:62px}
 .mkt-pill{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-meta);font-weight:600;padding:7px 12px;border-radius:var(--r-pill);border:1px solid var(--border-2);background:var(--surface)}
 .mkt-pill .dot{width:7px;height:7px;border-radius:var(--r-round);background:var(--dot-c,var(--up));position:relative;transition:background-color .4s ease}
 .mkt-pill .dot::after{content:'';position:absolute;inset:-4px;border-radius:var(--r-round);background:var(--dot-c,var(--up));opacity:.35;animation:pulse 2s infinite}
@@ -393,6 +417,10 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .alerts-grid>*{min-width:0}
 .stat-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
 .stat-mini{flex:1 1 120px;min-width:0;padding:13px 15px}
+/* A stat tile standing on its own is a card. The same tile inside a card is
+   a card in a card - two borders and two shadows describing one boundary.
+   In flow it is a well, not a panel, which is what Flat-Until-Detached says. */
+.stat-mini--well{background:var(--surface-2);border-radius:var(--r-sm)}
 .stat-mini .v{font-family:var(--mono);font-size:var(--fs-num);font-weight:600}.stat-mini .l{font-size:var(--fs-micro);color:var(--muted);margin-top:2px}
 /* Base state for the width-conditional controls. These sit ABOVE the media
    queries that reveal them: at equal specificity the last rule wins, so a
@@ -425,28 +453,39 @@ td.flash-down{animation:flashDown 1.2s ease-out}
      not exist on a phone. Looking up a number is the phone's whole job. */
   .search-btn,.rail__close{display:grid}}
 @media (min-width:981px){.menu-btn{display:none}}
-@media (max-width:860px){
-  /* The topbar was a quarter of a 390px viewport before any data: a subtitle
-     that wrapped to three lines and a clock that wrapped to four. The h1 already
-     names the view, and the full time stays in the pill's title. */
+@media (max-width:1200px){
+  /* The subtitle restates what the h1 and the highlighted nav item both already
+     say, and it was holding ~220px rigid while the search collapsed behind it.
+     Decoration yields to the control long before the layout gets tight. */
   .topbar__title p{display:none}
-  /* Below here the subtitle is gone, so the title is a single short heading and
-     can safely become the flexible item again. */
-  .topbar__title{flex:1 1 auto;min-width:0}
+  /* At 981px the bar has 718px of room and wanted 805. The market pill was the
+     single largest child at 288px - "Live · 10:28 ET · 17:28 GMT+3" spelled out -
+     against a 218px search and a 77px title. It already knows how to be a dot and
+     a word, with the full clock on its title attribute; it just did not do so
+     until 860px. Ambient context yields before the control and the heading do. */
+  .mkt-pill .sep,.mkt-pill .t{display:none}}
+@media (max-width:860px){
+  /* The subtitle went at 1200, so the title is a single short heading here and
+     can safely become the flexible item again - with a floor, so it can never
+     again be the child that pays for all the others. 4.5rem still reads as a
+     word plus an ellipsis rather than as a single clipped letter. */
+  .topbar__title{flex:1 1 auto;min-width:4.5rem}
   .topbar__title h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mkt-pill .sep,.mkt-pill .t{display:none}
   .topbar{gap:10px}}
 @media (max-width:640px){.kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi__val{font-size:var(--fs-num)}.kpi--hero .kpi__val{font-size:var(--fs-hero-sm)}.content{padding:18px 16px 48px}.topbar{padding:12px 16px}.heat{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
   .hcards-sort{display:flex}
   /* Chip groups in a card header must wrap rather than push the card wider. */
   .card__hd{flex-wrap:wrap}}
+@media (max-width:560px){
+  /* Orientation beats ambient context, and this was fixed once at 320px and
+     verified only there. The view title is the only child of the topbar that
+     can shrink, so flex takes every squeeze out of it: at 390px - the width
+     most phones actually are - the h1 was 19px wide and "Market Movers" came
+     out as a single letter. The pill costs 113px plus a 10px gap; without it
+     the longest title (137px) fits from 385px up. Market state stays on the
+     pill's title attribute, and the pill itself returns above 560px. */
+  .mkt-pill{display:none}}
 @media (max-width:360px){
-  /* At 320px the bar's six children plus gaps came to 338px, and flex paid for
-     it out of the only child that could shrink — the view title, which reached
-     zero width. Orientation beats ambient context on the smallest screen, so
-     the market pill goes and the h1 gets its room back. Market state stays
-     available on the pill's title at any wider size. */
-  .mkt-pill{display:none}
   .topbar{gap:8px;padding:12px}}
 
 /* ── touch input ─────────────────────────────────────────────────────────
@@ -459,6 +498,7 @@ td.flash-down{animation:flashDown 1.2s ease-out}
   .chip{min-height:36px;padding:8px 14px}
   .tbl tbody td{padding-top:14px;padding-bottom:14px}
   .markread{padding:8px 10px}
+  .btn{min-height:44px}
   .tabbar button{padding:8px 2px}
   /* iOS Safari force-zooms the page when a focused input is under 16px, which
      throws the layout out and requires a manual pinch back. */
@@ -511,7 +551,9 @@ td.flash-down{animation:flashDown 1.2s ease-out}
    sparkline is decoration and may be absent (a symbol with one snapshot has no
    line to draw), so nothing below it depends on its height. */
 .mkt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
-.mkt{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:13px 14px}
+/* A well inside a card, like .stat-mini--well: the parent card already draws
+   the boundary, and a second border inside it describes the same edge twice. */
+.mkt{background:var(--surface-2);border-radius:var(--r);padding:13px 14px}
 .mkt__top{display:flex;align-items:baseline;gap:10px}
 .mkt__top b{font-size:var(--fs-base);letter-spacing:-.01em}
 .mkt__pct{margin-left:auto;font-size:var(--fs-sm);font-weight:600;white-space:nowrap}

@@ -53,7 +53,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
     <header class="topbar">
       <button class="iconbtn menu-btn" aria-label="Menu">__SVG_MENU__</button>
       <div class="topbar__title"><h1 data-title>Portfolio</h1><p data-subtitle>Real-time overview of your holdings</p></div>
-      <label class="search"><span>__SVG_SEARCH__</span><input type="search" id="global-search" name="global-search" data-global-search placeholder="Jump to anything…  Ctrl+K" readonly aria-label="Open command palette"/></label>
+      <label class="search"><span>__SVG_SEARCH__</span><input type="search" id="global-search" name="global-search" data-global-search placeholder="Jump to anything…" readonly aria-label="Open command palette"/><kbd class="search__k">Ctrl K</kbd></label>
       <span class="snap-pill" data-snap title="Last price snapshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span data-snap-text>—</span></span>
       <span class="mkt-pill" data-mkt-pill><span class="dot"></span><span class="lbl">Live</span><span class="sep"> · </span><span class="t" data-clock>—</span></span>
       <button class="iconbtn search-btn" data-open-search title="Search symbols, views and actions" aria-label="Search symbols, views and actions">__SVG_SEARCH__</button>
@@ -219,7 +219,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
             <label class="search" style="margin-left:auto;width:220px"><span>__SVG_SEARCH__</span><input type="search" id="mv-search" placeholder="Filter symbols…" aria-label="Filter heatmap symbols"/></label></div>
           <div class="card__bd"><div class="toolbar" id="sector-chips"></div><div class="heat" id="heat"></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:16px;font-size:var(--fs-micro);color:var(--muted)">
-              <span>−3%+</span><span class="heat-legend"></span><span>+3%+</span>
+              <span>≤ −3%</span><span class="heat-legend"></span><span>≥ +3%</span>
             </div></div>
         </section>
       </section>
