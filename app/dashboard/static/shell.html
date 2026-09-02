@@ -67,21 +67,21 @@ try{var _t=localStorage.getItem('pdb_theme')||
       <!-- ===== PORTFOLIO ===== -->
       <section class="view is-active" data-view-pane="portfolio">
         <section class="kpis">
-          <div class="card kpi kpi--hero">
+          <div class="card kpi kpi--hero" data-kpi="totalValue" role="button" tabindex="0" aria-label="Total value — show how this is calculated">
             <div class="kpi__label">Total value</div>
             <div class="kpi__val" id="kpi-total">—</div>
             <div class="kpi__sub" id="kpi-total-sub"></div>
             <div class="kpi__story" id="kpi-story"></div>
             <div class="kpi__spark" id="kpi-hero-spark"></div>
           </div>
-          <div class="card kpi"><div class="kpi__label">Market value</div><div class="kpi__val" id="kpi-mktval">—</div><div class="kpi__sub"><span style="color:var(--muted)">Positions at market price</span></div></div>
-          <div class="card kpi"><div class="kpi__label">Unrealized P&amp;L</div><div class="kpi__val" id="kpi-gl">—</div><div class="kpi__sub" id="kpi-gl-sub"></div></div>
-          <div class="card kpi"><div class="kpi__label">Buying power</div><div class="kpi__val" id="kpi-cash">—</div><div class="kpi__sub"><span style="color:var(--muted)">Settled cash · ready to invest</span></div></div>
-          <div class="card kpi"><div class="kpi__label">Realized P&amp;L</div><div class="kpi__val" id="kpi-realized">—</div><div class="kpi__sub"><span style="color:var(--muted)">Closed positions</span></div></div>
-          <div class="card kpi"><div class="kpi__label">Total return</div><div class="kpi__val" id="kpi-return">—</div><div class="kpi__sub"><span style="color:var(--muted)">Realized + unrealized</span></div></div>
-          <div class="card kpi"><div class="kpi__label">Cost basis</div><div class="kpi__val" id="kpi-cost">—</div><div class="kpi__sub" id="kpi-cost-sub"></div></div>
-          <div class="card kpi"><div class="kpi__label">Δ last snapshot</div><div class="kpi__val" id="kpi-delta">—</div><div class="kpi__sub" id="kpi-delta-sub"></div></div>
-          <div class="card kpi"><div class="kpi__label">Dividends</div><div class="kpi__val" id="kpi-div">—</div><div class="kpi__sub" id="kpi-div-sub"></div></div>
+          <div class="card kpi" data-kpi="marketValue" role="button" tabindex="0" aria-label="Market value — show how this is calculated"><div class="kpi__label">Market value</div><div class="kpi__val" id="kpi-mktval">—</div><div class="kpi__sub"><span style="color:var(--muted)">Positions at market price</span></div></div>
+          <div class="card kpi" data-kpi="unrealized" role="button" tabindex="0" aria-label="Unrealized P and L — show how this is calculated"><div class="kpi__label">Unrealized P&amp;L</div><div class="kpi__val" id="kpi-gl">—</div><div class="kpi__sub" id="kpi-gl-sub"></div></div>
+          <div class="card kpi" data-kpi="cash" role="button" tabindex="0" aria-label="Buying power — show how this is calculated"><div class="kpi__label">Buying power</div><div class="kpi__val" id="kpi-cash">—</div><div class="kpi__sub"><span style="color:var(--muted)">Settled cash · ready to invest</span></div></div>
+          <div class="card kpi" data-kpi="realized" role="button" tabindex="0" aria-label="Realized P and L — show how this is calculated"><div class="kpi__label">Realized P&amp;L</div><div class="kpi__val" id="kpi-realized">—</div><div class="kpi__sub"><span style="color:var(--muted)">Closed positions</span></div></div>
+          <div class="card kpi" data-kpi="totalReturn" role="button" tabindex="0" aria-label="Total return — show how this is calculated"><div class="kpi__label">Total return</div><div class="kpi__val" id="kpi-return">—</div><div class="kpi__sub"><span style="color:var(--muted)">Realized + unrealized</span></div></div>
+          <div class="card kpi" data-kpi="costBasis" role="button" tabindex="0" aria-label="Cost basis — show how this is calculated"><div class="kpi__label">Cost basis</div><div class="kpi__val" id="kpi-cost">—</div><div class="kpi__sub" id="kpi-cost-sub"></div></div>
+          <div class="card kpi" data-kpi="deltaLast" role="button" tabindex="0" aria-label="Change since last snapshot — show how this is calculated"><div class="kpi__label">Δ last snapshot</div><div class="kpi__val" id="kpi-delta">—</div><div class="kpi__sub" id="kpi-delta-sub"></div></div>
+          <div class="card kpi" data-kpi="dividends" role="button" tabindex="0" aria-label="Dividends — show how this is calculated"><div class="kpi__label">Dividends</div><div class="kpi__val" id="kpi-div">—</div><div class="kpi__sub" id="kpi-div-sub"></div></div>
         </section>
         <!-- Market overview: context, not holdings. Sits above Returns because
              it answers "what is the market doing" before "how am I doing against
@@ -317,7 +317,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
 </nav>
 
 <div class="drawer-scrim" data-drawer-scrim></div>
-<aside class="drawer" data-drawer role="dialog" aria-modal="true" aria-label="Symbol details" tabindex="-1">
+<aside class="drawer" data-drawer role="dialog" aria-modal="true" aria-label="Details" tabindex="-1">
   <div class="drawer__hd" data-drawer-hd></div>
   <div class="drawer__bd" data-drawer-bd></div>
   <div class="drawer__foot" data-drawer-foot></div>

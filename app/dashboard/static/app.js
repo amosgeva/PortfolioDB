@@ -30,6 +30,9 @@
     return '<button type="button" class="sym-open" aria-label="Open ' + esc(sym) + ' details">' + inner + '</button>';
   }
   var F = { money: money, compact: compact, pct: pct };
+  // Lifted out of renderKPIs: the evidence panels print the same signed money,
+  // and a local there is a ReferenceError from anywhere else in the file.
+  function signed(v) { return (v >= 0 ? '+' : '−') + F.money(Math.abs(v || 0)); }
 
   // Written out as 1e6 or 1e-9 these are reported as literals whose runtime
   // value differs from the text, so every magnitude below is composed from
@@ -551,7 +554,6 @@
   }
   function renderKPIs() {
     var k = DATA.kpi || {};
-    var signed = function (v) { return (v >= 0 ? '+' : '−') + F.money(Math.abs(v || 0)); };
     countUp($('#kpi-total'), k.totalValue || 0, F.money);
     $('#kpi-total-sub').innerHTML = deltaHTML(k.dayChange || 0, k.dayChangePct, true) + '<span style="color:var(--muted)">today</span>';
     var story = $('#kpi-story'); if (story) story.textContent = narrative();
@@ -1789,6 +1791,212 @@
     drawerBd.scrollTop = 0;
     drawerEl.focus();
   }
+  // ---- KPI evidence -------------------------------------------------------
+  // Every tile states a conclusion and, until now, offered no way back to the
+  // arithmetic behind it. "Unrealized P&L +$815.75" is a claim; this is the
+  // route from the claim to its terms and to the rows they were summed from,
+  // which is the premise the whole product rests on.
+  function evEq(rows, result) {
+    return '<table class="ev-eq">' + rows.map(function (r) {
+      return '<tr><td class="ev-op">' + (r[2] || '') + '</td><td>' + esc(r[0]) +
+        '</td><td class="num' + (r[3] ? ' ' + r[3] : '') + '">' + r[1] + '</td></tr>';
+    }).join('') + '<tr class="ev-sum"><td class="ev-op"></td><td>' + esc(result[0]) +
+      '</td><td class="num' + (result[2] ? ' ' + result[2] : '') + '">' + result[1] + '</td></tr></table>';
+  }
+  // The server rounds each term to the cent on its own, and rounds the total
+  // from unrounded inputs - so the printed terms can miss the printed total by
+  // a penny. On a panel whose whole job is showing the arithmetic, a sum that
+  // does not add up is worse than no sum, so the gap is named where it happens
+  // rather than hidden by recomputing the total from the rounded terms.
+  function evRounding(terms, value) {
+    // Compare what is printed, not what is held: each term is shown to the cent,
+    // so the check has to round them the same way or it misses a column that
+    // visibly does not add up while its underlying floats do.
+    var cents = function (v) { return Math.round(v * 100) / 100; };
+    var sum = 0;
+    for (var i = 0; i < terms.length; i++) sum += cents(terms[i]);
+    if (!(Math.abs(sum - cents(value)) >= 0.005)) return '';
+    return '<p class="ev-round">Terms are rounded to the cent; the total is taken before rounding, so the column can differ from it by a penny.</p>';
+  }
+  function evTable(head, body) {
+    if (!body.length) return '';
+    return '<div class="tbl-wrap"><table class="tbl ev-tbl"><thead><tr>' +
+      head.map(function (h, i) { return '<th' + (i ? '' : ' style="text-align:left"') + '>' + esc(h) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + body.map(function (r) {
+        return '<tr>' + r.map(function (c, i) {
+          return i ? '<td class="num">' + c + '</td>' : '<td>' + c + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  function evGoHoldings() {
+    closeDrawer();
+    var t = $('#holdings-tbl') || $('#holdings-cards');
+    if (t) t.scrollIntoView({ block: 'center', behavior: REDUCED ? 'auto' : 'smooth' });
+  }
+  function evGoView(v) {
+    closeDrawer();
+    var a = $('[data-view="' + v + '"]');
+    if (a) a.click();
+  }
+  function kpiEvidence(key) {
+    var k = DATA.kpi || {};
+    var rs = holdingRows().slice().sort(function (a, b) { return b.mktVal - a.mktVal; });
+    var t = totals(rs);
+    if (key === 'totalValue') {
+      return {
+        title: 'Total value', value: F.money(k.totalValue || 0),
+        what: 'Everything this ledger can put a price on: your open positions at their last recorded price, plus the cash balance you entered.',
+        eq: evEq([['Market value', F.money(k.marketValue || 0), ''],
+                  ['Buying power', F.money(k.cash || 0), '+']],
+                 ['Total value', F.money(k.totalValue || 0)]) +
+                 evRounding([k.marketValue || 0, k.cash || 0], k.totalValue || 0),
+        table: evTable(['Symbol', 'Value', 'Weight'], rs.map(function (r) {
+          return ['<b>' + esc(r.sym) + '</b>', F.money(r.mktVal),
+                  ((k.totalValue ? r.mktVal / k.totalValue : 0) * 100).toFixed(1) + '%'];
+        }).concat(CASH > 0 ? [['Cash', F.money(CASH), ((k.totalValue ? CASH / k.totalValue : 0) * 100).toFixed(1) + '%']] : [])),
+        route: { label: 'See holdings', run: evGoHoldings }
+      };
+    }
+    if (key === 'marketValue') {
+      return {
+        title: 'Market value', value: F.money(k.marketValue || 0),
+        what: 'Each open position\u2019s quantity multiplied by the most recent price recorded for it. Cash is not included.',
+        eq: evEq(rs.slice(0, 3).map(function (r, i) {
+          return [r.sym + '  ' + (Math.round(r.qty * TEN_THOUSAND) / TEN_THOUSAND) + ' \u00d7 ' + F.money(r.price), F.money(r.mktVal), i ? '+' : ''];
+        }).concat(rs.length > 3 ? [[(rs.length - 3) + ' more positions', F.money(rs.slice(3).reduce(function (a, r) { return a + r.mktVal; }, 0)), '+']] : []),
+                 ['Market value', F.money(t.mktVal)]) +
+             evRounding(rs.slice(0, 3).map(function (r) { return r.mktVal; })
+               .concat(rs.length > 3 ? [rs.slice(3).reduce(function (a, r) { return a + r.mktVal; }, 0)] : []), t.mktVal),
+        table: evTable(['Symbol', 'Qty', 'Price', 'Value'], rs.map(function (r) {
+          return ['<b>' + esc(r.sym) + '</b>', (Math.round(r.qty * TEN_THOUSAND) / TEN_THOUSAND), F.money(r.price), F.money(r.mktVal)];
+        })),
+        route: { label: 'See holdings', run: evGoHoldings }
+      };
+    }
+    if (key === 'unrealized') {
+      return {
+        title: 'Unrealized P&L', value: signed(k.unrealized),
+        what: 'What your open positions are worth now, less what they cost you. Nothing here has been sold, so none of it is booked.',
+        eq: evEq([['Market value', F.money(k.marketValue || 0), ''],
+                  ['Cost basis', F.money(k.costBasis || 0), '\u2212']],
+                 ['Unrealized P&L', signed(k.unrealized), (k.unrealized || 0) >= 0 ? 'up' : 'down']) +
+                 evRounding([k.marketValue || 0, -(k.costBasis || 0)], k.unrealized || 0),
+        table: evTable(['Symbol', 'Cost', 'Value', 'Gain'], rs.slice().sort(function (a, b) { return b.gl - a.gl; }).map(function (r) {
+          return ['<b>' + esc(r.sym) + '</b>', F.money(r.cost), F.money(r.mktVal),
+                  '<span class="' + (r.gl >= 0 ? 'up' : 'down') + '">' + signed(r.gl) + '</span>'];
+        })),
+        route: { label: 'See holdings', run: evGoHoldings }
+      };
+    }
+    if (key === 'cash') {
+      var accts = k.cashAccounts || [];
+      return {
+        title: 'Buying power', value: F.money(k.cash || 0),
+        what: 'The balance you last recorded. PortfolioDB never contacts a broker, so this is exactly as current as your last entry and no more.',
+        eq: accts.length > 1 ? evEq(accts.map(function (a, i) {
+          return [a.account, F.money(a.cash), i ? '+' : ''];
+        }), ['Buying power', F.money(k.cash || 0)]) +
+          evRounding(accts.map(function (a) { return a.cash; }), k.cash || 0) : '',
+        table: evTable(['Account', 'Balance', 'Recorded'], accts.map(function (a) {
+          return ['<b>' + esc(a.account) + '</b>', F.money(a.cash), a.asOf ? esc(String(a.asOf).slice(0, 10)) : '\u2014'];
+        })),
+        note: 'Update it from Manage \u2192 Cash, or with make set-cash.'
+      };
+    }
+    if (key === 'realized') {
+      return {
+        title: 'Realized P&L', value: signed(k.realized),
+        what: 'Profit and loss already booked by selling, matched first-in-first-out against the lots you bought. Fees paid on a sale reduce it.',
+        eq: '',
+        table: '',
+        note: 'Every match is recomputed from the lots on each read \u2014 there is no stored total to drift.',
+        route: { label: 'See every lot', run: function () { evGoView('history'); } }
+      };
+    }
+    if (key === 'totalReturn') {
+      return {
+        title: 'Total return', value: F.pct(k.totalReturnPct || 0),
+        what: 'Everything you have made, booked or not, against what you put in.',
+        eq: evEq([['Realized P&L', signed(k.realized), ''],
+                  ['Unrealized P&L', signed(k.unrealized), '+'],
+                  ['Cost basis', F.money(k.costBasis || 0), '\u00f7']],
+                 ['Total return', F.pct(k.totalReturnPct || 0), (k.totalReturnPct || 0) >= 0 ? 'up' : 'down']),
+        table: '',
+        note: 'Dividends are excluded here. With them it is ' + F.pct(k.totalReturnWithIncomePct || 0) + '.'
+      };
+    }
+    if (key === 'costBasis') {
+      return {
+        title: 'Cost basis', value: F.money(k.costBasis || 0),
+        what: 'What your open lots cost, including the fees you paid to buy them. Sold lots have left this number.',
+        eq: '',
+        table: evTable(['Symbol', 'Qty', 'Avg cost', 'Cost'], rs.slice().sort(function (a, b) { return b.cost - a.cost; }).map(function (r) {
+          return ['<b>' + esc(r.sym) + '</b>', (Math.round(r.qty * TEN_THOUSAND) / TEN_THOUSAND), F.money(r.avgCost), F.money(r.cost)];
+        })),
+        note: 'Fees paid so far: ' + F.money(k.totalFees || 0) + ', which is ' + F.pct(k.feeDragPct || 0) + ' of cost.',
+        route: { label: 'See holdings', run: evGoHoldings }
+      };
+    }
+    if (key === 'deltaLast') {
+      var pv = (DATA.pv && (DATA.pv['1D'] || DATA.pv['1W'])) || [];
+      var prev = pv.length > 1 ? pv[pv.length - 2][1] : null;
+      var last = pv.length ? pv[pv.length - 1][1] : null;
+      return {
+        title: 'Change since last snapshot', value: signed(k.deltaLast),
+        what: 'How the portfolio moved between the two most recent price collections. It is a step, not a day: if the collector missed a run, this spans the gap.',
+        eq: (prev != null && last != null)
+          ? evEq([['These holdings, latest prices', F.money(last), ''],
+                  ['These holdings, previous prices', F.money(prev), '−']],
+                 ['Change', signed(k.deltaLast), (k.deltaLast || 0) >= 0 ? 'up' : 'down']) +
+                 evRounding([last, -prev], k.deltaLast || 0)
+          : '',
+        table: '',
+        note: 'Counted over the ' + (k.deltaLastSyms || 0) + ' holding' + (k.deltaLastSyms === 1 ? '' : 's') +
+          ' priced in both snapshots. Snapshot times and gaps are on the Data Health page.'
+      };
+    }
+    if (key === 'dividends') {
+      return {
+        title: 'Dividends', value: F.money(k.dividends || 0),
+        what: 'Income recorded against your holdings. Nothing is estimated or projected here \u2014 these are payments entered into the ledger.',
+        eq: evEq([['All time', F.money(k.dividends || 0), ''],
+                  ['Last twelve months', F.money(k.dividendsTtm || 0), ''],
+                  ['Cost basis', F.money(k.costBasis || 0), '\u00f7']],
+                 ['Yield on cost (TTM)', F.pct(k.yieldOnCostPct || 0)]),
+        table: ''
+      };
+    }
+    return null;
+  }
+  function openEvidence(key) {
+    var ev = kpiEvidence(key);
+    if (!ev || !drawerEl) return;
+    drawerEl.setAttribute('aria-label', ev.title + ' \u2014 how this is calculated');
+    // Audited 2026-09-02. Everything below is either a number formatted by this
+    // file, a string literal from kpiEvidence, or a value passed through esc():
+    // titles and prose are literals, symbols and account names are escaped, and
+    // no value here originates in the URL. The three assignments are marked
+    // individually so a later edit to any one of them is reviewed on its own.
+    // nosemgrep
+    drawerHd.innerHTML = '<span class="nm"><b>' + esc(ev.title) + '</b>' +
+      '<span class="ev-hd-sub">how this is calculated</span></span>' +
+      '<span class="drawer__px num">' + ev.value + '</span>' +
+      '<button class="iconbtn drawer__close" data-drawer-close aria-label="Close">' + X_ICON + '</button>';
+    var html = '<p class="ev-what">' + esc(ev.what) + '</p>' + (ev.eq || '');
+    if (ev.note) html += '<p class="ev-note">' + esc(ev.note) + '</p>';
+    if (ev.table) html += '<div class="drawer__sect">Where it comes from</div>' + ev.table;
+    // nosemgrep
+    drawerBd.innerHTML = html;
+    // nosemgrep
+    drawerFoot.innerHTML = '<button class="btn btn--ghost" data-drawer-close>Close</button>' +
+      (ev.route ? '<button class="btn btn--primary" data-ev-route>' + esc(ev.route.label) + ' \u2192</button>' : '');
+    var rb = drawerFoot.querySelector('[data-ev-route]');
+    if (rb && ev.route) rb.addEventListener('click', ev.route.run);
+    drawerPrevFocus = document.activeElement;
+    drawerEl.classList.add('open'); drawerScrimEl.classList.add('show');
+    drawerBd.scrollTop = 0;
+    drawerEl.focus();
+  }
   function closeDrawer() {
     if (!drawerEl || !drawerEl.classList.contains('open')) return;
     drawerEl.classList.remove('open'); drawerScrimEl.classList.remove('show');
@@ -1825,6 +2033,8 @@
     var ctl = t.closest('a,button,input,select,label');
     if (ctl && !ctl.classList.contains('sym-open')) return;
     if (t.closest('[data-drawer]')) return;
+    var kpiEl = t.closest('[data-kpi]');
+    if (kpiEl) { openEvidence(kpiEl.getAttribute('data-kpi')); return; }
     var el = t.closest('[data-sym]');
     if (!el) return;
     var sym = el.getAttribute('data-sym');
@@ -1837,6 +2047,8 @@
     if (e.key !== 'Enter' && e.key !== ' ') return;
     var t = e.target;
     if (!t || !t.getAttribute || t.getAttribute('role') !== 'button') return;
+    var kpiKey = t.getAttribute('data-kpi');
+    if (kpiKey) { e.preventDefault(); openEvidence(kpiKey); return; }
     var sym = t.getAttribute('data-sym');
     if (!sym || !get(sym)) return;
     e.preventDefault();
