@@ -17,7 +17,7 @@ from __future__ import annotations
 import html
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -30,6 +30,7 @@ import market_overview
 import market_window
 import reporting_tz
 import settings
+import version as app_version
 from db import execute, fetch_all
 
 # Tickers only ever contain these characters; reject anything else at the input
@@ -77,7 +78,9 @@ NATIVE_CSS = """
   --border:oklch(91% 0.008 260);--border-2:oklch(86% 0.01 260);
   --rail:oklch(26% 0.035 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
   --accent:oklch(55% 0.19 264);--accent-soft:oklch(95% 0.04 264);
-  --up:oklch(51% 0.16 152);--down:oklch(56% 0.20 26);--warn:oklch(54% 0.15 75);
+  --up:oklch(51% 0.16 152);--up-soft:oklch(95% 0.05 152);
+  --down:oklch(55% 0.20 26);--down-soft:oklch(95.5% 0.04 26);
+  --warn:oklch(53.5% 0.15 75);--warn-soft:oklch(95% 0.05 75);
   --r:11px;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
   --font:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;--rail-w:248px;
@@ -90,7 +93,9 @@ html[data-theme="dark"]{
   --border:oklch(29% 0.015 260);--border-2:oklch(35% 0.018 260);
   --rail:oklch(18.5% 0.028 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
   --accent:oklch(62% 0.18 264);--accent-soft:oklch(29% 0.06 264);
-  --up:oklch(70% 0.14 152);--down:oklch(68% 0.18 26);--warn:oklch(76% 0.13 75);
+  --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);
+  --down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);
+  --warn:oklch(76% 0.13 75);--warn-soft:oklch(30% 0.06 80);
   --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);
   color-scheme:dark;
 }
@@ -137,7 +142,37 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
 @media (max-width:980px){ [data-testid="stBottom"]{margin-left:0!important;width:100%!important} }
 .m2-rail .foot{margin-top:auto;padding:14px 16px;display:flex;align-items:center;gap:11px;border-top:1px solid oklch(32% 0.03 264)}
 .m2-rail .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,oklch(62% 0.13 200),oklch(55% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff;flex:0 0 auto}
+.m2-rail .build{padding:0 16px 12px;font-size:11px;letter-spacing:.04em;color:var(--rail-muted);font-variant-numeric:tabular-nums}
 .m2-rail .user b{font-size:13px;display:block}.m2-rail .user span{font-size:11px;color:var(--rail-muted)}
+
+/* Type scale, mirrored from app.css. Only the new markup below uses the tokens;
+   the older literals in this sheet are a separate typeset pass. */
+:root{--fs-micro:11px;--fs-meta:12px;--fs-sm:13px;--fs-base:14px;--fs-lg:16px}
+
+/* Read-only tables rendered as the shell's own .tbl rather than st.dataframe.
+   Data Health is where the operator goes when they distrust a figure, and it
+   was the one screen whose figures were proportional, ragged and printed to
+   four arbitrary decimal places. */
+.m2-tbl{width:100%;border-collapse:collapse;font-size:var(--fs-sm);font-family:var(--font)}
+.m2-tbl thead th{text-align:right;font-size:var(--fs-micro);font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--muted);padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+.m2-tbl thead th:first-child{text-align:left}
+.m2-tbl tbody td{padding:11px 14px;text-align:right;border-bottom:1px solid var(--border);color:var(--fg)}
+.m2-tbl tbody td:first-child{text-align:left;font-weight:600}
+.m2-tbl tbody tr:last-child td{border-bottom:0}
+.m2-tbl .num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.m2-tbl .muted{color:var(--muted)}
+.m2-tblwrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  box-shadow:var(--shadow);overflow-x:auto}
+
+/* Status as a word in a tinted well — the shell's tag component — rather than
+   an OS emoji, whose glyph and colour are outside the design system entirely. */
+.m2-tag{display:inline-block;font-size:var(--fs-micro);font-weight:600;letter-spacing:.03em;
+  padding:2px 8px;border-radius:7px;font-family:var(--mono);white-space:nowrap}
+.m2-tag--complete{background:var(--up-soft);color:var(--up)}
+.m2-tag--inconsistent{background:var(--down-soft);color:var(--down)}
+.m2-tag--partial,.m2-tag--stale{background:var(--warn-soft);color:var(--warn)}
+.m2-tag--unavailable{background:var(--surface-3);color:var(--muted)}
 
 /* topbar */
 .m2-topbar{padding:18px 0 14px;border-bottom:1px solid var(--border);margin-bottom:22px}
@@ -256,6 +291,8 @@ def _rail_html(active: str, watchlist=None) -> str:
         + _watchlist_html(watchlist) +
         '<div class="foot"><span class="avatar">' + html.escape(branding.display_initials()) + '</span>'
         '<span class="user"><b>' + html.escape(branding.display_name()) + '</b><span>Growth portfolio</span></span></div>'
+        '<div class="build" title="Build ' + html.escape(app_version.build_stamp()) + '">'
+        + html.escape(app_version.release_version()) + '</div>'
         '</aside>'
     )
 
@@ -441,7 +478,15 @@ def render_manage(get_conn, put_conn, watchlist=None) -> None:
         put_conn(conn)
     if recent_cash:
         st.caption("Recent cash entries:")
-        st.dataframe(pd.DataFrame(recent_cash), width="stretch", hide_index=True)
+        st.dataframe(
+            pd.DataFrame(recent_cash), width="stretch", hide_index=True,
+            column_config={
+                "account": st.column_config.TextColumn("Account"),
+                "cash": st.column_config.NumberColumn("Cash", format="$%.2f"),
+                "ts": st.column_config.DatetimeColumn("Recorded", format="YYYY-MM-DD HH:mm"),
+                "note": st.column_config.TextColumn("Note"),
+            },
+        )
 
     st.divider()
     st.subheader("📒 Recent Lots")
@@ -957,17 +1002,93 @@ def render_advisor(get_conn, put_conn, watchlist=None) -> None:
 # Streamlit status colours for each data-quality severity. Green is reserved
 # for "complete" so a glance at the page answers the only question that matters.
 _STATUS_STYLE = {
-    "complete": ("✅", "success"),
-    "partial": ("🟡", "warning"),
-    "stale": ("🟠", "warning"),
-    "unavailable": ("⚪", "warning"),
-    "inconsistent": ("🔴", "error"),
+    "complete": "success",
+    "partial": "warning",
+    "stale": "warning",
+    "unavailable": "warning",
+    "inconsistent": "error",
 }
 
 
+def _status_kind(status: str) -> str:
+    """Which Streamlit callout carries this status (success / warning / error)."""
+    return _STATUS_STYLE.get(status, "info")
+
+
 def _status_chip(status: str) -> str:
-    icon, _ = _STATUS_STYLE.get(status, ("•", "info"))
-    return f"{icon} {status}"
+    """The status as a plain word, for markdown contexts.
+
+    No emoji: st.success/warning/error already carry a semantic icon of their
+    own, so a glyph in the text repeated the signal in a typeface and colour
+    that belong to the operating system rather than to this design system.
+    """
+    return status
+
+
+def _status_tag(status: str) -> str:
+    """The status as the shell's tag component — a word in a tinted well."""
+    cls = status if status in _STATUS_STYLE else "unavailable"
+    return f'<span class="m2-tag m2-tag--{cls}">{html.escape(status)}</span>'
+
+
+def _money(v) -> str:
+    """`$1,530.15`, never `1530.1515`. A number the operator is asked to trust
+    should not arrive with four arbitrary decimal places."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    # Sign outside the currency mark: "-$42.50", never "$-42.50".
+    return f"-${abs(n):,.2f}" if n < 0 else f"${n:,.2f}"
+
+
+def _fmt_ts(ts: str) -> str:
+    """`2026-09-02 10:53` from an ISO timestamp.
+
+    The service returns `isoformat()` because the MCP surface consumes it as a
+    machine contract, so the conversion belongs here rather than there — the
+    trust screen was showing `2026-09-02T10:53:12.726647+03:00` to a person.
+    """
+    try:
+        return datetime.fromisoformat(str(ts)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(ts)
+
+
+def _pct(v, dp: int = 1) -> str:
+    try:
+        return f"{float(v):.{dp}f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _health_table_html(symbols) -> str:
+    """The per-symbol table in the shell's own markup.
+
+    Read-only, so it costs nothing to render as HTML and gains the mono tabular
+    figures, right-aligned money and tag statuses the rest of the product uses.
+    """
+    head = (
+        "<thead><tr><th>Symbol</th><th>Status</th><th>Held</th>"
+        "<th>Weight</th><th>Market value</th><th>Issues</th></tr></thead>"
+    )
+    rows = []
+    for s in symbols:
+        codes = ", ".join(i["code"] for i in s["issues"]) or "—"
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(s['symbol']))}</td>"
+            f"<td>{_status_tag(s['status'])}</td>"
+            f"<td class=\"muted\">{'yes' if s['held'] else 'no'}</td>"
+            f"<td class=\"num\">{_pct(s['weight_pct'])}</td>"
+            f"<td class=\"num\">{_money(s['market_value'])}</td>"
+            f"<td class=\"muted\">{html.escape(codes)}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="m2-tblwrap"><table class="m2-tbl">'
+        + head + "<tbody>" + "".join(rows) + "</tbody></table></div>"
+    )
 
 
 def render_health(get_conn, put_conn, watchlist=None) -> None:
@@ -1002,7 +1123,11 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
 
     c1, c2, c3 = st.columns([1, 1, 3])
     with c1:
-        method = st.selectbox("Cost basis", ["fifo", "avg"], key="dq_method")
+        method = st.selectbox(
+            "Cost basis", ["fifo", "avg"], key="dq_method",
+            # The raw enum values reached the operator as "fifo" / "avg".
+            format_func=lambda m: "FIFO" if m == "fifo" else "Average cost",
+        )
     with c2:
         materiality = st.number_input(
             "Material at ≥ (%)", min_value=0.0, max_value=100.0,
@@ -1022,12 +1147,20 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
     except Exception as e:  # pragma: no cover - surfaced in the UI
         from app.mcp.deps import explain_db_error
 
-        st.error(f"Could not build the data-quality report. {explain_db_error(e)}")
+        # A failure on the trust screen must not read as "all clear". It also
+        # must not dead-end: this used to print psycopg2's first line and stop,
+        # on the one page whose job is telling you whether to believe a number.
+        st.error(
+            "**Could not build the data-quality report.** Nothing on this page "
+            "has been checked — treat it as unanswered, not as clean."
+        )
+        st.caption(explain_db_error(e))
+        if st.button("Try again", type="primary", key="dq_retry"):
+            st.rerun()
         return
 
     overall = report["overall_status"]
-    _, kind = _STATUS_STYLE.get(overall, ("•", "info"))
-    banner = getattr(st, kind, st.info)
+    banner = getattr(st, _status_kind(overall), st.info)
     banner(f"**{_status_chip(overall)}** — {report['overall_explanation']}")
 
     counts = report["counts"]
@@ -1038,7 +1171,7 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
     m4.metric("Minor issues", counts["minor_issues"])
 
     st.caption(
-        f"As of {report['meta']['as_of_local']} ({report['meta']['timezone']}) · "
+        f"As of {_fmt_ts(report['meta']['as_of_local'])} ({report['meta']['timezone']}) · "
         f"coverage {report['meta']['coverage_start']} → {report['meta']['coverage_end']} · "
         f"{report['meta']['reporting_currency']} · build {report['meta']['app_version']}"
     )
@@ -1062,10 +1195,9 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
     if report["material_issues"]:
         st.subheader("Material issues")
         for issue in report["material_issues"]:
-            icon, _kind = _STATUS_STYLE.get(issue["severity"], ("•", "info"))
             with st.expander(
-                f"{icon} {issue['symbol']} — {issue['code']} "
-                f"({issue['weight_pct']:.1f}% of market value)",
+                f"{issue['symbol']} · {issue['code']} — {issue['severity']}, "
+                f"{issue['weight_pct']:.1f}% of market value",
                 expanded=True,
             ):
                 st.write(_esc_md(issue["message"]))
@@ -1087,18 +1219,7 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
 
     # ── per-symbol table ──
     st.subheader("Per-symbol status")
-    rows = [
-        {
-            "Symbol": s["symbol"],
-            "Status": _status_chip(s["status"]),
-            "Held": "yes" if s["held"] else "no",
-            "Weight %": round(s["weight_pct"], 2),
-            "Market value": s["market_value"],
-            "Issues": ", ".join(i["code"] for i in s["issues"]) or "—",
-        }
-        for s in report["symbols"]
-    ]
-    st.dataframe(rows, hide_index=True, width="stretch")
+    st.html(_health_table_html(report["symbols"]))
 
     st.caption(
         "Scope: symbols the collector targets — held or watchlisted. Closed, "
