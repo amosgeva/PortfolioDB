@@ -158,6 +158,18 @@ def last_snapshot_run(conn) -> list[dict]:
     )
 
 
+def first_snapshot_run_ts(conn):
+    """When run tracking began, or None if nothing has ever been recorded.
+
+    Before this instant the collector demonstrably was not running, so no
+    collection was owed and a hole in the price series is just sparse history
+    rather than a miss. snapshot_runs was added after collection had already
+    been going, which is why this is not simply the start of the data.
+    """
+    rows = fetch_all(conn, "SELECT MIN(ts_start) AS ts FROM snapshot_runs")
+    return rows[0]["ts"] if rows else None
+
+
 def news_max_fetched_at(conn):
     """Newest fd_news.fetched_at (None if the table is empty)."""
     rows = fetch_all(conn, "SELECT MAX(fetched_at) AS m FROM fd_news")

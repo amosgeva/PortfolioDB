@@ -685,6 +685,45 @@
     if (pvRange === "1Y") return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" }).format(d).replace(" ", " '");
     return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
   }
+  // A closed market is not a gap, it is the calendar - so weekends are drawn
+  // as they always were and only a stretch the collector OWED is marked. The
+  // server decides that (it owns the window definition); this places it.
+  //
+  // The x axis here is ordinal, one step per snapshot, so a missing hour has
+  // no width to occupy: the line simply carries on. The mark therefore sits
+  // on the junction rather than spanning it, which is honest about what the
+  // axis can show - the price-history chart, whose x IS time, gets a band
+  // proportional to the hole instead.
+  function gapMarkers(pairs, gaps, pts, H, top, bot) {
+    if (!gaps || !gaps.length || pairs.length < 2) return '';
+    var out = '';
+    for (var g = 0; g < gaps.length; g++) {
+      var gap = gaps[g], left = -1;
+      // The drawn series may be thinned, so find the last point at or before
+      // the gap opened rather than assuming an index.
+      for (var i = 0; i < pairs.length; i++) {
+        if (pairs[i][0] <= gap.from) left = i; else break;
+      }
+      if (left < 0 || left >= pairs.length - 1) continue;
+      var x = ((pts[left][0] + pts[left + 1][0]) / 2).toFixed(1);
+      out += '<rect x="' + (x - 3) + '" y="' + top + '" width="6" height="' + (bot - top) +
+        '" fill="url(#pv-gap)"><title>' + esc(gapLabel(gap)) + '</title></rect>' +
+        '<line x1="' + x + '" x2="' + x + '" y1="' + top + '" y2="' + bot +
+        '" stroke="var(--warn)" stroke-width="1" stroke-dasharray="2 3" opacity=".55"/>';
+    }
+    return out;
+  }
+  function gapHours(mins) {
+    if (mins < 60) return mins + ' min';
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return h + 'h' + (m ? ' ' + m + 'm' : '');
+  }
+  function gapLabel(gap) {
+    return 'No snapshot for ' + gapHours(gap.openMinutes) +
+      ' of collecting time here \u2014 ' + pvTipDate(gap.from) + ' to ' + pvTipDate(gap.to) +
+      '. The market being shut is not counted.';
+  }
+  function pvGapList() { return (DATA.pvGaps || {})[pvRange] || []; }
   function renderPV() {
     var pairs = (DATA.pv && DATA.pv[pvRange]) || [];
     var host = $('#pv-chart');
@@ -756,11 +795,15 @@
       '<div class="pv-plot">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" ' +
       'aria-label="Portfolio value, ' + pvRange + ' range, ' + F.pct(chg) +
-        (bad.count ? ', ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted' : '') + '">' +
-      '<defs><linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".20"/>' +
+        (bad.count ? ', ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted' : '') +
+        (pvGapList().length ? ', ' + pvGapList().length + ' collection gap' + (pvGapList().length > 1 ? 's' : '') + ' marked' : '') + '">' +
+      '<defs><pattern id="pv-gap" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+      '<line x1="0" y1="0" x2="0" y2="5" stroke="var(--warn)" stroke-width="2.4" opacity=".5"/></pattern>' +
+      '<linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".20"/>' +
       '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
       ticks.map(function (t) { var y = tickY(t).toFixed(1); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
       ddRect +
+      gapMarkers(pairs, (DATA.pvGaps || {})[pvRange], pts, H, 14, H - 14) +
       '<path d="' + area + '" fill="url(#pvg)"/><path class="pv-line" d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linejoin="round"/>' +
       '<line id="pv-cross" x1="0" x2="0" y1="0" y2="' + H + '" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/>' +
       '<circle id="pv-cursor" cx="0" cy="0" r="4" fill="' + color + '" stroke="var(--surface)" stroke-width="1.5" opacity="0"/>' +

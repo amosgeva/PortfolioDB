@@ -23,7 +23,7 @@ which is what an Asia/Tokyo operator watching US markets needs.
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 import reporting_tz
 import settings
@@ -110,6 +110,56 @@ def is_open(now: datetime | None = None) -> bool:
     # Wrapped window (e.g. 22:00–04:00): open at either end of midnight.
     return minutes >= lo or minutes <= hi
 
+
+# A missed tick or two is jitter, not an outage: the collector ticks every five
+# minutes and a run can slip. Half an hour of window time with nothing recorded
+# is past anything scheduling explains.
+GAP_MINUTES = 30
+
+
+def open_minutes_between(start: datetime, end: datetime) -> int:
+    """Minutes between two instants that fall INSIDE the collector window.
+
+    This is the difference between "the market was shut" and "we were not
+    looking". Wall-clock length cannot tell those apart -- the ordinary gap
+    between a Friday close and a Monday open is about 64 hours -- so a gap is
+    measured by how much of it the collector was supposed to be awake for.
+
+    Both ends may be naive, and are then read as reporting-local like every
+    other bare timestamp in the app.
+    """
+    tz = reporting_tz.tzinfo()
+
+    def _local(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=tz)
+        return dt.astimezone(tz)
+
+    a, b = _local(start), _local(end)
+    if b <= a:
+        return 0
+
+    start_t, end_t, week = window()
+    lo = start_t.hour * 60 + start_t.minute
+    hi = end_t.hour * 60 + end_t.minute
+    # A window that wraps past midnight is two spans on each calendar day.
+    spans = [(lo, hi)] if lo <= hi else [(0, hi), (lo, 24 * 60)]
+
+    total = 0.0
+    day = a.date()
+    last = b.date()
+    while day <= last:
+        if day.weekday() in week:
+            midnight = datetime.combine(day, time(0, 0)).replace(tzinfo=tz)
+            for lo_m, hi_m in spans:
+                s_dt = midnight + timedelta(minutes=lo_m)
+                e_dt = midnight + timedelta(minutes=hi_m)
+                overlap_lo = max(s_dt, a)
+                overlap_hi = min(e_dt, b)
+                if overlap_hi > overlap_lo:
+                    total += (overlap_hi - overlap_lo).total_seconds() / 60.0
+        day += timedelta(days=1)
+    return int(round(total))
 
 def describe() -> str:
     """Human-readable summary for logs and the Settings page."""
