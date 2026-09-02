@@ -76,12 +76,14 @@ NATIVE_CSS = """
   --bg:oklch(98% 0.005 255);--surface:#fff;--surface-2:oklch(97.5% 0.006 255);--surface-3:oklch(95.5% 0.008 255);
   --fg:oklch(24% 0.022 260);--fg-soft:oklch(38% 0.02 260);--muted:oklch(46% 0.018 260);--faint:oklch(53.5% 0.012 260);
   --border:oklch(91% 0.008 260);--border-2:oklch(86% 0.01 260);
-  --rail:oklch(26% 0.035 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
+  --rail:oklch(26% 0.035 264);--rail-2:oklch(31% 0.04 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
   --accent:oklch(55% 0.19 264);--accent-soft:oklch(95% 0.04 264);
   --up:oklch(51% 0.16 152);--up-soft:oklch(95% 0.05 152);
   --down:oklch(55% 0.20 26);--down-soft:oklch(95.5% 0.04 26);
   --warn:oklch(53.5% 0.15 75);--warn-soft:oklch(95% 0.05 75);
-  --r:11px;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
+  --r-sm:7px;--r-ctl:9px;--r:11px;--r-lg:16px;--r-pill:99px;--r-round:50%;
+  --rail-edge:oklch(20% 0.03 264);--rail-line:oklch(33% 0.03 264);
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
   --font:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;--rail-w:248px;
   color-scheme:light;
@@ -91,11 +93,12 @@ html[data-theme="dark"]{
   --bg:oklch(16.5% 0.015 260);--surface:oklch(20.5% 0.018 260);--surface-2:oklch(24% 0.02 260);--surface-3:oklch(28% 0.022 260);
   --fg:oklch(93% 0.008 260);--fg-soft:oklch(82% 0.012 260);--muted:oklch(74% 0.015 260);--faint:oklch(66.5% 0.012 260);
   --border:oklch(29% 0.015 260);--border-2:oklch(35% 0.018 260);
-  --rail:oklch(18.5% 0.028 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
+  --rail:oklch(18.5% 0.028 264);--rail-2:oklch(24% 0.032 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
   --accent:oklch(62% 0.18 264);--accent-soft:oklch(29% 0.06 264);
   --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);
   --down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);
   --warn:oklch(76% 0.13 75);--warn-soft:oklch(30% 0.06 80);
+  --rail-edge:oklch(13% 0.025 264);--rail-line:oklch(26% 0.028 264);
   --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);
   color-scheme:dark;
 }
@@ -116,23 +119,23 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
 
 /* fixed rail */
 .m2-rail{position:fixed;left:0;top:0;width:var(--rail-w);height:100vh;overflow-y:auto;background:var(--rail);color:var(--rail-fg);
-  display:flex;flex-direction:column;border-right:1px solid oklch(20% 0.03 264);z-index:100}
+  display:flex;flex-direction:column;border-right:1px solid var(--rail-edge);z-index:100}
 .m2-rail .brand{display:flex;align-items:center;gap:11px;padding:20px 20px 18px}
-.m2-rail .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(140deg,var(--accent),oklch(62% 0.2 290));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 4px 12px -4px oklch(55% 0.19 264 / .7)}
+.m2-rail .logo{width:34px;height:34px;border-radius:var(--r-ctl);background:linear-gradient(140deg,var(--accent),oklch(62% 0.2 290));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 4px 12px -4px oklch(55% 0.19 264 / .7)}
 .m2-rail .logo svg{width:18px;height:18px}
 .m2-rail .name{font-weight:700;font-size:16px;letter-spacing:-.02em}
 .m2-rail .name b{color:oklch(78% 0.12 290)}
 .m2-rail .tag{font-size:10.5px;color:var(--rail-muted);letter-spacing:.14em;text-transform:uppercase}
 .m2-rail .label{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--rail-muted);padding:14px 24px 7px}
 .m2-rail nav{display:flex;flex-direction:column;gap:2px;padding:0 12px}
-.m2-rail nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:9px;color:var(--rail-muted);font-weight:500;font-size:13.5px;text-decoration:none;transition:background .14s,color .14s}
+.m2-rail nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:var(--r-ctl);color:var(--rail-muted);font-weight:500;font-size:13.5px;text-decoration:none;transition:background .14s,color .14s}
 .m2-rail nav a svg{width:17px;height:17px;opacity:.9;flex:0 0 auto}
-.m2-rail nav a:hover{background:oklch(33% 0.04 264);color:var(--rail-fg)}
+.m2-rail nav a:hover{background:var(--rail-2);color:var(--rail-fg)}
 .m2-rail nav a.active{background:oklch(34% 0.055 264);color:#fff;box-shadow:inset 2px 0 0 var(--accent)}
 /* rail watchlist (mirrors the iframe rail) */
 .m2-rail .wl{display:flex;flex-direction:column;gap:1px;padding:0 8px}
-.m2-rail .wl__row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;padding:7px 10px;border-radius:8px}
-.m2-rail .wl__row:hover{background:oklch(31% 0.04 264)}
+.m2-rail .wl__row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-sm)}
+.m2-rail .wl__row:hover{background:var(--rail-2)}
 .m2-rail .wl__sym{font-weight:600;font-size:12.5px}
 .m2-rail .wl__px{font-family:var(--mono);font-size:12px;color:var(--rail-fg)}
 .m2-rail .wl__chg{font-family:var(--mono);font-size:11px;min-width:52px;text-align:right}
@@ -140,8 +143,8 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
 /* keep the chat input bar clear of the fixed rail */
 [data-testid="stBottom"]{margin-left:var(--rail-w)!important;width:calc(100% - var(--rail-w))!important}
 @media (max-width:980px){ [data-testid="stBottom"]{margin-left:0!important;width:100%!important} }
-.m2-rail .foot{margin-top:auto;padding:14px 16px;display:flex;align-items:center;gap:11px;border-top:1px solid oklch(32% 0.03 264)}
-.m2-rail .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(140deg,oklch(62% 0.13 200),oklch(55% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff;flex:0 0 auto}
+.m2-rail .foot{margin-top:auto;padding:14px 16px;display:flex;align-items:center;gap:11px;border-top:1px solid var(--rail-line)}
+.m2-rail .avatar{width:32px;height:32px;border-radius:var(--r-round);background:linear-gradient(140deg,oklch(62% 0.13 200),oklch(55% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:12px;color:#fff;flex:0 0 auto}
 .m2-rail .build{padding:0 16px 12px;font-size:11px;letter-spacing:.04em;color:var(--rail-muted);font-variant-numeric:tabular-nums}
 .m2-rail .user b{font-size:13px;display:block}.m2-rail .user span{font-size:11px;color:var(--rail-muted)}
 
@@ -168,7 +171,7 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
 /* Status as a word in a tinted well — the shell's tag component — rather than
    an OS emoji, whose glyph and colour are outside the design system entirely. */
 .m2-tag{display:inline-block;font-size:var(--fs-micro);font-weight:600;letter-spacing:.03em;
-  padding:2px 8px;border-radius:7px;font-family:var(--mono);white-space:nowrap}
+  padding:2px 8px;border-radius:var(--r-sm);font-family:var(--mono);white-space:nowrap}
 .m2-tag--complete{background:var(--up-soft);color:var(--up)}
 .m2-tag--inconsistent{background:var(--down-soft);color:var(--down)}
 .m2-tag--partial,.m2-tag--stale{background:var(--warn-soft);color:var(--warn)}
@@ -184,10 +187,10 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
 .block-container h3{font-size:16px;font-weight:600;margin-top:6px}
 /* buttons: keep Streamlit's themed colors (primary = indigo via theme env),
    only align typography + radius so we don't override the primary fill */
-.stButton>button,[data-testid="stFormSubmitButton"]>button{font-family:var(--font);font-weight:600;border-radius:9px}
+.stButton>button,[data-testid="stFormSubmitButton"]>button{font-family:var(--font);font-weight:600;border-radius:var(--r-ctl)}
 /* inputs */
 .stTextInput input,.stNumberInput input,.stDateInput input,[data-baseweb="select"]>div{
-  font-family:var(--font);border-radius:9px!important;border-color:var(--border-2)!important;background:var(--surface)!important}
+  font-family:var(--font);border-radius:var(--r-ctl)!important;border-color:var(--border-2)!important;background:var(--surface)!important}
 .stTextInput input:focus,.stNumberInput input:focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent-soft)!important}
 /* widget labels: Streamlit dims these — restore readable contrast */
 [data-testid="stWidgetLabel"] p,[data-testid="stWidgetLabel"] label,.stCheckbox label p{
@@ -211,7 +214,7 @@ hr{border-color:var(--border)}
 /* inline code chips */
 .stMarkdown code,[data-testid="stMarkdownContainer"] code{
   background:var(--surface-3)!important;color:var(--fg-soft)!important;font-family:var(--mono);
-  border-radius:5px;padding:1px 5px}
+  border-radius:var(--r-sm);padding:1px 5px}
 /* secondary buttons: Streamlit leaves these white in dark mode */
 .stButton>button[kind="secondary"],[data-testid="stBaseButton-secondary"]{
   background:var(--surface)!important;color:var(--fg)!important;border-color:var(--border-2)!important}

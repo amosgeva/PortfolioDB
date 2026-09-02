@@ -607,8 +607,8 @@
       '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="4" fill="' + color + '"/>' +
       '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="8" fill="' + color + '" opacity=".18"/></svg>' +
       '<div id="pv-tip" style="position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);' +
-      'background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 9px;' +
-      'box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div>' +
+      'background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 9px;' +
+      'box-shadow:var(--shadow-tip);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div>' +
       '<div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none">' +
       '<span style="color:' + color + '">' + pvRange + ' ' + F.pct(chg) + '</span>' +
       (maxDD >= 0.005 ? '<span style="color:var(--muted);font-weight:500">  ·  max DD −' + (maxDD*100).toFixed(1) + '%</span>' : '') + '</div>' +
@@ -722,7 +722,7 @@
         var p = s.val / total * 100;
         var txt = (s.color === '#cbd5e1' || s.color === '#94a3b8') ? '#1e293b' : '#fff';
         html += '<div title="' + esc(s.label) + ' · ' + F.money(s.val) + ' · ' + p.toFixed(1) + '%" ' +
-          'style="flex:' + s.val.toFixed(2) + ' 1 0;min-width:0;background:' + s.color + ';border-radius:6px;color:' + txt + ';' +
+          'style="flex:' + s.val.toFixed(2) + ' 1 0;min-width:0;background:' + s.color + ';border-radius:var(--r-sm);color:' + txt + ';' +
           'padding:8px 9px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden">' +
           '<b style="font-size:var(--fs-meta);white-space:nowrap;text-overflow:ellipsis;overflow:hidden">' + esc(s.label) + '</b>' +
           '<span class="num" style="font-size:var(--fs-micro)">' + p.toFixed(1) + '%</span></div>';
@@ -990,8 +990,8 @@
       (phSpy ? ' &nbsp; · &nbsp; <span style="color:var(--warn)">┄ SPY, rebased to ' + esc(sym) + '’s start (same % scale)</span>' : '') + '</div>';
     host.innerHTML = '<div class="ph-wrap" style="position:relative;cursor:crosshair">' + svg +
       '<div id="ph-tip" style="position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);' +
-      'background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 9px;' +
-      'box-shadow:0 4px 14px rgba(0,0,0,.12);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div></div>' + legend;
+      'background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 9px;' +
+      'box-shadow:var(--shadow-tip);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div></div>' + legend;
     var wrap = host.querySelector('.ph-wrap');
     var cross = host.querySelector('#ph-cross'), cursor = host.querySelector('#ph-cursor'), tip = host.querySelector('#ph-tip');
     function move(ev) {
