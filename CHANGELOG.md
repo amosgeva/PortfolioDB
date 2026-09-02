@@ -16,6 +16,12 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-09-02
+
+A security and hygiene release. No figure changes and no migration — see
+**Upgrading** — but one shipped default is different, and if you reach the MCP
+server from another machine you need to know which.
+
 ### Changed
 
 - **The MCP server's ad-hoc runner now binds localhost by default** instead of
@@ -51,6 +57,30 @@ needs a schema step says so under **Upgrading**.
   were best-effort cleanup — returning a connection, closing a handle, dropping
   a query parameter — and behave identically; the intent is now legible at a
   glance rather than inferred from an empty handler.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+**No figure changes.** No schema, no stored value and no computation was
+touched.
+
+**Read this if you reach the MCP server from another machine.** Two cases:
+
+- **Running it through the shipped compose file — nothing to do.** Compose sets
+  `PORTFOLIODB_MCP_HOST` and passes `--host` to uvicorn itself, so it never uses
+  the changed default.
+- **Running `python -m app.mcp.server` directly — set
+  `PORTFOLIODB_MCP_HOST=0.0.0.0` in your `.env`**, or the server will answer
+  only on localhost after this upgrade and remote clients will fail to connect.
+
+Minor rather than patch because that default is a behaviour change someone can
+be relying on, even though it is a default and overridable. The compose default
+floats the major line, so a pull crosses this boundary on its own — which is
+exactly why the case above is called out rather than left to be discovered.
+
+Host installs (not compose) should re-run `pip install -r app/requirements.txt`
+to pick up the `python-dotenv` floor.
 
 ## [1.2.2] — 2026-09-02
 
@@ -743,7 +773,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.3.0
 [1.2.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.2
 [1.2.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.1
 [1.2.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.0
