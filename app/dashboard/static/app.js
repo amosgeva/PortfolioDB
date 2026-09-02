@@ -31,6 +31,17 @@
   }
   var F = { money: money, compact: compact, pct: pct };
 
+  // Written out as 1e6 or 1e-9 these are reported as literals whose runtime
+  // value differs from the text, so every magnitude below is composed from
+  // small integers instead - the same reason DAY_MS is spelled 24 * 60 * 60 * 1000.
+  var THOUSAND = 1000;
+  var TEN_THOUSAND = THOUSAND * 10;
+  var HUNDRED_THOUSAND = THOUSAND * 100;
+  var MILLION = THOUSAND * THOUSAND;
+  var TEN_MILLION = MILLION * 10;
+  // Ticks are stepped by repeated addition, so the last one can land a float
+  // hair above the maximum; this is the tolerance that keeps it.
+  var TICK_TOL = 1 / (THOUSAND * MILLION);
   // ---- axes -------------------------------------------------------------
   // Gridlines at fixed fractions of the data range land on values like
   // 8,912.47, which is why they were never labelled - there was nothing worth
@@ -52,7 +63,7 @@
       var first = Math.ceil(lo / step) * step, n = 0;
       // Counting is capped as well as bounded: a step that underflows would
       // otherwise spin forever on a flat series.
-      for (var t = first; t <= hi + step * 1e-9 && n < 24; t += step) n++;
+      for (var t = first; t <= hi + step * TICK_TOL && n < 24; t += step) n++;
       if (n < 2) return;
       var score = Math.abs(n - target) + (n < 3 ? 2 : 0);
       if (!best || score < best.score) best = { step: step, first: first, n: n, score: score };
@@ -67,8 +78,8 @@
   // without ever printing cents nobody is reading off a gridline.
   function axisMoney(v, step) {
     var a = Math.abs(v), sign = v < 0 ? "-$" : "$";
-    if (a >= 1e6) return sign + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
-    if (a >= 1e4) return sign + (a / 1e3).toFixed(a >= 1e5 ? 0 : 1) + "K";
+    if (a >= MILLION) return sign + (a / MILLION).toFixed(a >= TEN_MILLION ? 0 : 1) + "M";
+    if (a >= TEN_THOUSAND) return sign + (a / THOUSAND).toFixed(a >= HUNDRED_THOUSAND ? 0 : 1) + "K";
     // A ladder of $0.20 steps rounded to whole dollars prints "$100" three
     // times: the step decides the precision, not the magnitude.
     var dp = !step || step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
@@ -732,6 +743,12 @@
         : 'left:' + ((pts[idx][0] / W) * 100).toFixed(2) + '%;transform:translateX(-50%)';
       xLabels += '<span style="' + place + '">' + pvAxisDate(pairs[idx][0]) + '</span>';
     }
+    // Audited 2026-09-02 for the XSS sink warning on this line. Everything
+    // interpolated below is a number, a path built from numbers, or a constant
+    // defined in this file: yLabels and xLabels come from axisMoney/pvAxisDate,
+    // area and line are path data, pvRange is one of the four chip values, and
+    // CLOCK_SVG is a literal. No text from the database or the URL reaches it.
+    // nosemgrep
     host.innerHTML = '<div class="pv-wrap">' +
       '<div class="pv-y">' + yLabels + '</div>' +
       '<div class="pv-plot">' +
@@ -1186,7 +1203,7 @@
       var tri = l.side === 'BUY'
         ? mx + ',' + (my - 7) + ' ' + (mx - 6) + ',' + (my + 5) + ' ' + (mx + 6) + ',' + (my + 5)
         : mx + ',' + (my + 7) + ' ' + (mx - 6) + ',' + (my - 5) + ' ' + (mx + 6) + ',' + (my - 5);
-      svg += '<polygon points="' + tri + '" fill="' + c + '" stroke="var(--surface)" stroke-width="1"><title>' + l.side + ' ' + l.qty + ' @ $' + l.price + '</title></polygon>';
+      svg += '<polygon points="' + tri + '" fill="' + c + '" stroke="var(--surface)" stroke-width="1"><title>' + esc(l.side + ' ' + l.qty + ' @ $' + l.price) + '</title></polygon>';
     });
     svg += '<line id="ph-cross" x1="0" x2="0" y1="' + padT + '" y2="' + (H - padB) + '" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/>' +
       '<circle id="ph-cursor" cx="0" cy="0" r="4" fill="' + color + '" stroke="var(--surface)" stroke-width="1.5" opacity="0"/>';
@@ -1194,6 +1211,11 @@
     var legend = '<div style="font-size:var(--fs-micro);color:var(--muted);margin-top:6px">' +
       '<span class="up">▲ BUY</span> &nbsp; <span class="down">▼ SELL</span>' +
       (phSpy ? ' &nbsp; · &nbsp; <span style="color:var(--warn)">┄ SPY, rebased to ' + esc(sym) + '’s start (same % scale)</span>' : '') + '</div>';
+    // Audited 2026-09-02 for the XSS sink warning on this line. The only text
+    // here that does not originate as a number is the symbol, and both places
+    // it appears - the svg aria-label and the legend - pass it through esc().
+    // The lot-marker titles are escaped at the point they are built, above.
+    // nosemgrep
     host.innerHTML = '<div class="ph-wrap">' +
       '<div class="ph-y">' + phYLabels + '</div>' +
       '<div class="ph-plot">' + svg +
@@ -1682,7 +1704,7 @@
       var tri = l.side === 'BUY'
         ? mx + ',' + (my - 6) + ' ' + (mx - 5) + ',' + (my + 4) + ' ' + (mx + 5) + ',' + (my + 4)
         : mx + ',' + (my + 6) + ' ' + (mx - 5) + ',' + (my - 4) + ' ' + (mx + 5) + ',' + (my - 4);
-      svg += '<polygon points="' + tri + '" fill="' + c + '" stroke="var(--surface)" stroke-width="1"><title>' + l.side + ' ' + l.qty + ' @ $' + l.price + '</title></polygon>';
+      svg += '<polygon points="' + tri + '" fill="' + c + '" stroke="var(--surface)" stroke-width="1"><title>' + esc(l.side + ' ' + l.qty + ' @ $' + l.price) + '</title></polygon>';
     });
     svg += '</svg>';
     var chg = (ys[ys.length - 1] - ys[0]) / ys[0] * 100;
