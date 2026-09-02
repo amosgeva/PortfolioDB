@@ -200,6 +200,9 @@ a{color:inherit;text-decoration:none}
 .kpi__spark-label{font-size:var(--fs-micro);color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px}
 .kpi__spark svg{width:100%;height:54px;display:block}
 .row2{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-bottom:20px}
+/* Two equal columns, as a class rather than an inline style: inline wins over
+   every media query, so these stayed side by side at 320px. */
+.row2--pair{grid-template-columns:1fr 1fr}
 .tbl-wrap{overflow-x:auto}
 table.tbl{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
 .tbl thead th{text-align:right;font-size:var(--fs-micro);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0;background:var(--surface);z-index:1}
@@ -228,14 +231,19 @@ td.price{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:5
    old single range, so a theme-aware scale left it showing colours the map no
    longer produces — the two endpoints are the formula at m=1, the middle is the
    below-noise-floor neutral. */
-.heat-legend{flex:0 0 220px;height:8px;border-radius:var(--r-pill);
+.heat-legend{flex:1 1 100px;max-width:220px;min-width:70px;height:8px;border-radius:var(--r-pill);
   background:linear-gradient(90deg,oklch(64% .20 26),oklch(72% .015 260),oklch(64% .20 152))}
 [data-theme="dark"] .heat-legend{background:linear-gradient(90deg,oklch(36% .19 26),oklch(38% .012 260),oklch(36% .19 152))}
 .mvlist{display:flex;flex-direction:column}
-.mv{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:11px 6px;border-bottom:1px solid var(--border)}
+/* minmax(0,1fr), not 1fr: a bare 1fr keeps min-width:auto and refuses to go
+   below its content, which is what pushed this row 103px past a 320px
+   viewport. The name ellipsises instead of forcing the row wider. */
+.mv{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:11px 6px;border-bottom:1px solid var(--border)}
 .mv:last-child{border-bottom:0}
 .mv__rank{font-family:var(--mono);font-size:var(--fs-meta);color:var(--faint);width:18px}
-.mv__sym b{font-size:var(--fs-sm)}.mv__sym span{font-size:var(--fs-meta);color:var(--muted);display:block}
+.mv__sym{min-width:0}
+.mv__sym b{font-size:var(--fs-sm)}
+.mv__sym span{font-size:var(--fs-meta);color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mv__px{font-family:var(--mono);font-size:var(--fs-sm)}
 .mv__chg{font-family:var(--mono);font-size:var(--fs-sm);font-weight:600;min-width:64px;text-align:right}
 .feed{display:flex;flex-direction:column}
@@ -379,8 +387,12 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .scrim{position:fixed;inset:0;background:var(--scrim);z-index:55;opacity:0;pointer-events:none;transition:opacity .2s}
 .scrim.show{opacity:1;pointer-events:auto}
 .alerts-grid{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start}
-.stat-row{display:flex;gap:10px;margin-bottom:16px}
-.stat-mini{flex:1;padding:13px 15px}
+/* The grid item above these carried min-width:auto, so a 1fr track resolved
+   to 311.7px inside a 288px grid. Items shrink, and the minis wrap rather
+   than hold a combined min-content wider than the card. */
+.alerts-grid>*{min-width:0}
+.stat-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.stat-mini{flex:1 1 120px;min-width:0;padding:13px 15px}
 .stat-mini .v{font-family:var(--mono);font-size:var(--fs-num);font-weight:600}.stat-mini .l{font-size:var(--fs-micro);color:var(--muted);margin-top:2px}
 /* Base state for the width-conditional controls. These sit ABOVE the media
    queries that reveal them: at equal specificity the last rule wins, so a
@@ -398,7 +410,7 @@ td.flash-down{animation:flashDown 1.2s ease-out}
    than a new one — the close button is part of that vocabulary, not its own. */
 .rail__close:hover{background:var(--rail-2);color:var(--rail-fg)}
 
-@media (max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}
+@media (max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.row2,.row2--pair{grid-template-columns:1fr}
   /* Grid items keep min-width:auto, so a card refuses to shrink below its own
      content and pushes the page wider than the viewport. .main already carries
      this; the items it contains did not, which is the whole 320px overflow. */
@@ -486,11 +498,11 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .hitrow__down{background:var(--down)}
 .hitrow__val{width:118px;text-align:right;font-family:var(--mono);font-size:var(--fs-meta);color:var(--fg-soft)}
 
-.stk{display:flex;align-items:baseline;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.stk{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:10px 0;border-bottom:1px solid var(--border)}
 .stk:last-child{border-bottom:0}
 .stk__lbl{width:104px;font-size:var(--fs-sm);color:var(--muted)}
 .stk__days{font-family:var(--mono);font-size:var(--fs-xl);font-weight:600}
-.stk__meta{font-size:var(--fs-meta);color:var(--muted)}
+.stk__meta{font-size:var(--fs-meta);color:var(--muted);min-width:0}
 .stk--up .stk__days{color:var(--up)}
 .stk--down .stk__days{color:var(--down)}
 
