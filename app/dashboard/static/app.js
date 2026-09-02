@@ -52,7 +52,7 @@
   // falls on a number a person would say out loud and can therefore carry one.
   function niceTicks(lo, hi, target) {
     var span = hi - lo;
-    if (!(span > 0) || !isFinite(span)) return [];
+    if (!(span > 0) || !Number.isFinite(span)) return [];
     target = target || 4;
     var mag = Math.pow(10, Math.floor(Math.log(span / target) / Math.LN10));
     // Rounding the ideal step UP to the next rung is the textbook version and it
@@ -94,7 +94,7 @@
   // prints the real fiscal label. The period end date is what is actually known.
   function periodLabel(period) {
     var d = new Date(String(period) + "T00:00:00Z");
-    if (isNaN(d.getTime())) return String(period);
+    if (Number.isNaN(d.getTime())) return String(period);
     return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit", timeZone: "UTC" })
       .format(d).replace(" ", " '");
   }
@@ -145,7 +145,7 @@
   function relLum(hex) {
     var h = String(hex).replace('#', '');
     if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];   // #fff -> #ffffff
-    var c = [0, 2, 4].map(function (i) { return parseInt(h.substr(i, 2), 16) / 255; })
+    var c = [0, 2, 4].map(function (i) { return Number.parseInt(h.substr(i, 2), 16) / 255; })
       .map(function (v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
   }
@@ -1333,13 +1333,13 @@
     // never against a wall clock: the weekend gap alone is 64.2h, so any absolute
     // threshold either fires every Monday or misses a real mid-week outage.
     var stamps = rows.map(function (r) { return Date.parse(String(r.ts || '').replace(' ', 'T')); })
-                     .filter(function (t) { return !isNaN(t); });
+                     .filter(function (t) { return !Number.isNaN(t); });
     var newest = stamps.length ? Math.max.apply(null, stamps) : null;
     var STALE_MS = 4 * DAY_MS;   // clears a long weekend plus a public holiday
     var staleCount = 0;
     tb.innerHTML = rows.map(function (r) {
       var t = Date.parse(String(r.ts || '').replace(' ', 'T'));
-      var age = (newest != null && !isNaN(t)) ? newest - t : 0;
+      var age = (newest != null && !Number.isNaN(t)) ? newest - t : 0;
       var stale = age > STALE_MS;
       if (stale) staleCount++;
       var days = Math.round(age / DAY_MS);
