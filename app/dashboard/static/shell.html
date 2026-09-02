@@ -206,7 +206,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="card__hd"><h2>Market breadth</h2><span class="sub" id="breadth-sub">advancers vs decliners</span>
             <span class="sub" style="margin-left:auto">As of <b data-asof>—</b></span></div>
           <div class="card__bd"><div id="breadth-bar" style="margin-bottom:10px"></div>
-            <div id="breadth-legend" style="display:flex;gap:18px;font-size:12.5px;font-family:var(--mono)"></div></div>
+            <div id="breadth-legend" style="display:flex;gap:18px;font-size:var(--fs-sm);font-family:var(--mono)"></div></div>
         </section>
         <section class="row2" style="grid-template-columns:1fr 1fr">
           <div class="card"><div class="card__hd"><span style="width:8px;height:8px;border-radius:50%;background:var(--up)"></span><h2>Top gainers</h2></div>
@@ -218,7 +218,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="card__hd"><h2>Sector heatmap</h2><span class="sub">tile color = day change</span>
             <label class="search" style="margin-left:auto;width:220px"><span>__SVG_SEARCH__</span><input type="search" id="mv-search" placeholder="Filter symbols…" aria-label="Filter heatmap symbols"/></label></div>
           <div class="card__bd"><div class="toolbar" id="sector-chips"></div><div class="heat" id="heat"></div>
-            <div style="display:flex;align-items:center;gap:10px;margin-top:16px;font-size:11px;color:var(--muted)">
+            <div style="display:flex;align-items:center;gap:10px;margin-top:16px;font-size:var(--fs-micro);color:var(--muted)">
               <span>−3%+</span><span class="heat-legend"></span><span>+3%+</span>
             </div></div>
         </section>
@@ -264,7 +264,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
                   <div class="field"><label for="a-sym">Symbol</label>
                     <input id="a-sym" class="mono-in" type="text" placeholder="e.g. NVDA" autocomplete="off" maxlength="6" aria-describedby="a-sym-err"/>
                     <div class="err" id="a-sym-err" role="alert"></div>
-                    <div style="font-size:11.5px;color:var(--muted);margin-top:-8px" id="a-hint"></div></div>
+                    <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:-8px" id="a-hint"></div></div>
                   <div class="field-row">
                     <div class="field"><label for="a-cond">Condition</label>
                       <select id="a-cond"><option value="above">Rises above</option><option value="below">Falls below</option></select></div>
@@ -274,7 +274,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
                   </div>
                   <button class="btn" type="submit" style="width:100%">Arm alert</button>
                 </form>
-                <p style="font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.5">
+                <p style="font-size:var(--fs-meta);color:var(--muted);margin-top:12px;line-height:1.5">
                   Alerts are checked against the latest snapshot price the moment you arm them. Refresh to re-evaluate against new prices.</p>
               </div></div>
           </div>
@@ -292,10 +292,10 @@ try{var _t=localStorage.getItem('pdb_theme')||
       <!-- ===== FUNDAMENTALS ===== -->
       <section class="view" data-view-pane="fundamentals">
         <div class="toolbar">
-          <span id="fd-symbol-label" style="font-size:13px;font-weight:600;color:var(--fg-soft)">Symbol</span>
+          <span id="fd-symbol-label" style="font-size:var(--fs-sm);font-weight:600;color:var(--fg-soft)">Symbol</span>
           <select id="fd-symbol" class="chip" style="min-width:120px;cursor:pointer" aria-labelledby="fd-symbol-label"></select>
           <span class="spacer"></span>
-          <span class="sub" id="fd-asof" style="font-size:11.5px;color:var(--muted)"></span>
+          <span class="sub" id="fd-asof" style="font-size:var(--fs-meta);color:var(--muted)"></span>
         </div>
         <div id="fd-body"></div>
       </section>

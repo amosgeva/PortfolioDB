@@ -2,10 +2,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 :root{
   --bg:oklch(98% 0.005 255);--surface:#fff;--surface-2:oklch(97.5% 0.006 255);--surface-3:oklch(95.5% 0.008 255);
-  /* Ink ramp. Every step is chosen to clear WCAG AA (4.5:1) against the worst
+  /* Ink ramp. Every step in THIS ramp clears WCAG AA (4.5:1) against the worst
      surface it lands on, which is --surface-3, not white. That constraint is
      what sets the spacing: --faint cannot be lighter than 53.5% and stay
-     legible, so --muted moves down to keep the two steps distinguishable. */
+     legible, so --muted moves down to keep the two steps distinguishable.
+     The claim is about the ink ramp, not every token: --accent is a brand
+     value at 4.42 on --surface-3, so it carries text only on --surface, and
+     serves elsewhere as fill, border, focus ring or icon, where 3:1 suffices. */
   --fg:oklch(24% 0.022 260);--fg-soft:oklch(38% 0.02 260);--muted:oklch(46% 0.018 260);--faint:oklch(53.5% 0.012 260);
   --border:oklch(91% 0.008 260);--border-2:oklch(86% 0.01 260);
   /* --rail-2 is the rail's raised ground: hover on nav rows and watchlist rows.
@@ -66,7 +69,10 @@
   --rail:oklch(18.5% 0.028 264);--rail-2:oklch(24% 0.032 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
   --rail-edge:oklch(13% 0.025 264);--rail-line:oklch(26% 0.028 264);
   --heat-ink:#fff;
-  --accent:oklch(62% 0.18 264);--accent-soft:oklch(29% 0.06 264);
+  /* Dark redefines --accent four points lighter, so white can no longer sit
+     on it: 3.74:1. The button label goes dark instead of the brand colour
+     going darker, which would cost the accent its visibility on the page. */
+  --accent:oklch(62% 0.18 264);--accent-fg:oklch(20% 0.02 264);--accent-soft:oklch(29% 0.06 264);
   --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);--down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);--warn:oklch(76% 0.13 75);
   --topbar-bg:oklch(18% 0.015 260 / .82);
   --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);--shadow-lg:0 10px 30px -12px rgba(0,0,0,.6);
@@ -111,7 +117,7 @@ a{color:inherit;text-decoration:none}
 .rail__foot{margin-top:auto;padding:14px 16px;display:flex;align-items:center;gap:11px;border-top:1px solid var(--rail-line)}
 /* Light stop darkened from 62% so the white initials clear AA (3.3:1 -> 4.5:1).
    The hue is untouched — this is a legibility fix, not a palette change. */
-.avatar{width:32px;height:32px;border-radius:var(--r-round);background:linear-gradient(140deg,oklch(54% 0.13 200),oklch(55% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:var(--fs-meta);color:#fff;flex:0 0 auto}
+.avatar{width:32px;height:32px;border-radius:var(--r-round);background:linear-gradient(140deg,oklch(52% 0.13 200),oklch(53% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:var(--fs-meta);color:#fff;flex:0 0 auto}
 .rail__user b{font-size:var(--fs-sm);display:block}.rail__user span{font-size:var(--fs-meta);color:var(--rail-muted)}
 /* No opacity here: --rail-muted already reads as recessive against the rail,
    and multiplying it by .75 dropped the build stamp to 3.66:1. Where a tone is
@@ -250,7 +256,9 @@ td.price{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:5
 .fitem__side{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
 .fitem__time{font-size:var(--fs-meta);color:var(--faint);font-family:var(--mono);white-space:nowrap}
 .markread{font-size:var(--fs-meta);color:var(--muted);background:none;border:0;cursor:pointer;padding:4px 8px;border-radius:var(--r-sm)}
-.markread:hover{background:var(--surface-3);color:var(--accent)}
+/* --accent clears AA as text only on --surface; on --surface-3 it is 4.42.
+   The hover keeps its tinted ground and takes --fg for the label. */
+.markread:hover{background:var(--surface-3);color:var(--fg)}
 .field{margin-bottom:14px}
 .field label{display:block;font-size:var(--fs-meta);font-weight:600;color:var(--fg-soft);margin-bottom:6px}
 .field input,.field select{width:100%;font-family:var(--font);font-size:var(--fs-sm);padding:10px 12px;border:1px solid var(--border-2);border-radius:var(--r-ctl);background:var(--surface);color:var(--fg);outline:none;transition:border-color .14s,box-shadow .14s}
