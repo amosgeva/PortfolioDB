@@ -31,9 +31,60 @@
   }
   var F = { money: money, compact: compact, pct: pct };
 
-  // Five steps darkened so the white ticker lettering on .sym-badge clears WCAG
-  // AA. Hues are unchanged: each symbol keeps the colour it has always had, a
-  // shade deeper. Range tightens from 2.94-6.29 to 4.5-6.29.
+  // ---- axes -------------------------------------------------------------
+  // Gridlines at fixed fractions of the data range land on values like
+  // 8,912.47, which is why they were never labelled - there was nothing worth
+  // printing. Ticks are chosen on the 1/2/5 ladder instead, so every line
+  // falls on a number a person would say out loud and can therefore carry one.
+  function niceTicks(lo, hi, target) {
+    var span = hi - lo;
+    if (!(span > 0) || !isFinite(span)) return [];
+    target = target || 4;
+    var mag = Math.pow(10, Math.floor(Math.log(span / target) / Math.LN10));
+    // Rounding the ideal step UP to the next rung is the textbook version and it
+    // halves the ladder whenever the ideal lands just above one: a $44 range wants
+    // an $11 step, takes $20, and draws two gridlines where it should draw four.
+    // Score the rungs instead and keep whichever lands nearest the target count.
+    var best = null;
+    [1, 2, 2.5, 5, 10].forEach(function (m) {
+      var step = m * mag;
+      if (!(step > 0)) return;
+      var first = Math.ceil(lo / step) * step, n = 0;
+      // Counting is capped as well as bounded: a step that underflows would
+      // otherwise spin forever on a flat series.
+      for (var t = first; t <= hi + step * 1e-9 && n < 24; t += step) n++;
+      if (n < 2) return;
+      var score = Math.abs(n - target) + (n < 3 ? 2 : 0);
+      if (!best || score < best.score) best = { step: step, first: first, n: n, score: score };
+    });
+    if (!best) return [];
+    var out = [];
+    for (var i = 0, v = best.first; i < best.n; i++, v += best.step) out.push(v);
+    return out;
+  }
+  // Axis money is not tooltip money: it is read in a column, at 11px, against
+  // its neighbours. Precision follows magnitude so the ticks stay distinct
+  // without ever printing cents nobody is reading off a gridline.
+  function axisMoney(v, step) {
+    var a = Math.abs(v), sign = v < 0 ? "-$" : "$";
+    if (a >= 1e6) return sign + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+    if (a >= 1e4) return sign + (a / 1e3).toFixed(a >= 1e5 ? 0 : 1) + "K";
+    // A ladder of $0.20 steps rounded to whole dollars prints "$100" three
+    // times: the step decides the precision, not the magnitude.
+    var dp = !step || step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+    return sign + a.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  }
+  // A quarter bar is stamped with the end of the period it covers. Naming it
+  // "Q3" would assert a fiscal quarter this row does not carry - NVDA's fiscal
+  // Q1 ends in April - and would disagree with the earnings table above, which
+  // prints the real fiscal label. The period end date is what is actually known.
+  function periodLabel(period) {
+    var d = new Date(String(period) + "T00:00:00Z");
+    if (isNaN(d.getTime())) return String(period);
+    return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit", timeZone: "UTC" })
+      .format(d).replace(" ", " '");
+  }
+
   // One categorical ramp for every chart, solved in OKLCH rather than picked.
   // Each hue sits at L 56-64% so it clears 3:1 on BOTH --surface values: the old
   // hand-picked hexes ranged L 45-85% and six of nine fell below 3:1 on white,
@@ -610,6 +661,17 @@
       : { year: 'numeric', month: 'short', day: 'numeric' };
     return new Intl.DateTimeFormat('en-US', opts).format(d);
   }
+  // The tooltip names one point and can afford "Sep 2, 2026"; the axis prints
+  // four of these side by side and only has to keep them apart.
+  function pvAxisDate(ms) {
+    var d = new Date(ms);
+    if (pvRange === "1D") return new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+    // "Sep 25" is September 25th on every other range of this same axis, so a
+    // year printed the same way is a different date to anyone reading quickly.
+    // The apostrophe is what separates a year from a day here.
+    if (pvRange === "1Y") return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" }).format(d).replace(" ", " '");
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+  }
   function renderPV() {
     var pairs = (DATA.pv && DATA.pv[pvRange]) || [];
     var host = $('#pv-chart');
@@ -651,13 +713,34 @@
       ? '<rect x="' + pts[ddS][0].toFixed(1) + '" y="14" width="' + (pts[ddE][0]-pts[ddS][0]).toFixed(1) + '" height="' + (H-28) +
         '" fill="var(--down)" opacity=".055"><title>Max drawdown −' + (maxDD*100).toFixed(1) + '%</title></rect>'
       : '';
-    host.innerHTML = '<div class="pv-wrap" style="position:relative;cursor:crosshair">' +
+    var tickY = function (v) { return 14 + (1 - (v - min) / range) * (H - 28); };
+    var ticks = niceTicks(min, min + range, 4).filter(function (t) {
+      var y = tickY(t); return y >= 12 && y <= H - 12;
+    });
+    var tStep = ticks.length > 1 ? ticks[1] - ticks[0] : 0;
+    var yLabels = ticks.map(function (t) {
+      return '<span style="top:' + ((tickY(t) / H) * 100).toFixed(2) + '%">' + axisMoney(t, tStep) + '</span>';
+    }).join('');
+    // Four stops, ends pinned flush so the first and last dates cannot hang off
+    // the plot; the middles are centred on their own points.
+    var nX = Math.min(4, pairs.length);
+    var xLabels = '';
+    for (var xi = 0; xi < nX; xi++) {
+      var idx = nX === 1 ? 0 : Math.round(xi * (pairs.length - 1) / (nX - 1));
+      var place = xi === 0 ? 'left:0'
+        : xi === nX - 1 ? 'right:0'
+        : 'left:' + ((pts[idx][0] / W) * 100).toFixed(2) + '%;transform:translateX(-50%)';
+      xLabels += '<span style="' + place + '">' + pvAxisDate(pairs[idx][0]) + '</span>';
+    }
+    host.innerHTML = '<div class="pv-wrap">' +
+      '<div class="pv-y">' + yLabels + '</div>' +
+      '<div class="pv-plot">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" ' +
       'aria-label="Portfolio value, ' + pvRange + ' range, ' + F.pct(chg) +
         (bad.count ? ', ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted' : '') + '">' +
       '<defs><linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".20"/>' +
       '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
-      [0.25,0.5,0.75].map(function (g) { var y = 14 + g*(H-28); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
+      ticks.map(function (t) { var y = tickY(t).toFixed(1); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
       ddRect +
       '<path d="' + area + '" fill="url(#pvg)"/><path class="pv-line" d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linejoin="round"/>' +
       '<line id="pv-cross" x1="0" x2="0" y1="0" y2="' + H + '" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/>' +
@@ -672,9 +755,10 @@
       (maxDD >= 0.005 ? '<span style="color:var(--muted);font-weight:500">  ·  max DD −' + (maxDD*100).toFixed(1) + '%</span>' : '') + '</div>' +
       // Say it on the chart rather than only in the markup: a gap the operator
       // can see but not explain is its own kind of untrustworthy number.
-      (bad.count ? '<div style="position:absolute;bottom:4px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">' +
+      (bad.count ? '<div style="position:absolute;bottom:26px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">' +
         CLOCK_SVG + ' ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted · see Data Health</div>' : '') +
-      '</div>';
+      '<div class="pv-x">' + xLabels + '</div>' +
+      '</div></div>';
     // draw-in: reveal the line along its own length on (re)render
     var lineEl = host.querySelector('.pv-line');
     if (lineEl && !REDUCED && lineEl.getTotalLength) {
@@ -688,10 +772,13 @@
         setTimeout(function () { lineEl.style.strokeDasharray = 'none'; }, 750);
       } catch (e) {}
     }
-    var wrap = host.querySelector('.pv-wrap');
+    // The wrapper now includes a y-axis gutter and an x-axis strip, so it is no
+    // longer the plot. Measure the svg itself or every reading is offset.
+    var plot = host.querySelector('.pv-plot');
+    var svgEl = plot.querySelector('svg');
     var cross = host.querySelector('#pv-cross'), cursor = host.querySelector('#pv-cursor'), tip = host.querySelector('#pv-tip');
     function move(ev) {
-      var rect = wrap.getBoundingClientRect();
+      var rect = svgEl.getBoundingClientRect();
       var fx = (ev.clientX - rect.left) / rect.width;
       var i = Math.max(0, Math.min(data.length - 1, Math.round(fx * (data.length - 1))));
       var sx = pts[i][0], sy = pts[i][1];
@@ -703,8 +790,8 @@
         '<div style="color:var(--muted);font-size:var(--fs-micro)">' + pvTipDate(pairs[i][0]) + '</div>';
     }
     function leave() { cross.setAttribute('opacity', '0'); cursor.setAttribute('opacity', '0'); tip.style.opacity = '0'; }
-    wrap.addEventListener('mousemove', move);
-    wrap.addEventListener('mouseleave', leave);
+    plot.addEventListener('mousemove', move);
+    plot.addEventListener('mouseleave', leave);
   }
   $all('#pv-chips [data-range]').forEach(function (b) { b.addEventListener('click', function () {
     pvRange = b.dataset.range; $all('#pv-chips .chip').forEach(function (c) { c.classList.toggle('is-active', c === b); }); renderPV(); }); });
@@ -1030,6 +1117,15 @@
     return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
   }
+  function phAxisDate(ms) {
+    var d = new Date(ms);
+    if (phRange === "1M" || phRange === "3M") {
+      return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+    }
+    // Same trap as the value chart: a bare "Sep 25" reads as a day on the ranges
+    // either side of this one.
+    return new Intl.DateTimeFormat("en-US", { month: "short", year: "2-digit" }).format(d).replace(" ", " '");
+  }
   function renderPriceChart() {
     var sel = $('#ph-symbol'); var host = $('#ph-chart'); if (!sel || !host) return;
     var sym = sel.value;
@@ -1047,12 +1143,30 @@
     var up = ys[ys.length - 1] >= ys[0], color = up ? 'var(--up)' : 'var(--down)';
     var line = data.map(function (p, i) { return (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1); }).join(' ');
     var area = line + ' L' + X(xmax).toFixed(1) + ',' + (H - padB) + ' L' + X(xmin).toFixed(1) + ',' + (H - padB) + ' Z';
+    // Three unlabelled gridlines: a shape with no price against it and no date
+    // under it. On the History view this is the full-size price chart, so it
+    // gets the same tick ladder as the value chart rather than a summary.
+    var phTicks = niceTicks(ymin, ymax, 4).filter(function (t) {
+      var y = Y(t); return y >= padT - 1 && y <= H - padB + 1;
+    });
+    var phStep = phTicks.length > 1 ? phTicks[1] - phTicks[0] : 0;
+    var phYLabels = phTicks.map(function (t) {
+      return '<span style="top:' + ((Y(t) / H) * 100).toFixed(2) + '%">' + axisMoney(t, phStep) + '</span>';
+    }).join('');
+    var phNX = Math.min(4, data.length), phXLabels = '';
+    for (var pxi = 0; pxi < phNX; pxi++) {
+      var pidx = phNX === 1 ? 0 : Math.round(pxi * (data.length - 1) / (phNX - 1));
+      var pplace = pxi === 0 ? 'left:0'
+        : pxi === phNX - 1 ? 'right:0'
+        : 'left:' + ((X(data[pidx][0]) / W) * 100).toFixed(2) + '%;transform:translateX(-50%)';
+      phXLabels += '<span style="' + pplace + '">' + phAxisDate(data[pidx][0]) + '</span>';
+    }
     var phChg = ys[0] ? ((ys[ys.length - 1] - ys[0]) / ys[0]) * 100 : 0;
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:300px" role="img" ' +
       'aria-label="' + esc(sym) + ' price, ' + esc(phRange) + ' range, ' + F.pct(phChg) +
       ', from ' + F.money(ys[0]) + ' to ' + F.money(ys[ys.length - 1]) + '">' +
       '<defs><linearGradient id="phg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".18"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
-      [0.25, 0.5, 0.75].map(function (g) { var y = padT + g * (H - padT - padB); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
+      phTicks.map(function (t) { var y = Y(t).toFixed(1); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
       '<path d="' + area + '" fill="url(#phg)"/><path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linejoin="round"/>';
     if (phSpy && DATA.priceHist && DATA.priceHist.SPY) {
       var sp = DATA.priceHist.SPY.filter(function (p) { return p[0] >= xmin && p[0] <= xmax; });
@@ -1080,14 +1194,19 @@
     var legend = '<div style="font-size:var(--fs-micro);color:var(--muted);margin-top:6px">' +
       '<span class="up">▲ BUY</span> &nbsp; <span class="down">▼ SELL</span>' +
       (phSpy ? ' &nbsp; · &nbsp; <span style="color:var(--warn)">┄ SPY, rebased to ' + esc(sym) + '’s start (same % scale)</span>' : '') + '</div>';
-    host.innerHTML = '<div class="ph-wrap" style="position:relative;cursor:crosshair">' + svg +
+    host.innerHTML = '<div class="ph-wrap">' +
+      '<div class="ph-y">' + phYLabels + '</div>' +
+      '<div class="ph-plot">' + svg +
       '<div id="ph-tip" style="position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-115%);' +
       'background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 9px;' +
-      'box-shadow:var(--shadow-tip);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div></div>' + legend;
-    var wrap = host.querySelector('.ph-wrap');
+      'box-shadow:var(--shadow-tip);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div>' +
+      '<div class="ph-x">' + phXLabels + '</div>' +
+      '</div></div>' + legend;
+    var plot = host.querySelector('.ph-plot');
+    var svgEl = plot.querySelector('svg');
     var cross = host.querySelector('#ph-cross'), cursor = host.querySelector('#ph-cursor'), tip = host.querySelector('#ph-tip');
     function move(ev) {
-      var rect = wrap.getBoundingClientRect();
+      var rect = svgEl.getBoundingClientRect();
       var svgX = ((ev.clientX - rect.left) / rect.width) * W;
       var best = 0, bestD = Infinity;
       for (var i = 0; i < data.length; i++) { var d = Math.abs(X(data[i][0]) - svgX); if (d < bestD) { bestD = d; best = i; } }
@@ -1099,8 +1218,8 @@
         '<div style="color:var(--muted);font-size:var(--fs-micro)">' + phTipDate(data[best][0]) + '</div>';
     }
     function leave() { cross.setAttribute('opacity', '0'); cursor.setAttribute('opacity', '0'); tip.style.opacity = '0'; }
-    wrap.addEventListener('mousemove', move);
-    wrap.addEventListener('mouseleave', leave);
+    plot.addEventListener('mousemove', move);
+    plot.addEventListener('mouseleave', leave);
   }
   function initPriceChart() {
     var sel = $('#ph-symbol'); if (!sel) return;
@@ -1567,7 +1686,18 @@
     });
     svg += '</svg>';
     var chg = (ys[ys.length - 1] - ys[0]) / ys[0] * 100;
-    return svg + '<div class="num" style="font-size:var(--fs-meta);margin-top:4px;color:' + color + '">' + F.pct(chg) + ' over range</div>';
+    // This is the chart carrying the BUY and SELL markers - the picture behind
+    // a cost basis - and it had no scale of any kind: no price against the
+    // triangles, no dates, and a footer that said "over range" without ever
+    // naming the range. At 140px a tick ladder would crowd the line, so the
+    // scale is stated at its bounds instead: the span in dates, the extent in
+    // prices. Both are what a marker is read against.
+    var dFrom = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(xmin));
+    var dTo = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(xmax));
+    return svg +
+      '<div class="dc-x"><span>' + dFrom + '</span><span>' + dTo + '</span></div>' +
+      '<div class="dc-foot"><span class="num" style="color:' + color + '">' + F.pct(chg) + ' over 3 months</span>' +
+      '<span class="dc-hl num">low ' + F.money(ymin) + ' · high ' + F.money(ymax) + '</span></div>';
   }
   function openDrawer(sym) {
     var s = get(sym); if (!s || !drawerEl) return;
@@ -1714,12 +1844,24 @@
     var W = items.length * 26, H = 80;
     var bars = nums.map(function (v, i) {
       var h = Math.abs(v) / max * 56, x = i * 26 + 4, y = v >= 0 ? (62 - h) : 62;
+      var lbl = periodLabel((items[i] || {}).period) + ' · ' +
+        (vals[i] == null ? 'no data' : (vals[i] < 0 ? '−' : '') + F.compact(Math.abs(vals[i])));
       return '<rect x="' + x + '" y="' + y.toFixed(1) + '" width="16" height="' + h.toFixed(1) + '" rx="2" fill="' +
-        (v < 0 ? 'var(--down)' : 'var(--muted)') + '"/>';
+        (v < 0 ? 'var(--down)' : 'var(--muted)') + '"><title>' + esc(lbl) + '</title></rect>';
     }).join('');
-    return '<div style="flex:1;min-width:160px"><div style="font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px">' + title + '</div>' +
-      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px" preserveAspectRatio="none">' +
-      '<line x1="0" x2="' + W + '" y1="62" y2="62" stroke="var(--border)"/>' + bars + '</svg></div>';
+    // Six unlabelled bars state a shape and withhold both of the things needed
+    // to read it: how big the biggest one is, and when any of them happened.
+    // The peak names the top of the scale, the ends name the span, and every
+    // bar carries its own period and value on hover.
+    var first = periodLabel((items[0] || {}).period);
+    var lastP = periodLabel((items[items.length - 1] || {}).period);
+    var span = first === lastP ? first : first + ' – ' + lastP;
+    return '<div style="flex:1;min-width:160px">' +
+      '<div class="bc-hd"><span>' + title + '</span><span class="bc-peak num">peak ' + F.compact(max) + '</span></div>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px" preserveAspectRatio="none" role="img" aria-label="' +
+      esc(title + ', ' + span + ', peak ' + F.compact(max)) + '">' +
+      '<line x1="0" x2="' + W + '" y1="62" y2="62" stroke="var(--border)"/>' + bars + '</svg>' +
+      '<div class="bc-x"><span>' + esc(first) + '</span><span>' + esc(lastP) + '</span></div></div>';
   }
   function renderFundamentals() {
     var sel = $('#fd-symbol'), host = $('#fd-body'); if (!sel || !host) return;

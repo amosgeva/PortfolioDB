@@ -550,6 +550,47 @@ td.flash-down{animation:flashDown 1.2s ease-out}
    Four context cards, not holdings. Collapses to two columns then one; the
    sparkline is decoration and may be absent (a symbol with one snapshot has no
    line to draw), so nothing below it depends on its height. */
+/* ── chart axes ──────────────────────────────────────────────────────────
+   The plot is preserveAspectRatio="none", so it is stretched horizontally to
+   fill its column: any <text> inside the viewBox would be stretched with it.
+   Axis labels are therefore HTML over the plot, the way the tooltip already
+   was. The svg is 240px tall against a 240-unit viewBox, so y maps 1:1 to
+   pixels and a tick can be placed at its own coordinate; x is scaled, so the
+   date stops are placed by percentage instead. */
+.pv-wrap{position:relative}
+.pv-y{position:absolute;left:0;top:0;width:var(--pv-gutter,56px);height:240px;pointer-events:none}
+.pv-y span{position:absolute;right:9px;transform:translateY(-50%);white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+.pv-plot{position:relative;margin-left:var(--pv-gutter,56px);cursor:crosshair}
+.pv-x{position:relative;height:18px;margin-top:4px;pointer-events:none}
+.pv-x span{position:absolute;top:0;white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+/* A quarterly strip is three charts wide in one row, so its axis is the two
+   ends and a stated peak rather than a tick for every bar. */
+.bc-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;font-size:var(--fs-meta);color:var(--muted)}
+.bc-peak{margin-left:auto;color:var(--faint);font-size:var(--fs-micro)}
+.bc-x{display:flex;justify-content:space-between;margin-top:4px;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint)}
+/* The drawer chart is 300px tall against a 280-unit viewBox, so unlike the
+   value chart its y does not map 1:1. Both place labels by percentage, which
+   is correct either way and survives a height change. */
+.ph-wrap{position:relative}
+.ph-y{position:absolute;left:0;top:0;width:var(--pv-gutter,56px);height:300px;pointer-events:none}
+.ph-y span{position:absolute;right:9px;transform:translateY(-50%);white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+.ph-plot{position:relative;margin-left:var(--pv-gutter,56px);cursor:crosshair}
+.ph-x{position:relative;height:18px;margin-top:4px;pointer-events:none}
+.ph-x span{position:absolute;top:0;white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+/* The drawer chart is small enough that a tick ladder would crowd the line, so
+   it states its scale at the bounds: dates under the ends, price extent in the
+   footer beside the change. */
+.dc-x{display:flex;justify-content:space-between;margin-top:3px;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint)}
+.dc-foot{display:flex;align-items:baseline;gap:10px;margin-top:2px;font-size:var(--fs-meta)}
+.dc-hl{margin-left:auto;font-size:var(--fs-micro);color:var(--faint);white-space:nowrap}
+@media (max-width:640px){:root{--pv-gutter:44px}}
+
 .mkt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
 /* A well inside a card, like .stat-mini--well: the parent card already draws
    the boundary, and a second border inside it describes the same edge twice. */
