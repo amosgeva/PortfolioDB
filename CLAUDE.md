@@ -83,7 +83,9 @@ Four tables, all append-only by design:
 - `price_snapshots` — time-series quotes, PK `(symbol, ts)`, written by `snapshot_prices.py`.
 - `cash_snapshots` — manual cash balances (no auto-pull from brokers). Latest row per `account` wins.
 
-There is **no positions table**: open quantity, cost basis, and realized P&L are derived from `lots` on read, never stored. Caching is the one qualifier — `positions.py` memoises its lot frame for 60s (`_FRAME_CACHE_TTL_SECONDS`) and the dashboard caches its payload for 120s — so a read can be that stale, but a cache entry is a memo of the computation, not a recorded position. Don't remove those TTLs: they exist because a backfill mutates history behind the cutoff.
+**Rule:** there is **no positions table**. Open quantity, cost basis, and realized P&L are derived from `lots` on read and never stored, so a new lot changes every derived figure without a backfill step.
+
+**Exception:** a read may be served from a short-lived cache rather than recomputed. `positions.py` memoises its lot frame for 60s (`_FRAME_CACHE_TTL_SECONDS`) and the dashboard caches its payload for 120s (`@st.cache_data(ttl=120)`), so a figure can be stale by up to that long. A cache entry is a memo of the computation, not a recorded position — the derivation is still the only source of truth. Keep both TTLs short and do not remove them: they exist because a backfill mutates history behind the cutoff, and a longer window would serve figures computed from lots that have since changed. If you need a guaranteed-fresh read, clear the cache (`_FRAME_CACHE.clear()` / `build_payload.clear()`) rather than lengthening or deleting the TTL.
 
 ### P&L engines (`app/fifo.py`, `app/avg_cost.py`)
 Two parallel engines with matching `Lot` dataclasses and `run_*` entry points:
