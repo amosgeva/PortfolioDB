@@ -16,6 +16,24 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-09-02
+
+Three unused imports removed. **Nothing you can observe changes** — no figure,
+no stored value, no schema, and no rendered output differs from 1.2.1.
+
+### Fixed
+
+- **Three imports that were never used are gone**: `datetime` from the
+  positions service, and `json` and `fastmcp.prompts.Message` from the prompts
+  module. Dead imports are not a runtime problem, but they are a standing
+  question — a reader has to check whether the name matters before touching the
+  file, and the answer here was no in all three cases.
+
+### Upgrading
+
+No migration, and no reason to hurry. `docker compose pull && docker compose
+up -d` when convenient.
+
 ## [1.2.1] — 2026-09-02
 
 Static-analysis hygiene. **Nothing you can observe changes** — no figure, no
@@ -689,7 +707,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.2
 [1.2.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.1
 [1.2.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.0
 [1.1.6]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.6
