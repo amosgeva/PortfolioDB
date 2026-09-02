@@ -140,7 +140,19 @@ a{color:inherit;text-decoration:none}
    taking 563px of an 1177px bar while the view title got 171 and truncated. The
    title grows first and yields last; the snapshot pill yields first, because
    every word of it is also in its title attribute. */
-.topbar__title{flex:0 0 auto}
+/* This is the growth the comment below describes and the bar did not have.
+   With every child at flex:0 0 auto nothing absorbed the slack, so the row
+   packed left and left 452px of nothing after the last button on a 1767px bar.
+   The title takes the slack, which puts the search and the group after it
+   against the right edge.
+   It grows but does not shrink: flex:1 1 auto made it shrinkable too, and it
+   then paid for the pills exactly as the search used to - 30px wide at 981px,
+   52px at 1100px, truncating where it never had. The snapshot pill absorbs a
+   tight bar instead, which is what it did before and what it is for: every
+   word of it is also in its title attribute. On a phone the rule flips, since
+   there the title has to be able to yield. */
+.topbar__title{flex:1 0 auto}
+.topbar__title h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topbar__title p{font-size:var(--fs-meta);color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* No margin-left:auto here any more. An auto margin swallows all free space
    before flex-grow is ever consulted, so it was pinning the view title to its
@@ -494,12 +506,9 @@ td.flash-down{animation:flashDown 1.2s ease-out}
      until 860px. Ambient context yields before the control and the heading do. */
   .mkt-pill .sep,.mkt-pill .t{display:none}}
 @media (max-width:860px){
-  /* The subtitle went at 1200, so the title is a single short heading here and
-     can safely become the flexible item again - with a floor, so it can never
-     again be the child that pays for all the others. 4.5rem still reads as a
-     word plus an ellipsis rather than as a single clipped letter. */
+  /* Below here it must be able to yield, with a floor so it cannot be crushed
+     to a single clipped letter the way it was at 390px. */
   .topbar__title{flex:1 1 auto;min-width:4.5rem}
-  .topbar__title h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .topbar{gap:10px}}
 /* ── phone: the check-in comes first ─────────────────────────────────────
    The Portfolio view ran to 8,444px at 390x844 - ten full screens - and the
