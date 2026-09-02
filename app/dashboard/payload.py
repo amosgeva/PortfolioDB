@@ -659,6 +659,11 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "news": news,
         "tapeSyms": tape_syms,
         "watchSyms": rail_watch,
+        # The engine every number on the shell was computed with. Labelled in
+        # the UI because Data Health offers a FIFO/Average selector, and two
+        # screens showing a different avg cost with neither saying which is
+        # the failure this names away. Sourced here, next to the call.
+        "engine": "FIFO",
         "kpi": kpi,
         "latestPrices": latest_prices,
         "priceHist": price_hist,
