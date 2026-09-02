@@ -35,6 +35,14 @@
   // AA. Hues are unchanged: each symbol keeps the colour it has always had, a
   // shade deeper. Range tightens from 2.94-6.29 to 4.5-6.29.
   var PALETTE = ['#4f46e5','#07819e','#12873d','#db2777','#cc4d0a','#7c3aed','#0c857a','#dc2626','#2563eb','#9e6c03'];
+  // symLots carries every lot per symbol (payload builds it from the same rows
+  // the P&L engine uses), so a truncated list can state what it is truncating.
+  function lotTotal(sym) { return ((DATA.symLots || {})[sym] || []).length; }
+  function lotTotalAll() {
+    var m = DATA.symLots || {}, n = 0;
+    for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) n += m[k].length;
+    return n;
+  }
   function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return PALETTE[h % PALETTE.length]; }
   // The label colour for an arbitrary fill, measured rather than listed. The
   // treemap used to name two hex values as exceptions and give everything else
@@ -794,7 +802,11 @@
     tbody.innerHTML = rs.length ? rs.map(rowHTML).join('') : '<tr><td colspan="8"><div class="empty">No open positions.</div></td></tr>';
     var cards = $('#holdings-cards');
     if (cards) cards.innerHTML = rs.length ? rs.map(hcardHTML).join('') : '<div class="empty">No open positions.</div>';
-    $('#holdings-sub').textContent = rs.length + ' position' + (rs.length === 1 ? '' : 's') + ' · click a column to sort';
+    // The engine is named on the table it produced: Data Health offers a
+    // FIFO/Average selector, and two screens showing a different avg cost with
+    // neither saying which is the confusion this removes.
+    $('#holdings-sub').textContent = rs.length + ' position' + (rs.length === 1 ? '' : 's') +
+      ' · ' + (DATA.engine || 'FIFO') + ' cost basis · click a column to sort';
     $all('#holdings-tbl thead th').forEach(function (th) { var sorted = th.dataset.key === k; th.classList.toggle('sorted', sorted);
       th.setAttribute('aria-sort', sorted ? (dir < 0 ? 'descending' : 'ascending') : 'none');
       var ar = th.querySelector('.arrow'); if (ar) ar.textContent = sorted ? (dir<0?'▼':'▲') : ''; });
@@ -1231,10 +1243,21 @@
   function renderMovers() {
     // exclude unknown day change (null) — can't rank what we can't measure
     var all = list().filter(function (s) { return s.dayPct != null && (s.dayPct !== 0 || s.hist.length > 1); });
-    var gainers = all.slice().sort(function (a, b) { return b.dayPct - a.dayPct; }).slice(0, 6);
-    var losers = all.slice().sort(function (a, b) { return a.dayPct - b.dayPct; }).slice(0, 6);
-    $('#gainers').innerHTML = gainers.length ? gainers.map(function (s, i) { return moverRow(s, i+1); }).join('') : '<div class="empty">No data.</div>';
-    $('#losers').innerHTML = losers.length ? losers.map(function (s, i) { return moverRow(s, i+1); }).join('') : '<div class="empty">No data.</div>';
+    // Filter by sign before slicing. Without it a short list is padded from the
+    // other direction, so "Top gainers" printed losers directly beneath a breadth
+    // bar saying how many symbols actually advanced.
+    var gainers = all.filter(function (s) { return s.dayPct > 0; }).sort(function (a, b) { return b.dayPct - a.dayPct; }).slice(0, 6);
+    var losers = all.filter(function (s) { return s.dayPct < 0; }).sort(function (a, b) { return a.dayPct - b.dayPct; }).slice(0, 6);
+    function moverList(rows, word) {
+      if (!rows.length) return '<div class="empty">No symbol ' + word + ' today.</div>';
+      var out = rows.map(function (s, i) { return moverRow(s, i + 1); }).join('');
+      // Say when a list is short because the day was, not because it was cut.
+      if (rows.length < 6) out += '<div class="empty" style="padding:12px 6px">Only ' + rows.length +
+        ' symbol' + (rows.length > 1 ? 's' : '') + ' ' + word + ' today.</div>';
+      return out;
+    }
+    $('#gainers').innerHTML = moverList(gainers, 'advanced');
+    $('#losers').innerHTML = moverList(losers, 'declined');
   }
   var heatState = { sector: 'All', query: '' };
   var SECTORS = (function () { var set = {}; list().forEach(function (s) { set[s.sector] = 1; }); return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); }); })();
@@ -1498,7 +1521,9 @@
       var box = function (l, v, cls) { return '<div><div class="l">' + l + '</div><div class="v' + (cls ? ' ' + cls : '') + '">' + v + '</div></div>'; };
       html += '<div class="drawer__stats">' +
         box('Quantity', Math.round(h.qty * 10000) / 10000) +
-        box('Avg cost', F.money(h.avgCost)) +
+        box('Avg cost', F.money(h.avgCost) +
+          ' <span style="font-size:var(--fs-micro);color:var(--muted);font-family:var(--font)">' +
+          esc(DATA.engine || 'FIFO') + '</span>') +
         box('Market value', F.money(mktVal)) +
         box('Cost basis', F.money(cost)) +
         box('Unrealized', (gl >= 0 ? '+' : '−') + F.money(Math.abs(gl)) + ' <span style="font-size:var(--fs-micro)">' + F.pct(glPct) + '</span>', gl >= 0 ? 'up' : 'down') +
@@ -1508,9 +1533,15 @@
     }
     var chart = drawerChartHTML(sym);
     if (chart) html += '<div class="drawer__sect">Price · 3M <span class="n">your trades marked</span></div>' + chart;
-    var lots = (DATA.histLots || []).filter(function (l) { return l.symbol === sym; }).slice(0, 12);
+    var symAll = (DATA.histLots || []).filter(function (l) { return l.symbol === sym; });
+    var lots = symAll.slice(0, 12);
     if (lots.length) {
-      html += '<div class="drawer__sect">Lots <span class="n">' + lots.length + ' most recent</span></div>' +
+      // "7 most recent" printed the number shown, so an operator checking an avg
+      // cost could not tell they were looking at a subset. Name the whole.
+      var total = Math.max(lotTotal(sym), symAll.length);
+      var lotLabel = total > lots.length ? 'showing ' + lots.length + ' of ' + total
+                                         : lots.length + (lots.length === 1 ? ' lot' : ' lots');
+      html += '<div class="drawer__sect">Lots <span class="n">' + lotLabel + '</span></div>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr><th style="text-align:left">Date</th><th>Side</th><th>Qty</th><th>Price</th></tr></thead><tbody>' +
         lots.map(function (l) {
           return '<tr><td class="num" style="text-align:left">' + esc(l.date) + '</td>' +
@@ -1530,7 +1561,11 @@
     }
     drawerBd.innerHTML = html;
     drawerFoot.innerHTML = '<button class="btn btn--ghost" data-drawer-close>Close</button>' +
+      (symAll.length > lots.length
+        ? '<button class="btn btn--ghost" data-drawer-history>All lots →</button>' : '') +
       '<button class="btn" data-drawer-fd>Full fundamentals →</button>';
+    var histBtn = $('[data-drawer-history]');
+    if (histBtn) histBtn.addEventListener('click', function () { closeDrawer(); switchView('history'); });
     $all('[data-drawer-close]').forEach(function (b) { b.addEventListener('click', closeDrawer); });
     var fdBtn = $('[data-drawer-fd]');
     if (fdBtn) fdBtn.addEventListener('click', function () { closeDrawer(); openFundamentalsFor(sym); });
@@ -1723,7 +1758,9 @@
         '<td style="text-align:left;color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis">' + esc(l.notes) + '</td></tr>';
     }
     var html =
-      '<section class="card"><div class="card__hd"><h2>All lots</h2><span class="sub">' + lots.length + ' most recent</span>' +
+      '<section class="card"><div class="card__hd"><h2>All lots</h2><span class="sub">' +
+        (lotTotalAll() > lots.length ? 'showing ' + lots.length + ' of ' + lotTotalAll()
+                                     : 'all ' + lots.length) + '</span>' +
         '<button class="btn btn--ghost" id="lots-csv" style="margin-left:auto">Export CSV</button></div>' +
         '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>ID</th><th>Symbol</th><th style="text-align:left">Account</th>' +
         '<th>Side</th><th>Date</th><th>Qty</th><th>Price</th><th>Fees</th><th style="text-align:left">Notes</th></tr></thead><tbody>' +
