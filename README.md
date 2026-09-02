@@ -402,7 +402,8 @@ Add two keys to `.env` (the MCP server reads them on startup):
 ```env
 PORTFOLIODB_MCP_TOKEN=<long-random-string>   # required — clients send as Bearer
 PORTFOLIODB_MCP_PORT=8765                    # optional, default 8765
-PORTFOLIODB_MCP_HOST=0.0.0.0                 # optional, default 0.0.0.0
+PORTFOLIODB_MCP_HOST=0.0.0.0                 # optional, default 127.0.0.1 —
+                                             # set this only to serve the LAN
 ```
 
 Generate a strong token:

@@ -330,6 +330,13 @@ def rendered_text(markup: str) -> str:
 
 
 def fetch(url: str) -> tuple[str, str]:
+    # URLs reach here from argv, so the scheme is worth checking rather than
+    # assuming: urlopen would otherwise happily serve file:// or ftp:// and this
+    # guard would report on a local document as though it were the live site.
+    # URLError so the caller's existing handler treats it as unreachable — a
+    # scheme we will not fetch is not a drift finding.
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        raise urllib.error.URLError(f"refusing non-HTTP(S) URL: {url!r}")
     # `Accept: text/html` is load-bearing, not politeness. Cloudflare injects
     # edge-side HTML — the Web Analytics RUM beacon among it — only when the
     # request accepts HTML. It keys on this header, not on User-Agent: measured
@@ -358,7 +365,7 @@ def fetch(url: str) -> tuple[str, str]:
     # somewhere else — the same mistake as attributing a result to a state that
     # did not produce it, which is what made today's isolation table so easy to
     # misread after the fix landed.
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # nosec B310
         return response.url, response.read().decode("utf-8", errors="replace")
 
 

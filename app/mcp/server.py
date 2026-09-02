@@ -167,8 +167,17 @@ asgi = mcp_server.http_app(transport="streamable-http")
 
 
 def main() -> None:
-    """python -m app.mcp.server — convenience runner for ad-hoc starts."""
-    host = os.getenv("PORTFOLIODB_MCP_HOST", "0.0.0.0")
+    """python -m app.mcp.server — convenience runner for ad-hoc starts.
+
+    Binds localhost by default. This runner is what someone types to try the
+    server out, and a default that reaches the LAN is the wrong one for a
+    process that answers questions about your ledger — bearer auth sits in
+    front either way, but the blast radius of a misconfigured token should
+    not be the whole network. Set PORTFOLIODB_MCP_HOST=0.0.0.0 to serve other
+    hosts deliberately; the shipped compose file does exactly that, and passes
+    --host to uvicorn itself rather than coming through here.
+    """
+    host = os.getenv("PORTFOLIODB_MCP_HOST", "127.0.0.1")
     port = int(os.getenv("PORTFOLIODB_MCP_PORT", "8765"))
     log.info("Starting PortfolioDB MCP on %s:%s", host, port)
     try:

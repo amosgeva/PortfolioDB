@@ -20,6 +20,7 @@ Anthropic default); the API key is env-only — see docs/llm-providers.md.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import pathlib
 import sys
@@ -471,10 +472,8 @@ def _cmd_snapshot(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     # Windows console defaults to cp1252; force UTF-8 so model output prints cleanly.
     for stream in (sys.stdout, sys.stderr):
-        try:
+        with contextlib.suppress(AttributeError, OSError):
             stream.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, OSError):
-            pass
 
     ap = argparse.ArgumentParser(description="PortfolioDB advisor")
     sub = ap.add_subparsers(dest="cmd", required=True)

@@ -11,6 +11,7 @@ Run via the repo-root launcher (loads .env, serves on 0.0.0.0:8501):
     .\\run_dashboard.ps1
 """
 
+import contextlib
 import json
 import os
 import subprocess
@@ -113,10 +114,8 @@ def get_conn():
                 cur.execute("SELECT 1")
             return conn
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
-            try:
+            with contextlib.suppress(Exception):
                 pool.putconn(conn, close=True)
-            except Exception:
-                pass
             get_pool.clear()
     return get_pool().getconn()
 
@@ -127,10 +126,8 @@ def put_conn(conn):
             conn.rollback()
         get_pool().putconn(conn, close=conn.closed != 0)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             conn.close()
-        except Exception:
-            pass
 
 
 # ═══════════════════════════════════════════════════════════
@@ -311,10 +308,8 @@ view = st.query_params.get("view", "portfolio")
 # clearing it too would force a full FD re-read on every manual refresh.
 if "r" in st.query_params:
     build_payload.clear()
-    try:
+    with contextlib.suppress(Exception):
         del st.query_params["r"]
-    except Exception:
-        pass
 
 if view in ("manage", "advisor", "health"):
     # reuse the cached markets payload to render the rail watchlist consistently

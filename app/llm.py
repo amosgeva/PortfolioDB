@@ -19,6 +19,7 @@ module only owns "given system blocks + messages, produce text".
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from typing import Iterator
@@ -39,13 +40,11 @@ def _load_env_file_once() -> None:
         return
     _env_loaded = True
     env_path = Path(__file__).resolve().parent.parent / ".env"
-    try:
+    with contextlib.suppress(OSError):
         for line in env_path.read_text(encoding="utf-8").splitlines():
             parsed = parse_env_line(line)
             if parsed and not os.getenv(parsed[0]):
                 os.environ[parsed[0]] = parsed[1]
-    except OSError:
-        pass
 
 
 PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "custom")

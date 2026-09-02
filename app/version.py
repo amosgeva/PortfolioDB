@@ -27,6 +27,7 @@ per render, which is one small file next to the work a render already does.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -87,10 +88,8 @@ def git_head_sha(short: int = 7) -> str | None:
         return head[:short] or None
 
     ref = head[4:].strip()
-    try:
+    with contextlib.suppress(OSError):
         return (git_dir / ref).read_text(encoding="utf-8").strip()[:short] or None
-    except OSError:
-        pass
 
     # Ref was packed away by `git gc`; scan packed-refs for it.
     try:

@@ -1,7 +1,7 @@
 psycopg2-binary>=2.9,<3
 pandas>=2.1,<4
 yfinance>=1.5,<2
-python-dotenv>=1.0,<2
+python-dotenv>=1.2.2,<2   # floor is the CVE-2026-28684 fix, not a feature need
 streamlit>=1.60,<2
 python-dateutil>=2.8,<3
 plotly>=5.18,<7

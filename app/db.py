@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -59,7 +60,9 @@ def _load_env_file_if_needed() -> None:
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if not env_path.exists():
         return
-    try:
+    # If .env is unreadable for any reason, fall through and let the downstream
+    # "PORTFOLIODB_PASSWORD is not set" error surface.
+    with contextlib.suppress(Exception):
         for line in env_path.read_text(encoding="utf-8").splitlines():
             parsed = parse_env_line(line)
             if parsed is None:
@@ -67,10 +70,6 @@ def _load_env_file_if_needed() -> None:
             key, val = parsed
             if key.startswith("PORTFOLIODB_") and not os.getenv(key):
                 os.environ[key] = val
-    except Exception:
-        # If .env is unreadable for any reason, fall through and let the
-        # downstream "PORTFOLIODB_PASSWORD is not set" error surface.
-        pass
 
 
 def load_config() -> DbConfig:

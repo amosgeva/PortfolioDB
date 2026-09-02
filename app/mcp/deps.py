@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from contextlib import contextmanager
@@ -109,10 +110,8 @@ def get_conn() -> Iterator[psycopg2.extensions.connection]:
     except (psycopg2.OperationalError, psycopg2.InterfaceError):
         closed_due_to_error = True
         if conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 pool.putconn(conn, close=True)
-            except Exception:
-                pass
             conn = None
         # Rebuild pool on next call.
         close_pool()
@@ -125,10 +124,8 @@ def get_conn() -> Iterator[psycopg2.extensions.connection]:
                 pool.putconn(conn, close=conn.closed != 0)
             except Exception:
                 log.exception("Error returning conn to pool")
-                try:
+                with contextlib.suppress(Exception):
                     conn.close()
-                except Exception:
-                    pass
 
 
 def ping_db() -> bool:
