@@ -97,6 +97,31 @@ def _clean(v):
     return v
 
 
+def _series_gaps(pairs: list, since=None) -> list[dict]:
+    """Stretches of a value series where a collection was owed and missing.
+
+    A closed market is not a gap -- it is the calendar. Hatching every weekend
+    would put ~52 marks on a 1Y chart and teach the reader to ignore the
+    pattern, so the test is how many minutes of the COLLECTOR WINDOW the gap
+    covers, not how long it is.
+
+    `since` is when run tracking began. Earlier history is sparse because the
+    collector was not running yet, not because it missed: on this install that
+    alone was the difference between 86 marks on the 1Y chart and the handful
+    that are actually misses.
+    """
+    out: list[dict] = []
+    for (ms_a, _va), (ms_b, _vb) in zip(pairs, pairs[1:]):
+        a = datetime.fromtimestamp(ms_a / 1000, tz=timezone.utc)
+        b = datetime.fromtimestamp(ms_b / 1000, tz=timezone.utc)
+        if since is not None and b <= since:
+            continue
+        owed = market_window.open_minutes_between(max(a, since) if since else a, b)
+        if owed >= market_window.GAP_MINUTES:
+            out.append({"from": ms_a, "to": ms_b, "openMinutes": owed})
+    return out
+
+
 def _downsample_pairs(pairs: list, cap: int = MAX_SERIES_POINTS) -> list:
     if len(pairs) <= cap:
         return pairs
@@ -393,12 +418,17 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
                 out.append([int(tsa.timestamp() * 1000), round(val, 2)])
         return out
 
-    pv = {
-        "1D": _downsample_pairs(series_since(today_only=True)),
-        "1W": _downsample_pairs(series_since(7)),
-        "1M": _downsample_pairs(series_since(30)),
-        "1Y": _downsample_pairs(series_since(365)),
+    # Gaps are measured on the FULL series and downsampling happens after, or
+    # the thinning applied to a long range would read as an outage: 1Y keeps
+    # every Nth point, and the distance between two kept points says nothing
+    # about whether a collection was missed between them.
+    _pv_full = {
+        "1D": series_since(today_only=True),
+        "1W": series_since(7),
+        "1M": series_since(30),
+        "1Y": series_since(365),
     }
+    pv = {k: _downsample_pairs(v) for k, v in _pv_full.items()}
     # A narrow window is left EMPTY when it has no points, never backfilled from a
     # wider one. Substituting silently made the chart label lie: before the day's
     # first snapshot — every morning, and all weekend, when the gap is ~64h — "1D"
@@ -407,7 +437,13 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     # 1Y is the one exception: it stands in for "everything", so an install whose
     # history predates the window still has a chart to show.
     if len(pv["1Y"]) < 2:
-        pv["1Y"] = _downsample_pairs(series_since(None))
+        _pv_full["1Y"] = series_since(None)
+        pv["1Y"] = _downsample_pairs(_pv_full["1Y"])
+
+    _runs_since = queries.first_snapshot_run_ts(conn)
+    if _runs_since is not None and _runs_since.tzinfo is None:
+        _runs_since = _runs_since.replace(tzinfo=timezone.utc)
+    pv_gaps = {k: _series_gaps(v, _runs_since) for k, v in _pv_full.items()}
 
     # --- ticker tape + rail watchlist symbols --------------------------
     held_syms = [h["sym"] for h in sorted(
@@ -676,6 +712,7 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "holdings": holdings,
         "cash": round(cash, 2),
         "pv": pv,
+        "pvGaps": pv_gaps,
         "returns": returns_strip,
         "stats": stats_block,
         "alloc": alloc,
