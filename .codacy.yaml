@@ -12,5 +12,5 @@ exclude_paths:
   - "supabase/**"
   - "test-reports/**"
   - "test-results/**"
-  - "tests/**"
+  - "**/tests/**"
 
