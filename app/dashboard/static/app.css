@@ -98,8 +98,20 @@ a{color:inherit;text-decoration:none}
 .main{display:flex;flex-direction:column;min-width:0}
 .topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:18px;padding:14px 28px;background:var(--topbar-bg);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
 .topbar__title h1{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em}
-.topbar__title p{font-size:var(--fs-meta);color:var(--muted);margin-top:1px}
-.search{position:relative;margin-left:auto;width:268px;max-width:34vw}
+/* One line by design. Left to wrap it took two lines even at 1440px, making the
+   topbar 94px of chrome before any data — the same defect the phone had, just
+   less obvious.
+   The flex order below is a priority statement: the two ambient pills were
+   taking 563px of an 1177px bar while the view title got 171 and truncated. The
+   title grows first and yields last; the snapshot pill yields first, because
+   every word of it is also in its title attribute. */
+.topbar__title{flex:0 0 auto}
+.topbar__title p{font-size:var(--fs-meta);color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* No margin-left:auto here any more. An auto margin swallows all free space
+   before flex-grow is ever consulted, so it was pinning the view title to its
+   minimum while the pills kept their full width. The title grows into the gap
+   instead and pushes this group right, which looks identical and ranks right. */
+.search{position:relative;width:268px;max-width:34vw;flex:0 1 auto;min-width:0}
 .search input{width:100%;font-family:var(--font);font-size:var(--fs-sm);padding:9px 12px 9px 34px;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);color:var(--fg);outline:none;transition:border-color .14s,box-shadow .14s}
 .search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--faint)}
@@ -109,12 +121,17 @@ a{color:inherit;text-decoration:none}
 .mkt-pill .dot.closed::after{display:none}
 @keyframes pulse{0%{transform:scale(.6);opacity:.5}70%{transform:scale(1.8);opacity:0}100%{opacity:0}}
 .mkt-pill .t{font-family:var(--mono);color:var(--muted);font-weight:500}
-.snap-pill{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-family:var(--mono);color:var(--muted);white-space:nowrap}
+.snap-pill{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-family:var(--mono);color:var(--muted);white-space:nowrap;flex:0 1 auto;min-width:0}
+.snap-pill [data-snap-text]{overflow:hidden;text-overflow:ellipsis}
+.mkt-pill{flex:0 0 auto}
 .snap-pill svg{width:13px;height:13px;opacity:.75}
 .snap-pill.warn{color:var(--warn)}.snap-pill.error{color:var(--down)}
 .snap-pill.none{display:none}
 @media (max-width:860px){.snap-pill{display:none}}
-.iconbtn{width:38px;height:38px;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);display:grid;place-items:center;cursor:pointer;color:var(--fg-soft);transition:background .14s,border-color .14s,color .14s}
+/* flex:0 0 auto matters: these live in the topbar's flex row, which was
+   shrinking them below their declared width — a 44px touch target is only 44px
+   if the layout is not allowed to compress it. */
+.iconbtn{width:38px;height:38px;flex:0 0 auto;border-radius:9px;border:1px solid var(--border-2);background:var(--surface);display:grid;place-items:center;cursor:pointer;color:var(--fg-soft);transition:background .14s,border-color .14s,color .14s}
 .iconbtn:hover{background:var(--surface-2);color:var(--accent);border-color:var(--accent)}
 .iconbtn svg{width:17px;height:17px}.iconbtn.is-on{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .tape{display:flex;gap:0;overflow:hidden;white-space:nowrap;border-bottom:1px solid var(--border);background:var(--surface);-webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
@@ -328,15 +345,76 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .stat-row{display:flex;gap:10px;margin-bottom:16px}
 .stat-mini{flex:1;padding:13px 15px}
 .stat-mini .v{font-family:var(--mono);font-size:var(--fs-num);font-weight:600}.stat-mini .l{font-size:var(--fs-micro);color:var(--muted);margin-top:2px}
-@media (max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}}
+/* Base state for the width-conditional controls. These sit ABOVE the media
+   queries that reveal them: at equal specificity the last rule wins, so a
+   `display:none` written afterwards silently defeats the query. */
+.menu-btn,.search-btn,.rail__close,.hcards-sort{display:none}
+/* Sorting is a control on the desktop table (its column headers) and had no
+   equivalent once the table became cards — the list was sorted but the operator
+   could not say by what. */
+.hcards-sort{align-items:center;gap:8px;padding:12px 14px 4px}
+.hcards-sort label{font-size:var(--fs-micro);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.hcards-sort select{flex:1;min-width:0;cursor:pointer}
+.hcards-sort [data-hc-dir]{font-family:var(--mono);min-width:38px}
+.rail__close{margin-left:auto;border-color:oklch(34% 0.03 264);background:transparent;color:var(--rail-muted)}
+/* Same hover treatment as a nav row, using the rail's existing values rather
+   than a new one — the close button is part of that vocabulary, not its own. */
+.rail__close:hover{background:oklch(33% 0.04 264);color:var(--rail-fg)}
+
+@media (max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}
+  /* Grid items keep min-width:auto, so a card refuses to shrink below its own
+     content and pushes the page wider than the viewport. .main already carries
+     this; the items it contains did not, which is the whole 320px overflow. */
+  .row2>.card{min-width:0}}
 @media (max-width:980px){:root{--rail-w:0px}.app{grid-template-columns:1fr}
   .rail{position:fixed;left:0;top:0;z-index:60;width:264px;transform:translateX(-100%);transition:transform .22s ease}
   .rail.open{transform:translateX(0);box-shadow:var(--shadow-lg)}
   .scrim{position:fixed;inset:0;background:rgba(16,24,40,.4);z-index:55;opacity:0;pointer-events:none;transition:opacity .2s}
-  .scrim.show{opacity:1;pointer-events:auto}.menu-btn{display:grid !important}.search{display:none}.alerts-grid{grid-template-columns:1fr}}
+  .scrim.show{opacity:1;pointer-events:auto}.menu-btn{display:grid !important}.search{display:none}.alerts-grid{grid-template-columns:1fr}
+  /* The search field is gone below this width and Ctrl+K needs a keyboard, so
+     without this button the palette — the only way to jump to one symbol — does
+     not exist on a phone. Looking up a number is the phone's whole job. */
+  .search-btn,.rail__close{display:grid}}
 @media (min-width:981px){.menu-btn{display:none}}
-@media (max-width:640px){.kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi__val{font-size:var(--fs-num)}.kpi--hero .kpi__val{font-size:var(--fs-hero-sm)}.content{padding:18px 16px 48px}.topbar{padding:12px 16px}.heat{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}}
-.menu-btn{display:none}
+@media (max-width:860px){
+  /* The topbar was a quarter of a 390px viewport before any data: a subtitle
+     that wrapped to three lines and a clock that wrapped to four. The h1 already
+     names the view, and the full time stays in the pill's title. */
+  .topbar__title p{display:none}
+  /* Below here the subtitle is gone, so the title is a single short heading and
+     can safely become the flexible item again. */
+  .topbar__title{flex:1 1 auto;min-width:0}
+  .topbar__title h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mkt-pill .sep,.mkt-pill .t{display:none}
+  .topbar{gap:10px}}
+@media (max-width:640px){.kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi__val{font-size:var(--fs-num)}.kpi--hero .kpi__val{font-size:var(--fs-hero-sm)}.content{padding:18px 16px 48px}.topbar{padding:12px 16px}.heat{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
+  .hcards-sort{display:flex}
+  /* Chip groups in a card header must wrap rather than push the card wider. */
+  .card__hd{flex-wrap:wrap}}
+@media (max-width:360px){
+  /* At 320px the bar's six children plus gaps came to 338px, and flex paid for
+     it out of the only child that could shrink — the view title, which reached
+     zero width. Orientation beats ambient context on the smallest screen, so
+     the market pill goes and the h1 gets its room back. Market state stays
+     available on the pill's title at any wider size. */
+  .mkt-pill{display:none}
+  .topbar{gap:8px;padding:12px}}
+
+/* ── touch input ─────────────────────────────────────────────────────────
+   Keyed to the pointer, not the viewport: a touch laptop needs these as much
+   as a phone, and a phone paired with a mouse does not. */
+@media (pointer:coarse){
+  .iconbtn{width:44px;height:44px}
+  .nav a{min-height:44px}
+  .wl__row{min-height:44px}
+  .chip{min-height:36px;padding:8px 14px}
+  .tbl tbody td{padding-top:14px;padding-bottom:14px}
+  .markread{padding:8px 10px}
+  .tabbar button{padding:8px 2px}
+  /* iOS Safari force-zooms the page when a focused input is under 16px, which
+     throws the layout out and requires a manual pinch back. */
+  .field input,.field select,.search input,.cmdk__in input,select.chip,#mv-search{font-size:var(--fs-lg)}
+}
 
 /* ── Statistics view ─────────────────────────────────────────────────────
    Records, the monthly grid and the consistency/streak panels. Numerics use

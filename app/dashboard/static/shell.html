@@ -15,6 +15,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
     <div class="rail__brand">
       <span class="rail__logo">__SVG_LOGO__</span>
       <span><div class="rail__name">Portfolio<b>DB</b></div><div class="rail__tag">Live markets</div></span>
+      <button class="iconbtn rail__close" data-rail-close aria-label="Close navigation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
     <div class="rail__sect">
       <div class="rail__label">Workspace</div>
@@ -54,7 +55,8 @@ try{var _t=localStorage.getItem('pdb_theme')||
       <div class="topbar__title"><h1 data-title>Portfolio</h1><p data-subtitle>Real-time overview of your holdings</p></div>
       <label class="search"><span>__SVG_SEARCH__</span><input type="search" id="global-search" name="global-search" data-global-search placeholder="Jump to anything…  Ctrl+K" readonly aria-label="Open command palette"/></label>
       <span class="snap-pill" data-snap title="Last price snapshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span data-snap-text>—</span></span>
-      <span class="mkt-pill"><span class="dot"></span><span class="lbl">Live</span> · <span class="t" data-clock>—</span></span>
+      <span class="mkt-pill" data-mkt-pill><span class="dot"></span><span class="lbl">Live</span><span class="sep"> · </span><span class="t" data-clock>—</span></span>
+      <button class="iconbtn search-btn" data-open-search title="Search symbols, views and actions" aria-label="Search symbols, views and actions">__SVG_SEARCH__</button>
       <button class="iconbtn" data-theme-toggle title="Toggle light / dark" aria-label="Toggle color theme"></button>
       <button class="iconbtn is-on" data-refresh title="Refresh data">__SVG_REFRESH__</button>
     </header>
@@ -159,6 +161,18 @@ try{var _t=localStorage.getItem('pdb_theme')||
             <th data-key="gl" scope="col" tabindex="0">Total G / L <span class="arrow"></span></th>
             <th scope="col">Trend</th>
           </tr></thead><tbody id="holdings"></tbody></table></div>
+          <div class="hcards-sort"><label for="hc-sort">Sort by</label>
+            <select id="hc-sort" class="chip">
+              <option value="mktVal">Market value</option>
+              <option value="sym">Symbol</option>
+              <option value="price">Price</option>
+              <option value="dayPct">Day change</option>
+              <option value="qty">Quantity</option>
+              <option value="avgCost">Avg cost</option>
+              <option value="gl">Total G / L</option>
+            </select>
+            <button class="chip" data-hc-dir aria-label="Toggle sort direction">↓</button>
+          </div>
           <div class="hcards" id="holdings-cards"></div>
         </section>
 
