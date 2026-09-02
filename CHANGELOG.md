@@ -16,6 +16,157 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-02
+
+A release about the dashboard, and about one idea: a number you cannot trace is
+a number you cannot use. Nothing here changes how a figure is computed or how
+anything is stored — see **Upgrading**. What changes is how much of its own
+working the dashboard is willing to show you, and whether it can be operated at
+all without a mouse.
+
+### Added
+
+- **Every figure at the top of the Portfolio view opens the arithmetic behind
+  it.** `Unrealized P&L +$841.94` was a claim with no route to its basis. Click
+  or press Enter on any of the nine tiles and you get the definition in a
+  sentence, the terms as an equation, and the rows they were summed from,
+  ranked by contribution, with a button through to the fuller view.
+  - Where the printed terms do not reconcile with the printed total, the panel
+    says so rather than hiding it. The server rounds each term to the cent and
+    the total from unrounded inputs, so a column can miss its own sum by a
+    penny; on a panel whose entire purpose is showing the arithmetic, a sum that
+    does not add up is worse than no sum, and quietly recomputing the total from
+    the rounded terms would be worse still.
+  - **Buying power** is the one figure derived from nothing — it is what you
+    typed. Its panel names the account and the date you last entered it, and
+    says plainly that nothing here contacts a broker.
+
+- **The charts state what they are read against.** Four of them plotted a shape
+  with no scale. The value chart and the price chart now carry value ticks and
+  dates; the quarterly bars name their peak and the period they span, with each
+  bar's own figure on hover. The drawer's chart — the one carrying your BUY and
+  SELL markers — states its price extent and its date span, because a marker
+  plotted against a scale you were never shown is decoration.
+  - Ticks fall on the 1/2/5 ladder, which is why they can be labelled at all.
+    The old gridlines sat at fixed fractions of the data range and landed on
+    values like `8,912.47`.
+
+- **A collection that was owed and did not happen is marked on the charts.** A
+  straight line from Friday to Monday reads as a value moving smoothly through a
+  weekend when in fact nothing was measured. Hatching every gap would be worse —
+  a year would carry some fifty stripes for weekends alone — so the test is not
+  how long a gap is but how much of the **collector window** it covers. Friday
+  close to Monday open is 64 hours of wall clock and zero window minutes, and
+  stays silent. Two hours missed on a Tuesday morning is 120, and does not.
+  - Only from the first row in `snapshot_runs` onward. Run tracking began after
+    collection did, so earlier history is sparse because nothing was running,
+    not because anything was missed — the distinction between 86 marks on a
+    year and the three that are real.
+  - `market_window.open_minutes_between()` is the new arithmetic, next to the
+    window definition the collector and the Settings page already share.
+
+### Changed
+
+- **The Portfolio view on a phone is ordered around the question you open it
+  to ask.** It ran to 8,444px at 390×844 — ten full screens — with the list of
+  what you own starting five screens down, behind a market strip, a returns
+  strip and two charts. It is 3,792px now, the holdings begin at 1,466px, and
+  the eight cards that are reference rather than answer keep their heading and
+  open on request. Desktop is untouched; there is room for all of it at once
+  there, which is the only reason the two differ.
+
+- **Chart and category colour is now derived rather than chosen.** Every step of
+  the palette is solved in OKLCH against **both** themes at once. The hand-picked
+  hexes it replaces were only ever checked in one: six of nine fell below 3:1 on
+  white and the Cash slice measured **1.48:1**, which is a slice you could not
+  see in the default theme.
+  - No category may borrow a hue that already means something. Every step stays
+    clear of the gain, loss and interaction hues, so a sector can no longer
+    render in loss-red.
+  - The ramp is stored interleaved rather than sorted by hue, because slices
+    consume it in order: sorted, the sector donut came out as one continuous
+    sweep — a sequential scale pretending to be a set of names.
+
+- **A news item's age reads in units a person holds in their head.** Hours ran
+  to 48 with a decimal, so a two-day-old headline said `35.2h ago`. Past a day
+  it is the day count.
+
+- **Card headings are a size larger than the prose beneath them.** All twenty
+  were 14px — the same size as body text, separated only by weight.
+
+- **The topbar's right-hand group sits against the right edge.** Nothing in that
+  row absorbed slack, so on a wide screen it packed left and left 452px of
+  nothing after the last button.
+
+### Fixed
+
+- **The dashboard could not be operated from a keyboard.** Fifty-eight elements
+  opened detail on click with no way to reach or trigger them otherwise, both
+  overlays declared `aria-modal` without trapping focus, and one control moved
+  focus out from under you on arrival.
+
+- **Four ways the interface said something the data did not support.**
+  - A partial collection was left in the value chart's domain, which both
+    flattened the curve and **invented a maximum drawdown of about 49% that
+    never happened**. Points the arithmetic cannot support are now excluded from
+    the domain, the stroke and the drawdown scan alike, and the chart says how
+    many it dropped.
+  - Outside regular hours the price feed returns `0.0` rather than nothing, and
+    that zero was printed as a bid and an ask of `$0.00`.
+  - Rows whose price had gone stale were styled exactly like fresh ones.
+  - A partial period was meant to be hatched and was not: the `background`
+    shorthand later in the rule was overwriting the hatch.
+
+- **"Top gainers" listed losers**, and "Top losers" listed gainers, whenever
+  fewer than six symbols had moved that way — the list was taking the first six
+  after sorting without checking the sign. It filters by sign now and says so
+  when the list is short.
+
+- **Lot counts implied a window that did not exist.** Headings read "7 most
+  recent" and "97 most recent" where nothing had been truncated at all. They
+  name the true count, and say `showing 12 of 23` only when a symbol genuinely
+  exceeds the cap.
+
+- **Which engine produced a cost basis is now stated where it is shown** —
+  `FIFO` beside the figure — rather than left to be inferred. Both engines
+  remain available and neither changed.
+
+- **Contrast and layout failures across both themes and every supported width.**
+  Text tones below 4.5:1, a dark-theme button at 3.74:1, initials measured
+  against one stop of a gradient rather than across the blend, the heat map's
+  unreadable band around zero, horizontal overflow at 320px on four views, and
+  touch targets under 44px. The type scale went from nineteen sizes to nine and
+  the corner scale from thirteen radii to seven.
+
+- **Smaller things that read as faults.** A ticker whose name is its ticker
+  stacked the same four letters twice (`VOOVOO`). "Mark all read" was live
+  against nothing unread. The heat legend read `−3%+` at both ends. Stat tiles
+  inside a card were themselves cards, drawing two borders around one boundary.
+  The search field's `Ctrl K` hint lived inside the placeholder string and
+  truncated mid-word to `Jump to anything… Ctr`.
+
+- **The Data Health page failed by rendering an empty report.** A page whose
+  whole subject is whether the data can be trusted was answering "nothing wrong
+  here" when what had happened was that it could not look. It now says the
+  report could not be built, that nothing has been checked, and offers a retry.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+**No figure changes.** No schema, no stored value, and no computation was
+touched: the payload gained keys, none were removed or redefined, and the one
+expression that was restructured — the change since the last snapshot — is the
+same sum written as a difference of two totals over the same symbols, so that it
+can show its own terms. Two displayed numbers do change, and both were wrong
+before: a maximum drawdown that a partial snapshot had fabricated, and bid/ask
+values of `$0.00` that were a feed placeholder rather than a price.
+
+This is a **minor** bump under semver — it adds behaviour and takes nothing
+away. The compose default floats the major line (`:1`), so `docker compose pull`
+crosses this boundary on its own, which is exactly why the paragraph above says
+what it says.
+
 ## [1.1.6] — 2026-09-01
 
 ### Added
@@ -504,7 +655,11 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.0
+[1.1.6]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.6
+[1.1.5]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.5
+[1.1.4]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.4
 [1.1.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.3
 [1.1.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.2
 [1.1.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.1.1
