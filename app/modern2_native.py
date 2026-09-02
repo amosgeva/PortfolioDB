@@ -78,7 +78,9 @@ NATIVE_CSS = """
   --border:oklch(91% 0.008 260);--border-2:oklch(86% 0.01 260);
   --rail:oklch(26% 0.035 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
   --accent:oklch(55% 0.19 264);--accent-soft:oklch(95% 0.04 264);
-  --up:oklch(51% 0.16 152);--down:oklch(56% 0.20 26);--warn:oklch(54% 0.15 75);
+  --up:oklch(51% 0.16 152);--up-soft:oklch(95% 0.05 152);
+  --down:oklch(55% 0.20 26);--down-soft:oklch(95.5% 0.04 26);
+  --warn:oklch(53.5% 0.15 75);--warn-soft:oklch(95% 0.05 75);
   --r:11px;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
   --font:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;--rail-w:248px;
@@ -91,7 +93,9 @@ html[data-theme="dark"]{
   --border:oklch(29% 0.015 260);--border-2:oklch(35% 0.018 260);
   --rail:oklch(18.5% 0.028 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
   --accent:oklch(62% 0.18 264);--accent-soft:oklch(29% 0.06 264);
-  --up:oklch(70% 0.14 152);--down:oklch(68% 0.18 26);--warn:oklch(76% 0.13 75);
+  --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);
+  --down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);
+  --warn:oklch(76% 0.13 75);--warn-soft:oklch(30% 0.06 80);
   --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);
   color-scheme:dark;
 }
@@ -167,9 +171,8 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
   padding:2px 8px;border-radius:7px;font-family:var(--mono);white-space:nowrap}
 .m2-tag--complete{background:var(--up-soft);color:var(--up)}
 .m2-tag--inconsistent{background:var(--down-soft);color:var(--down)}
-.m2-tag--partial,.m2-tag--stale{background:oklch(95% 0.05 75);color:var(--warn)}
+.m2-tag--partial,.m2-tag--stale{background:var(--warn-soft);color:var(--warn)}
 .m2-tag--unavailable{background:var(--surface-3);color:var(--muted)}
-html[data-theme="dark"] .m2-tag--partial,html[data-theme="dark"] .m2-tag--stale{background:oklch(30% 0.06 80 / .6)}
 
 /* topbar */
 .m2-topbar{padding:18px 0 14px;border-bottom:1px solid var(--border);margin-bottom:22px}
