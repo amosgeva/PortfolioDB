@@ -31,7 +31,10 @@
   }
   var F = { money: money, compact: compact, pct: pct };
 
-  var PALETTE = ['#4f46e5','#0891b2','#16a34a','#db2777','#ea580c','#7c3aed','#0d9488','#dc2626','#2563eb','#ca8a04'];
+  // Five steps darkened so the white ticker lettering on .sym-badge clears WCAG
+  // AA. Hues are unchanged: each symbol keeps the colour it has always had, a
+  // shade deeper. Range tightens from 2.94-6.29 to 4.5-6.29.
+  var PALETTE = ['#4f46e5','#07819e','#12873d','#db2777','#cc4d0a','#7c3aed','#0c857a','#dc2626','#2563eb','#9e6c03'];
   function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return PALETTE[h % PALETTE.length]; }
   // Ticker logo over the letter badge. Prefer the self-hosted data URI from
   // the payload (DATA.logos, populated by fetch_ticker_logos.py — no
@@ -685,8 +688,8 @@
     $('#alloc').innerHTML = '<div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">' +
       '<div style="position:relative;flex:0 0 auto"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="Allocation donut, total ' + F.compact(total) + '">' + ring + '</svg>' +
       '<div style="position:absolute;inset:0;display:grid;place-items:center;text-align:center"><div>' +
-      '<div class="num" style="font-size:18px;font-weight:600">' + F.compact(total) + '</div>' +
-      '<div style="font-size:10.5px;color:var(--muted);letter-spacing:.04em">TOTAL</div></div></div></div>' +
+      '<div class="num" style="font-size:var(--fs-xl);font-weight:600">' + F.compact(total) + '</div>' +
+      '<div style="font-size:var(--fs-micro);color:var(--muted);letter-spacing:.04em">TOTAL</div></div></div></div>' +
       '<div style="flex:1;min-width:150px">' + legend + '</div></div>';
   }
   // weight-proportional treemap (two greedy strips) — tile area = weight, so
@@ -706,7 +709,7 @@
           'style="flex:' + s.val.toFixed(2) + ' 1 0;min-width:0;background:' + s.color + ';border-radius:6px;color:' + txt + ';' +
           'padding:8px 9px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden">' +
           '<b style="font-size:12px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden">' + esc(s.label) + '</b>' +
-          '<span class="num" style="font-size:11px;opacity:.92">' + p.toFixed(1) + '%</span></div>';
+          '<span class="num" style="font-size:var(--fs-micro)">' + p.toFixed(1) + '%</span></div>';
       });
       html += '</div>';
     });
@@ -733,7 +736,7 @@
       '<td class="num">' + F.money(r.mktVal) + '</td>' +
       '<td class="num" style="color:var(--muted)">' + F.money(r.avgCost) + '</td>' +
       '<td class="num ' + (gUp?'up':'down') + '">' + (gUp?'+':'−') + F.money(Math.abs(r.gl)) +
-        ' <span style="opacity:.7;font-size:11px">' + F.pct(r.glPct) + '</span></td>' +
+        ' <span style="font-size:var(--fs-micro)">' + F.pct(r.glPct) + '</span></td>' +
       '<td class="spark-cell">' + sparkSVG(r.hist, dUp) + '</td></tr>'; }
   function hcardHTML(r) {
     var dTag = r.dayPct == null ? '' : (r.dayPct >= 0 ? 'tag--up' : 'tag--down');
@@ -1431,7 +1434,7 @@
         box('Avg cost', F.money(h.avgCost)) +
         box('Market value', F.money(mktVal)) +
         box('Cost basis', F.money(cost)) +
-        box('Unrealized', (gl >= 0 ? '+' : '−') + F.money(Math.abs(gl)) + ' <span style="font-size:11px;opacity:.75">' + F.pct(glPct) + '</span>', gl >= 0 ? 'up' : 'down') +
+        box('Unrealized', (gl >= 0 ? '+' : '−') + F.money(Math.abs(gl)) + ' <span style="font-size:var(--fs-micro)">' + F.pct(glPct) + '</span>', gl >= 0 ? 'up' : 'down') +
         box('Weight', totalVal > 0 ? (mktVal / totalVal * 100).toFixed(1) + '%' : '—') + '</div>';
     } else {
       html += '<div style="margin-top:12px;font-size:12.5px;color:var(--muted)">Watchlist symbol — no open position.</div>';
@@ -1527,7 +1530,7 @@
   function fpct(x, d) { if (x == null) return '—'; return (Number(x) * 100).toFixed(d == null ? 1 : d) + '%'; }
   function fratio(x, d) { if (x == null) return '—'; return Number(x).toFixed(d == null ? 2 : d); }
   function statBox(label, val) {
-    return '<div><div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
+    return '<div><div style="font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
       esc(label) + '</div><div style="font-size:14px;font-weight:600;margin-top:2px">' + esc(val || '—') + '</div></div>';
   }
   function barChart(items, key, title, color) {
@@ -1558,7 +1561,7 @@
     if (!fd) { host.innerHTML = '<div class="empty">No fundamentals on file for ' + esc(sym) + '.</div>'; return; }
 
     var html = '<section class="card"><div class="card__bd" style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">' +
-      '<div><div style="font-size:18px;font-weight:700">' + esc(fd.name) + '</div>' +
+      '<div><div style="font-size:var(--fs-xl);font-weight:700">' + esc(fd.name) + '</div>' +
       '<div style="font-size:12px;color:var(--muted)">' + esc(sym) + ' · ' + esc(fd.exchange) + '</div></div>' +
       '<div style="flex:1"></div>' + statBox('Sector', fd.sector) + statBox('Industry', fd.industry) +
       statBox('Market cap', fd.metrics && fd.metrics.market_cap != null ? F.compact(fd.metrics.market_cap) : '—') +
@@ -1585,8 +1588,8 @@
         '<div class="card__bd fd-groups">' +
         groups.map(function (g) {
           return '<div class="fd-group"><div class="fd-group__t">' + g[0] + '</div><div class="fd-group__grid">' +
-            g[1].map(function (c) { return '<div><div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
-              c[0] + '</div><div class="num" style="font-size:18px;font-weight:600;margin-top:3px">' + c[1] + '</div></div>'; }).join('') +
+            g[1].map(function (c) { return '<div><div style="font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em">' +
+              c[0] + '</div><div class="num" style="font-size:var(--fs-xl);font-weight:600;margin-top:3px">' + c[1] + '</div></div>'; }).join('') +
             '</div></div>';
         }).join('') + '</div></section>';
     }

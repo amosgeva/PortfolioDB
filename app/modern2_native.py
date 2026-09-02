@@ -73,11 +73,11 @@ NATIVE_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 :root{
   --bg:oklch(98% 0.005 255);--surface:#fff;--surface-2:oklch(97.5% 0.006 255);--surface-3:oklch(95.5% 0.008 255);
-  --fg:oklch(24% 0.022 260);--fg-soft:oklch(38% 0.02 260);--muted:oklch(55% 0.018 260);--faint:oklch(72% 0.012 260);
+  --fg:oklch(24% 0.022 260);--fg-soft:oklch(38% 0.02 260);--muted:oklch(46% 0.018 260);--faint:oklch(53.5% 0.012 260);
   --border:oklch(91% 0.008 260);--border-2:oklch(86% 0.01 260);
   --rail:oklch(26% 0.035 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
   --accent:oklch(55% 0.19 264);--accent-soft:oklch(95% 0.04 264);
-  --up:oklch(58% 0.16 152);--down:oklch(58% 0.20 26);
+  --up:oklch(51% 0.16 152);--down:oklch(56% 0.20 26);--warn:oklch(54% 0.15 75);
   --r:11px;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);
   --font:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;--rail-w:248px;
@@ -86,11 +86,11 @@ NATIVE_CSS = """
 /* follow the dashboard's saved theme (pdb_theme) — same tokens as the iframe */
 html[data-theme="dark"]{
   --bg:oklch(16.5% 0.015 260);--surface:oklch(20.5% 0.018 260);--surface-2:oklch(24% 0.02 260);--surface-3:oklch(28% 0.022 260);
-  --fg:oklch(93% 0.008 260);--fg-soft:oklch(82% 0.012 260);--muted:oklch(66% 0.015 260);--faint:oklch(48% 0.012 260);
+  --fg:oklch(93% 0.008 260);--fg-soft:oklch(82% 0.012 260);--muted:oklch(74% 0.015 260);--faint:oklch(66.5% 0.012 260);
   --border:oklch(29% 0.015 260);--border-2:oklch(35% 0.018 260);
   --rail:oklch(18.5% 0.028 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
   --accent:oklch(62% 0.18 264);--accent-soft:oklch(29% 0.06 264);
-  --up:oklch(70% 0.14 152);--down:oklch(68% 0.18 26);
+  --up:oklch(70% 0.14 152);--down:oklch(68% 0.18 26);--warn:oklch(76% 0.13 75);
   --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);
   color-scheme:dark;
 }
