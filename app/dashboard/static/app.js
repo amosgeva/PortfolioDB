@@ -1223,12 +1223,30 @@
         : 'left:' + ((X(data[pidx][0]) / W) * 100).toFixed(2) + '%;transform:translateX(-50%)';
       phXLabels += '<span style="' + pplace + '">' + phAxisDate(data[pidx][0]) + '</span>';
     }
+    // Unlike the value chart, this x axis IS time, so a collection gap has a
+    // width of its own and is drawn at that width instead of on a junction.
+    // The list is the collector's, not this symbol's - a missed run missed
+    // every symbol - so it is filtered to what this range actually shows.
+    var phGaps = ((DATA.gapsAll || []).filter(function (g) {
+      return g.to > xmin && g.from < xmax;
+    }));
+    var phGapRects = phGaps.map(function (g) {
+      var x0 = X(Math.max(g.from, xmin)), x1 = X(Math.min(g.to, xmax));
+      var w = Math.max(2, x1 - x0);
+      return '<rect x="' + x0.toFixed(1) + '" y="' + padT + '" width="' + w.toFixed(1) +
+        '" height="' + (H - padT - padB) + '" fill="url(#ph-gap)"><title>' +
+        esc(gapLabel(g)) + '</title></rect>';
+    }).join('');
     var phChg = ys[0] ? ((ys[ys.length - 1] - ys[0]) / ys[0]) * 100 : 0;
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:300px" role="img" ' +
       'aria-label="' + esc(sym) + ' price, ' + esc(phRange) + ' range, ' + F.pct(phChg) +
-      ', from ' + F.money(ys[0]) + ' to ' + F.money(ys[ys.length - 1]) + '">' +
-      '<defs><linearGradient id="phg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".18"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
+      ', from ' + F.money(ys[0]) + ' to ' + F.money(ys[ys.length - 1]) +
+      (phGaps.length ? ', ' + phGaps.length + ' collection gap' + (phGaps.length > 1 ? 's' : '') + ' marked' : '') + '">' +
+      '<defs><pattern id="ph-gap" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+      '<line x1="0" y1="0" x2="0" y2="5" stroke="var(--warn)" stroke-width="2.4" opacity=".45"/></pattern>' +
+      '<linearGradient id="phg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".18"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
       phTicks.map(function (t) { var y = Y(t).toFixed(1); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
+      phGapRects +
       '<path d="' + area + '" fill="url(#phg)"/><path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linejoin="round"/>';
     if (phSpy && DATA.priceHist && DATA.priceHist.SPY) {
       var sp = DATA.priceHist.SPY.filter(function (p) { return p[0] >= xmin && p[0] <= xmax; });
@@ -1852,10 +1870,13 @@
   // does not add up is worse than no sum, so the gap is named where it happens
   // rather than hidden by recomputing the total from the rounded terms.
   function evRounding(terms, value) {
-    // Compare what is printed, not what is held: each term is shown to the cent,
-    // so the check has to round them the same way or it misses a column that
-    // visibly does not add up while its underlying floats do.
-    var cents = function (v) { return Math.round(v * 100) / 100; };
+    // Compare what is printed, not what is held. Re-implementing the rounding
+    // is not good enough: money() rounds the exact double through toLocaleString
+    // while Math.round(v * 100) / 100 multiplies first and picks up float error,
+    // so the two disagree on a half-cent and the check passes a column that
+    // visibly does not add up. Reading the number back out of the formatter makes
+    // "what is printed" true by construction rather than by imitation.
+    var cents = function (v) { return Number(String(F.money(v)).replace(/[$,]/g, '')); };
     var sum = 0;
     for (var i = 0; i < terms.length; i++) sum += cents(terms[i]);
     if (!(Math.abs(sum - cents(value)) >= 0.005)) return '';
@@ -1897,6 +1918,7 @@
           return ['<b>' + esc(r.sym) + '</b>', F.money(r.mktVal),
                   ((k.totalValue ? r.mktVal / k.totalValue : 0) * 100).toFixed(1) + '%'];
         }).concat(CASH > 0 ? [['Cash', F.money(CASH), ((k.totalValue ? CASH / k.totalValue : 0) * 100).toFixed(1) + '%']] : [])),
+        tableNote: evRounding(rs.map(function (r) { return r.mktVal; }).concat(CASH > 0 ? [CASH] : []), k.totalValue || 0),
         route: { label: 'See holdings', run: evGoHoldings }
       };
     }
@@ -1913,6 +1935,7 @@
         table: evTable(['Symbol', 'Qty', 'Price', 'Value'], rs.map(function (r) {
           return ['<b>' + esc(r.sym) + '</b>', (Math.round(r.qty * TEN_THOUSAND) / TEN_THOUSAND), F.money(r.price), F.money(r.mktVal)];
         })),
+        tableNote: evRounding(rs.map(function (r) { return r.mktVal; }), t.mktVal),
         route: { label: 'See holdings', run: evGoHoldings }
       };
     }
@@ -1928,6 +1951,7 @@
           return ['<b>' + esc(r.sym) + '</b>', F.money(r.cost), F.money(r.mktVal),
                   '<span class="' + (r.gl >= 0 ? 'up' : 'down') + '">' + signed(r.gl) + '</span>'];
         })),
+        tableNote: evRounding(rs.map(function (r) { return r.gl; }), k.unrealized || 0),
         route: { label: 'See holdings', run: evGoHoldings }
       };
     }
@@ -1951,7 +1975,11 @@
         title: 'Realized P&L', value: signed(k.realized),
         what: 'Profit and loss already booked by selling, matched first-in-first-out against the lots you bought. Fees paid on a sale reduce it.',
         eq: '',
-        table: '',
+        table: evTable(['Symbol', 'Realized'], (k.realizedBySymbol || []).map(function (r) {
+          return ['<b>' + esc(r.sym) + '</b>',
+                  '<span class="' + (r.realized >= 0 ? 'up' : 'down') + '">' + signed(r.realized) + '</span>'];
+        })),
+        tableNote: evRounding((k.realizedBySymbol || []).map(function (r) { return r.realized; }), k.realized || 0),
         note: 'Every match is recomputed from the lots on each read \u2014 there is no stored total to drift.',
         route: { label: 'See every lot', run: function () { evGoView('history'); } }
       };
@@ -1976,6 +2004,7 @@
         table: evTable(['Symbol', 'Qty', 'Avg cost', 'Cost'], rs.slice().sort(function (a, b) { return b.cost - a.cost; }).map(function (r) {
           return ['<b>' + esc(r.sym) + '</b>', (Math.round(r.qty * TEN_THOUSAND) / TEN_THOUSAND), F.money(r.avgCost), F.money(r.cost)];
         })),
+        tableNote: evRounding(rs.map(function (r) { return r.cost; }), k.costBasis || 0),
         note: 'Fees paid so far: ' + F.money(k.totalFees || 0) + ', which is ' + F.pct(k.feeDragPct || 0) + ' of cost.',
         route: { label: 'See holdings', run: evGoHoldings }
       };
@@ -2027,7 +2056,11 @@
       '<button class="iconbtn drawer__close" data-drawer-close aria-label="Close">' + X_ICON + '</button>';
     var html = '<p class="ev-what">' + esc(ev.what) + '</p>' + (ev.eq || '');
     if (ev.note) html += '<p class="ev-note">' + esc(ev.note) + '</p>';
-    if (ev.table) html += '<div class="drawer__sect">Where it comes from</div>' + ev.table;
+    // The rows are a decomposition too, so they get the same reconciliation
+    // note the equation does when their printed values do not sum to the
+    // printed total. A list that does not add up is the same defect as a
+    // column that does not add up.
+    if (ev.table) html += '<div class="drawer__sect">Where it comes from</div>' + ev.table + (ev.tableNote || '');
     // nosemgrep
     drawerBd.innerHTML = html;
     // nosemgrep

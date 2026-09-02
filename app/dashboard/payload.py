@@ -443,7 +443,20 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     _runs_since = queries.first_snapshot_run_ts(conn)
     if _runs_since is not None and _runs_since.tzinfo is None:
         _runs_since = _runs_since.replace(tzinfo=timezone.utc)
-    pv_gaps = {k: _series_gaps(v, _runs_since) for k, v in _pv_full.items()}
+    # Scanned once over the whole history rather than once per range. A range
+    # is a contiguous tail of the same series, so every gap inside it is a gap
+    # of the full series; filtering by its first timestamp gives the identical
+    # answer, and the same list then serves the per-symbol price chart, whose
+    # ranges are its own. A collection gap is a property of the collector, not
+    # of any one symbol or window.
+    # Over the whole history, not the 1Y window: the price chart has an ALL
+    # range, and basing this on a year would have silently reported no gaps
+    # before it while showing the data that has them.
+    gaps_all = _series_gaps(series_since(None), _runs_since)
+    pv_gaps = {
+        k: [g for g in gaps_all if v and g["from"] >= v[0][0]]
+        for k, v in _pv_full.items()
+    }
 
     # --- ticker tape + rail watchlist symbols --------------------------
     held_syms = [h["sym"] for h in sorted(
@@ -491,6 +504,18 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     cost_basis = sum(avgcost_map.get(s, 0.0) * qty_map[s] for s in qty_map)
     unrealized = total_market - cost_basis
     realized = float(fifo["realized_pnl"].sum()) if not fifo.empty else 0.0
+    # Per symbol as well as in total: the Realized P&L panel was the one that
+    # could show no rows behind its number. Symbols that never sold contribute
+    # exactly zero and are left out rather than listed as a row of noughts.
+    realized_by_symbol = (
+        [
+            {"sym": r["symbol"], "realized": round(float(r["realized_pnl"]), 2)}
+            for _i, r in fifo.iterrows()
+            if abs(float(r["realized_pnl"])) >= 0.005
+        ]
+        if not fifo.empty else []
+    )
+    realized_by_symbol.sort(key=lambda d: d["realized"], reverse=True)
     # Day-change roll-ups only over symbols with a known prior close.
     prev_value = sum(
         qty_map[s] * stocks[s]["prev"]
@@ -540,6 +565,7 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "unrealized": round(unrealized, 2),
         "unrealizedPct": round(unrealized / cost_basis * 100, 2) if cost_basis else 0.0,
         "realized": round(realized, 2),
+        "realizedBySymbol": realized_by_symbol,
         "totalReturnPct": round((realized + unrealized) / cost_basis * 100, 2) if cost_basis else 0.0,
         "deltaLast": round(delta_last, 2),
         "deltaLastPrev": round(delta_prev, 2),
@@ -713,6 +739,7 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "cash": round(cash, 2),
         "pv": pv,
         "pvGaps": pv_gaps,
+        "gapsAll": gaps_all,
         "returns": returns_strip,
         "stats": stats_block,
         "alloc": alloc,
