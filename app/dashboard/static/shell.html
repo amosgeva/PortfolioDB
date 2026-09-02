@@ -87,16 +87,16 @@ try{var _t=localStorage.getItem('pdb_theme')||
              it answers "what is the market doing" before "how am I doing against
              it", and it is the only block on this page that says anything when
              your own positions have no prints. -->
-        <section class="card" id="markets-card" hidden>
+        <section class="card" id="markets-card" data-fold hidden>
           <div class="card__hd"><h2>Markets</h2><span class="sub" id="markets-sub"></span></div>
           <div class="card__bd"><div id="markets-strip"></div></div>
         </section>
-        <section class="card" id="returns-card">
+        <section class="card" id="returns-card" data-fold>
           <div class="card__hd"><h2>Returns</h2><span class="sub" id="returns-sub">vs SPY</span></div>
           <div class="card__bd"><div id="returns-strip"></div></div>
         </section>
-        <section class="row2">
-          <div class="card">
+        <section class="row2" id="pv-row">
+          <div class="card" data-fold>
             <div class="card__hd"><h2>Portfolio value</h2><span class="sub">snapshot history</span>
               <span style="margin-left:auto;display:flex;gap:6px" id="pv-chips">
                 <button class="chip is-active" data-range="1D">1D</button>
@@ -107,7 +107,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
             </div>
             <div class="card__bd"><div id="pv-chart"></div></div>
           </div>
-          <div class="card"><div class="card__hd"><h2>Allocation</h2>
+          <div class="card" data-fold><div class="card__hd"><h2>Allocation</h2>
             <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center" id="alloc-chips">
               <button class="chip is-active" data-dim="position">Position</button>
               <button class="chip" data-dim="sector">Sector</button>
@@ -121,7 +121,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
               </span>
             </span></div><div class="card__bd"><div id="alloc"></div></div></div>
         </section>
-        <section class="row2">
+        <section class="row2" id="attr-row">
           <div class="card">
             <div class="card__hd"><h2>P&amp;L attribution</h2><span class="sub">which holdings drive the move</span>
               <span style="margin-left:auto;display:flex;gap:6px" id="attr-chips">
@@ -131,12 +131,12 @@ try{var _t=localStorage.getItem('pdb_theme')||
             </div>
             <div class="card__bd"><div id="attr-chart"></div></div>
           </div>
-          <div class="card">
+          <div class="card" data-fold>
             <div class="card__hd"><h2>Net P&amp;L waterfall</h2><span class="sub">unrealized + realized + dividends − fees</span></div>
             <div class="card__bd"><div id="waterfall"></div></div>
           </div>
         </section>
-        <section class="card" style="margin-bottom:20px">
+        <section class="card" id="risk-card" data-fold style="margin-bottom:20px">
           <div class="card__hd"><h2>Risk &amp; analytics</h2><span class="sub" id="risk-sub">1Y daily closes · SPY benchmark</span></div>
           <div class="card__bd" id="risk-body">
             <div class="stat-row" id="risk-stats" style="flex-wrap:wrap"></div>
@@ -148,7 +148,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
             </div>
           </div>
         </section>
-        <section class="card">
+        <section class="card" id="holdings-card">
           <div class="card__hd"><h2>Holdings</h2><span class="sub" id="holdings-sub">click a column to sort</span>
             <button class="btn btn--ghost" id="pos-csv" style="margin-left:auto">Export CSV</button></div>
           <div class="tbl-wrap holdings-wrap"><table class="tbl" id="holdings-tbl"><thead><tr>
@@ -176,7 +176,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="hcards" id="holdings-cards"></div>
         </section>
 
-        <section class="card" style="margin-top:20px">
+        <section class="card" id="ph-card" data-fold style="margin-top:20px">
           <div class="card__hd"><h2>Price history</h2><span class="sub">per holding · your trades marked</span>
             <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <select id="ph-symbol" class="chip" style="cursor:pointer" aria-label="Symbol for the price-history chart"></select>
@@ -192,7 +192,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="card__bd"><div id="ph-chart"></div></div>
         </section>
 
-        <section class="card" style="margin-top:20px">
+        <section class="card" id="lp-card" data-fold style="margin-top:20px">
           <div class="card__hd"><h2>Latest prices</h2><span class="sub" id="lp-sub"></span></div>
           <div class="tbl-wrap"><table class="tbl"><thead><tr>
             <th>Symbol</th><th>Last</th><th>Bid</th><th>Ask</th><th>Source</th><th>As of</th>

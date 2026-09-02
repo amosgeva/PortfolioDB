@@ -2055,6 +2055,78 @@
     openDrawer(sym);
   });
 
+  // ---- phone disclosure ---------------------------------------------------
+  // On a phone the Portfolio view is reordered by CSS so the check-in comes
+  // first; the cards that are reference rather than answer keep their heading
+  // and open on request. The control is built here rather than written into
+  // the markup so that a desktop visit never carries a button it cannot use,
+  // and so the state resets to closed on every load - a remembered fold is a
+  // page that looks different every time you open it for no reason you can see.
+  var CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+  var foldSeq = 0;
+  function foldTitle(card) {
+    var h = card.querySelector('.card__hd h2');
+    return h ? h.textContent.trim() : 'section';
+  }
+  function setFold(card, open) {
+    card.classList.toggle('is-open', open);
+    var btn = card.querySelector(':scope > .card__hd > .fold-btn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    btn.setAttribute('aria-label', (open ? 'Hide ' : 'Show ') + foldTitle(card));
+  }
+  function wireFolds() {
+    var on = false;
+    try { on = window.matchMedia && matchMedia('(max-width:640px)').matches; } catch (e) {}
+    $all('[data-fold]').forEach(function (card) {
+      var hd = card.querySelector(':scope > .card__hd');
+      if (!hd) return;
+      // The body is whatever is not the heading: one card puts its table
+      // straight into the card with no .card__bd wrapper, and aria-controls
+      // has to name what actually disappears.
+      var bd = null;
+      for (var c = 0; c < card.children.length; c++) {
+        if (!card.children[c].classList.contains('card__hd')) { bd = card.children[c]; break; }
+      }
+      if (!bd) return;
+      var btn = card.querySelector(':scope > .card__hd > .fold-btn');
+      if (!on) {
+        // Desktop shows everything, so the card must not be left folded by a
+        // narrow visit earlier in the same session.
+        card.classList.remove('foldable', 'is-open');
+        if (btn) btn.remove();
+        hd.removeAttribute('role');
+        return;
+      }
+      if (!bd.id) bd.id = 'fold-bd-' + (++foldSeq);
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'fold-btn';
+        btn.setAttribute('aria-controls', bd.id);
+        // CHEVRON is a module constant with nothing interpolated into it; there is
+        // no value here to control. Marked because the sink shape is the same.
+        // nosemgrep
+        btn.innerHTML = CHEVRON;
+        hd.appendChild(btn);
+        // The whole heading is the target, which is a 44px row rather than a
+        // 34px icon - but a chip or a select inside it keeps its own job.
+        hd.addEventListener('click', function (e) {
+          if (e.target.closest('a,button,input,select,label') && !e.target.closest('.fold-btn')) return;
+          setFold(card, !card.classList.contains('is-open'));
+        });
+      }
+      card.classList.add('foldable');
+      setFold(card, card.classList.contains('is-open'));
+    });
+  }
+  wireFolds();
+  try {
+    var foldMq = window.matchMedia && matchMedia('(max-width:640px)');
+    if (foldMq && foldMq.addEventListener) foldMq.addEventListener('change', wireFolds);
+    else if (foldMq && foldMq.addListener) foldMq.addListener(wireFolds);
+  } catch (e) {}
   // ---- fundamentals ----
   function fpct(x, d) { if (x == null) return '—'; return (Number(x) * 100).toFixed(d == null ? 1 : d) + '%'; }
   function fratio(x, d) { if (x == null) return '—'; return Number(x).toFixed(d == null ? 2 : d); }
