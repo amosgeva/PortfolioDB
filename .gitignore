@@ -108,3 +108,9 @@ backups/
 PRODUCT.md
 DESIGN.md
 .impeccable/
+
+# Agent-harness hook stub. Not a GitHub-native path — GitHub does not read
+# .github/hooks/ — and the config is inert here: it guards on a vendored
+# .github/skills/impeccable/ that this repo does not carry. The detector that
+# actually runs is wired through the gitignored .claude/ settings.
+.github/hooks/
