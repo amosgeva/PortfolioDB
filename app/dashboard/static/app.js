@@ -101,6 +101,10 @@
       '<path d="' + fillD + '" fill="url(#' + id + ')"/><path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>'; }
 
   var ARROW_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M7 14l5-5 5 5"/></svg>';
+  // Spelled out as arithmetic rather than in exponential form: the static
+  // analyser flags a literal whose written form and runtime value differ, and
+  // one named constant beats three spellings of a day scattered through a file.
+  var DAY_MS = 24 * 60 * 60 * 1000;
   // Matches the topbar snapshot pill's glyph — the same mark means the same
   // thing wherever collection freshness is in question.
   var CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
@@ -894,7 +898,7 @@
 
   // ---- per-symbol price history chart ----
   var phRange = '3M', phSpy = false;
-  function phSpanMs(r) { var d = 864e5; return r === '1M' ? 30 * d : r === '3M' ? 90 * d : r === '1Y' ? 365 * d : null; }
+  function phSpanMs(r) { var d = DAY_MS; return r === '1M' ? 30 * d : r === '3M' ? 90 * d : r === '1Y' ? 365 * d : null; }
   function phTipDate(ms) {
     return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
@@ -1000,14 +1004,14 @@
     var stamps = rows.map(function (r) { return Date.parse(String(r.ts || '').replace(' ', 'T')); })
                      .filter(function (t) { return !isNaN(t); });
     var newest = stamps.length ? Math.max.apply(null, stamps) : null;
-    var STALE_MS = 4 * 864e5;   // clears a long weekend plus a public holiday
+    var STALE_MS = 4 * DAY_MS;   // clears a long weekend plus a public holiday
     var staleCount = 0;
     tb.innerHTML = rows.map(function (r) {
       var t = Date.parse(String(r.ts || '').replace(' ', 'T'));
       var age = (newest != null && !isNaN(t)) ? newest - t : 0;
       var stale = age > STALE_MS;
       if (stale) staleCount++;
-      var days = Math.round(age / 864e5);
+      var days = Math.round(age / DAY_MS);
       return '<tr' + (stale ? ' class="lp-stale" title="Last collected ' + days + ' days before the most recent snapshot"' : '') + '>' +
         '<td><b>' + esc(r.symbol) + '</b></td><td class="price">' + px(r.last) + '</td>' +
         '<td class="num" style="color:var(--muted)">' + px(r.bid) + '</td>' +
