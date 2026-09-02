@@ -19,20 +19,20 @@ try{var _t=localStorage.getItem('pdb_theme')||
     <div class="rail__sect">
       <div class="rail__label">Workspace</div>
       <nav class="nav">
-        <a data-view="portfolio" class="is-active" tabindex="0" aria-current="page">__SVG_GRID__ Portfolio</a>
-        <a data-view="movers" tabindex="0">__SVG_TREND__ Market Movers</a>
-        <a data-view="stats" tabindex="0">__SVG_STATS__ Statistics</a>
-        <a data-view="alerts" tabindex="0">__SVG_BELL__ Alerts &amp; News <span class="badge">0</span></a>
-        <a data-view="fundamentals" tabindex="0">__SVG_BOOK__ Fundamentals</a>
-        <a data-view="history" tabindex="0">__SVG_CLOCK__ History</a>
+        <a data-view="portfolio" class="is-active" role="link" tabindex="0" aria-current="page">__SVG_GRID__ Portfolio</a>
+        <a data-view="movers" role="link" tabindex="0">__SVG_TREND__ Market Movers</a>
+        <a data-view="stats" role="link" tabindex="0">__SVG_STATS__ Statistics</a>
+        <a data-view="alerts" role="link" tabindex="0">__SVG_BELL__ Alerts &amp; News <span class="badge">0</span></a>
+        <a data-view="fundamentals" role="link" tabindex="0">__SVG_BOOK__ Fundamentals</a>
+        <a data-view="history" role="link" tabindex="0">__SVG_CLOCK__ History</a>
       </nav>
     </div>
     <div class="rail__sect">
       <div class="rail__label">Account</div>
       <nav class="nav">
-        <a data-nav="manage" tabindex="0">__SVG_SLIDERS__ Manage</a>
-        <a data-nav="advisor" tabindex="0">__SVG_SPARK__ Advisor</a>
-        <a data-nav="health" tabindex="0">__SVG_PULSE__ Data Health</a>
+        <a data-nav="manage" role="link" tabindex="0">__SVG_SLIDERS__ Manage</a>
+        <a data-nav="advisor" role="link" tabindex="0">__SVG_SPARK__ Advisor</a>
+        <a data-nav="health" role="link" tabindex="0">__SVG_PULSE__ Data Health</a>
       </nav>
     </div>
     <div class="rail__div"></div>
@@ -52,7 +52,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
     <header class="topbar">
       <button class="iconbtn menu-btn" aria-label="Menu">__SVG_MENU__</button>
       <div class="topbar__title"><h1 data-title>Portfolio</h1><p data-subtitle>Real-time overview of your holdings</p></div>
-      <label class="search"><span>__SVG_SEARCH__</span><input type="search" data-global-search placeholder="Jump to anything…  Ctrl+K" readonly aria-label="Open command palette"/></label>
+      <label class="search"><span>__SVG_SEARCH__</span><input type="search" id="global-search" name="global-search" data-global-search placeholder="Jump to anything…  Ctrl+K" readonly aria-label="Open command palette"/></label>
       <span class="snap-pill" data-snap title="Last price snapshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span data-snap-text>—</span></span>
       <span class="mkt-pill"><span class="dot"></span><span class="lbl">Live</span> · <span class="t" data-clock>—</span></span>
       <button class="iconbtn" data-theme-toggle title="Toggle light / dark" aria-label="Toggle color theme"></button>
@@ -202,7 +202,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
         </section>
         <section class="card">
           <div class="card__hd"><h2>Sector heatmap</h2><span class="sub">tile color = day change</span>
-            <label class="search" style="margin-left:auto;width:220px"><span>__SVG_SEARCH__</span><input type="search" id="mv-search" placeholder="Filter symbols…"/></label></div>
+            <label class="search" style="margin-left:auto;width:220px"><span>__SVG_SEARCH__</span><input type="search" id="mv-search" placeholder="Filter symbols…" aria-label="Filter heatmap symbols"/></label></div>
           <div class="card__bd"><div class="toolbar" id="sector-chips"></div><div class="heat" id="heat"></div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:16px;font-size:11px;color:var(--muted)">
               <span>−3%+</span><span style="flex:0 0 220px;height:8px;border-radius:99px;background:linear-gradient(90deg,oklch(44% .18 26),oklch(72% .015 260),oklch(44% .18 152))"></span><span>+3%+</span>
@@ -311,7 +311,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
 
 <div class="cmdk" data-cmdk>
   <div class="cmdk__panel" role="dialog" aria-modal="true" aria-label="Command palette">
-    <div class="cmdk__in">__SVG_SEARCH__<input data-cmdk-input type="text" aria-label="Jump to a symbol, view, or action" placeholder="Jump to a symbol, view, or action…" autocomplete="off" spellcheck="false"/></div>
+    <div class="cmdk__in">__SVG_SEARCH__<input data-cmdk-input id="cmdk-input" name="cmdk-input" type="text" aria-label="Jump to a symbol, view, or action" placeholder="Jump to a symbol, view, or action…" autocomplete="off" spellcheck="false"/></div>
     <div class="cmdk__list" data-cmdk-list role="listbox"></div>
     <div class="cmdk__hint"><span>↑↓ navigate</span><span>↵ select</span><span>esc close</span></div>
   </div>

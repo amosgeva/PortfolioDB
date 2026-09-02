@@ -17,6 +17,18 @@
   function pct(n) { if (n == null) return 'n/a'; return (n >= 0 ? '+' : '') + Number(n).toFixed(2) + '%'; }
   function chgCls(n) { return n == null ? '' : (n >= 0 ? 'up' : 'down'); }
   function esc(v) { return String(v).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  // Attributes that turn a [data-sym] element into a real control. One delegated
+  // handler opens the drawer, so each trigger has to carry its own role, tab stop
+  // and name — a bare div with a click listener is reachable by mouse only.
+  // Table rows are the exception: a <tr> must keep its row semantics, so those
+  // get a .sym-open button in the first cell instead (see rowHTML).
+  function symTrigger(sym, label) {
+    return 'data-sym="' + sym + '" role="button" tabindex="0" aria-label="' +
+      esc(label || 'Open ' + sym + ' details') + '"';
+  }
+  function symOpenBtn(sym, inner) {
+    return '<button type="button" class="sym-open" aria-label="Open ' + esc(sym) + ' details">' + inner + '</button>';
+  }
   var F = { money: money, compact: compact, pct: pct };
 
   var PALETTE = ['#4f46e5','#0891b2','#16a34a','#db2777','#ea580c','#7c3aed','#0d9488','#dc2626','#2563eb','#ca8a04'];
@@ -34,22 +46,66 @@
       'src="' + logo + '" onerror="this.remove()"/></span>';
   }
 
-  function sparkPath(hist, w, h, pad) { w = w||84; h = h||28; pad = pad||2;
-    var min = Math.min.apply(null, hist), max = Math.max.apply(null, hist), range = (max-min)||1;
-    return hist.map(function (v, i) { var x = pad + (i/(hist.length-1))*(w-pad*2); var y = pad + (1-(v-min)/range)*(h-pad*2);
-      return (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1); }).join(' '); }
+  // A snapshot the arithmetic cannot support: an isolated point that both of its
+  // neighbours tower over. A portfolio does not halve and recover inside one
+  // session — that shape is a partial collection, where some symbols returned no
+  // price. Drawn faithfully it costs the chart its entire vertical resolution and
+  // tells the operator their money briefly vanished. Measured against the
+  // neighbours rather than an average, so a real sustained fall never trips it.
+  var SUSPECT_RATIO = 1.6;
+  function suspectIdx(vals) {
+    var bad = {}, n = 0;
+    for (var i = 1; i < vals.length - 1; i++) {
+      var v = vals[i];
+      if (v > 0 && vals[i-1] > v * SUSPECT_RATIO && vals[i+1] > v * SUSPECT_RATIO) { bad[i] = 1; n++; }
+    }
+    bad.count = n;
+    return bad;
+  }
+  // Extent over the points we believe. Excluding a suspect point from the domain
+  // is what restores the rest of the series to a readable scale.
+  function cleanExtent(vals, bad) {
+    var lo = Infinity, hi = -Infinity;
+    vals.forEach(function (v, i) { if (bad[i]) return; if (v < lo) lo = v; if (v > hi) hi = v; });
+    if (lo === Infinity) { lo = Math.min.apply(null, vals); hi = Math.max.apply(null, vals); }
+    return { min: lo, max: hi, range: (hi - lo) || 1 };
+  }
+  // The stroke is the data, so it breaks at a suspect point — the gap is the
+  // honest rendering, and Data Health explains it. The area wash underneath is
+  // decoration, so it carries the last believed value across and stays whole.
+  function sparkPath(hist, w, h, pad, bad, ext, hold) {
+    w = w||84; h = h||28; pad = pad||2; bad = bad || {};
+    var e = ext || cleanExtent(hist, bad);
+    var out = '', pen = 'M', last = null;
+    hist.forEach(function (v, i) {
+      if (bad[i]) { if (!hold) { pen = 'M'; return; } v = last == null ? v : last; }
+      else { last = v; }
+      var x = pad + (i/(hist.length-1))*(w-pad*2);
+      var y = pad + (1-(v-e.min)/e.range)*(h-pad*2);
+      out += (out ? ' ' : '') + pen + x.toFixed(1) + ',' + y.toFixed(1);
+      pen = 'L';
+    });
+    return out;
+  }
   // Monotonic gradient ids — Math.random() could collide across the many
   // sparklines in one DOM, making one sparkline adopt another's fill.
   var _sparkSeq = 0;
   function sparkSVG(hist, up, w, h) { w = w||84; h = h||28;
     if (!hist || hist.length < 2) return '';
-    var color = up ? 'var(--up)' : 'var(--down)'; var d = sparkPath(hist, w, h);
-    var fillD = d + ' L' + (w-2) + ',' + (h-2) + ' L2,' + (h-2) + ' Z'; var id = 'g' + (_sparkSeq++);
+    var bad = suspectIdx(hist), ext = cleanExtent(hist, bad);
+    var color = up ? 'var(--up)' : 'var(--down)'; var d = sparkPath(hist, w, h, 2, bad, ext);
+    var fillD = sparkPath(hist, w, h, 2, bad, ext, true) + ' L' + (w-2) + ',' + (h-2) + ' L2,' + (h-2) + ' Z';
+    var id = 'g' + (_sparkSeq++);
     return '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="' + id + '" x1="0" x2="0" y1="0" y2="1">' +
       '<stop offset="0" stop-color="' + color + '" stop-opacity=".22"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
       '<path d="' + fillD + '" fill="url(#' + id + ')"/><path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>'; }
 
   var ARROW_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M7 14l5-5 5 5"/></svg>';
+  // Matches the topbar snapshot pill's glyph — the same mark means the same
+  // thing wherever collection freshness is in question.
+  var CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" style="width:12px;height:12px;vertical-align:-1px;opacity:.8" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
   var ARROW_DN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M7 10l5 5 5-5"/></svg>';
 
   // ---- toast ----
@@ -237,7 +293,7 @@
   // ---- rail watchlist ----
   var wlEl = $('[data-watchlist]'); var WL = (DATA.watchSyms || []).filter(function (s) { return get(s); });
   if (wlEl) wlEl.innerHTML = WL.length ? WL.map(function (sym) { var s = get(sym);
-      return '<div class="wl__row" data-sym="' + s.sym + '"><span class="wl__sym">' + s.sym + '</span><span class="wl__px">' + F.money(s.price) +
+      return '<div class="wl__row" ' + symTrigger(s.sym) + '><span class="wl__sym">' + s.sym + '</span><span class="wl__px">' + F.money(s.price) +
         '</span><span class="wl__chg ' + chgCls(s.dayPct) + '">' + F.pct(s.dayPct) + '</span></div>'; }).join('')
     : '<div style="padding:8px 10px;font-size:11.5px;color:var(--rail-muted)">No watchlist symbols</div>';
 
@@ -284,6 +340,18 @@
   $all('.nav a[data-view]').forEach(function (a) { clickable(a, function () { switchView(a.dataset.view); }); });
   $all('.nav a[data-nav]').forEach(function (a) { clickable(a, function () { goNative(a.dataset.nav); }); });
   $all('.tabbar [data-tab]').forEach(function (b) { b.addEventListener('click', function () { switchView(b.dataset.tab); }); });
+
+  // Name every card region from the heading it already has, so a screen reader
+  // can jump between them instead of walking one undifferentiated document.
+  // Done here rather than in the markup so a new card cannot forget to do it.
+  var sectSeq = 0;
+  $all('section.card').forEach(function (sec) {
+    if (sec.getAttribute('aria-labelledby') || sec.getAttribute('aria-label')) return;
+    var h = sec.querySelector('.card__hd h2');
+    if (!h) return;
+    if (!h.id) h.id = 'sect-h-' + (++sectSeq);
+    sec.setAttribute('aria-labelledby', h.id);
+  });
 
   // ---- holdings rows ----
   function holdingRows() {
@@ -467,17 +535,34 @@
     if (!pairs || pairs.length < 2) { host.innerHTML = '<div class="empty">No portfolio-value history for this range yet.</div>'; return; }
     var data = pairs.map(function (p) { return p[1]; });
     var W = 920, H = 240, pad = 6;
-    var min = Math.min.apply(null, data), max = Math.max.apply(null, data), range = (max-min)||1;
+    // Points the arithmetic cannot support are excluded from the domain, from the
+    // stroke and from the drawdown scan alike. Left in, one partial collection
+    // both flattens the whole curve and invents a drawdown that never happened.
+    var bad = suspectIdx(data);
+    var ext = cleanExtent(data, bad);
+    var min = ext.min, range = ext.range;
     var up = data[data.length-1] >= data[0]; var color = up ? 'var(--up)' : 'var(--down)';
     var pts = data.map(function (v, i) { return [pad + (i/(data.length-1))*(W-pad*2), 14 + (1-(v-min)/range)*(H-28)]; });
-    var line = pts.map(function (p, i) { return (i?'L':'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1); }).join(' ');
-    var area = line + ' L' + pts[pts.length-1][0].toFixed(1) + ',' + (H-2) + ' L' + pts[0][0].toFixed(1) + ',' + (H-2) + ' Z';
+    var line = '', pen = 'M';
+    pts.forEach(function (p, i) {
+      if (bad[i]) { pen = 'M'; return; }
+      line += (line ? ' ' : '') + pen + p[0].toFixed(1) + ',' + p[1].toFixed(1); pen = 'L';
+    });
+    // The wash underneath is decoration, so it holds the last believed value
+    // across the gap and stays whole.
+    var areaLine = '', holdY = null;
+    pts.forEach(function (p, i) {
+      var y = bad[i] ? (holdY == null ? p[1] : holdY) : (holdY = p[1]);
+      areaLine += (areaLine ? ' L' : 'M') + p[0].toFixed(1) + ',' + y.toFixed(1);
+    });
+    var area = areaLine + ' L' + pts[pts.length-1][0].toFixed(1) + ',' + (H-2) + ' L' + pts[0][0].toFixed(1) + ',' + (H-2) + ' Z';
     var last = pts[pts.length-1];
     var chg = (data[data.length-1] - data[0]) / data[0] * 100;
     // max drawdown over the visible window (peak → trough), shaded if material
     var peakI = 0, ddS = 0, ddE = 0, maxDD = 0;
     for (var di = 1; di < data.length; di++) {
-      if (data[di] > data[peakI]) peakI = di;
+      if (bad[di]) continue;
+      if (bad[peakI] || data[di] > data[peakI]) peakI = di;
       var dd = (data[peakI] - data[di]) / data[peakI];
       if (dd > maxDD) { maxDD = dd; ddS = peakI; ddE = di; }
     }
@@ -487,7 +572,8 @@
       : '';
     host.innerHTML = '<div class="pv-wrap" style="position:relative;cursor:crosshair">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" ' +
-      'aria-label="Portfolio value, ' + pvRange + ' range, ' + F.pct(chg) + '">' +
+      'aria-label="Portfolio value, ' + pvRange + ' range, ' + F.pct(chg) +
+        (bad.count ? ', ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted' : '') + '">' +
       '<defs><linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".20"/>' +
       '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
       [0.25,0.5,0.75].map(function (g) { var y = 14 + g*(H-28); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
@@ -503,6 +589,10 @@
       '<div class="num" style="position:absolute;top:6px;left:10px;font-size:12px;font-weight:600;pointer-events:none">' +
       '<span style="color:' + color + '">' + pvRange + ' ' + F.pct(chg) + '</span>' +
       (maxDD >= 0.005 ? '<span style="color:var(--muted);font-weight:500">  ·  max DD −' + (maxDD*100).toFixed(1) + '%</span>' : '') + '</div>' +
+      // Say it on the chart rather than only in the markup: a gap the operator
+      // can see but not explain is its own kind of untrustworthy number.
+      (bad.count ? '<div style="position:absolute;bottom:4px;right:10px;font-size:11.5px;color:var(--muted);pointer-events:none">' +
+        CLOCK_SVG + ' ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted · see Data Health</div>' : '') +
       '</div>';
     // draw-in: reveal the line along its own length on (re)render
     var lineEl = host.querySelector('.pv-line');
@@ -630,9 +720,9 @@
     var dUp = r.dayPct != null ? r.dayPct >= 0 : r.hist[r.hist.length-1] >= r.hist[0];
     var dTag = r.dayPct == null ? '' : (r.dayPct >= 0 ? 'tag--up' : 'tag--down');
     var gUp = r.gl >= 0;
-    return '<tr data-sym="' + r.sym + '"><td><div class="sym-cell">' +
-      symBadge(r.sym) +
-      '<span class="nm"><b>' + r.sym + '</b><span>' + esc(r.name) + '</span></span></div></td>' +
+    return '<tr data-sym="' + r.sym + '"><td>' +
+      symOpenBtn(r.sym, '<span class="sym-cell">' + symBadge(r.sym) +
+        '<span class="nm"><b>' + r.sym + '</b><span>' + esc(r.name) + '</span></span></span>') + '</td>' +
       '<td class="price">' + F.money(r.price) + '</td>' +
       '<td><span class="tag ' + dTag + '">' + F.pct(r.dayPct) + '</span></td>' +
       '<td class="num">' + (Math.round(r.qty*1e4)/1e4) + '</td>' +
@@ -644,7 +734,7 @@
   function hcardHTML(r) {
     var dTag = r.dayPct == null ? '' : (r.dayPct >= 0 ? 'tag--up' : 'tag--down');
     var gUp = r.gl >= 0;
-    return '<div class="hcard" data-sym="' + r.sym + '"><div class="hcard__top">' +
+    return '<div class="hcard" ' + symTrigger(r.sym) + '><div class="hcard__top">' +
       symBadge(r.sym) +
       '<span class="nm" style="display:flex;flex-direction:column;line-height:1.25"><b>' + r.sym + '</b>' +
       '<span style="font-size:11px;color:var(--muted)">' + esc(r.name) + '</span></span>' +
@@ -697,7 +787,7 @@
     host.innerHTML = rs.map(function (r) {
       var w = Math.max(1.5, Math.abs(r.val) / max * 50);  // % of the track (half each side)
       var up = r.val >= 0;
-      return '<div class="attr-row" data-sym="' + r.sym + '" title="Open ' + r.sym + '">' +
+      return '<div class="attr-row" ' + symTrigger(r.sym) + ' title="Open ' + r.sym + '">' +
         '<span class="attr-sym">' + r.sym + '</span>' +
         '<span class="attr-track"><span class="attr-bar ' + (up ? 'up' : 'down') + '" style="' +
           (up ? 'left:50%;' : 'right:50%;') + 'width:' + w.toFixed(1) + '%"></span></span>' +
@@ -724,7 +814,12 @@
     var W = 440, H = 220, padT = 20, padB = 34, span = hi - lo;
     function Y(v) { return padT + (hi - v) / span * (H - padT - padB); }
     var slot = W / nodes.length, bw = slot * 0.54;
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:220px;display:block" role="img" aria-label="Net P&L waterfall">' +
+    // Name the values, not just the chart: a label reading only "Net P&L
+    // waterfall" describes the picture and states none of what it plots.
+    var wfLabel = 'Net P&L waterfall. ' + nodes.map(function (nd) {
+      return nd.label + ' ' + (nd.val >= 0 ? 'plus ' : 'minus ') + F.money(Math.abs(nd.val));
+    }).join(', ') + '.';
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:220px;display:block" role="img" aria-label="' + esc(wfLabel) + '">' +
       '<line x1="0" x2="' + W + '" y1="' + Y(0).toFixed(1) + '" y2="' + Y(0).toFixed(1) + '" stroke="var(--border-2)" stroke-width="1"/>';
     nodes.forEach(function (nd, i) {
       var x = i * slot + (slot - bw) / 2;
@@ -767,7 +862,7 @@
       tile('Top position', conc.top1 ? esc(conc.top1.sym) + ' ' + conc.top1.pct.toFixed(1) + '%' : '—') +
       tile('Top-3 weight', conc.top3Pct != null ? conc.top3Pct.toFixed(1) + '%' : '—');
     $('#risk-tbl').innerHTML = (R.perSymbol || []).map(function (r) {
-      return '<tr data-sym="' + r.sym + '"><td><b>' + r.sym + '</b></td>' +
+      return '<tr data-sym="' + r.sym + '"><td>' + symOpenBtn(r.sym, '<b>' + r.sym + '</b>') + '</td>' +
         '<td class="num">' + (r.weight != null ? r.weight.toFixed(1) + '%' : '—') + '</td>' +
         '<td class="num">' + (r.beta != null ? r.beta.toFixed(2) : '—') + '</td>' +
         '<td class="num">' + (r.vol != null ? r.vol.toFixed(1) + '%' : '—') + '</td>' +
@@ -821,7 +916,10 @@
     var up = ys[ys.length - 1] >= ys[0], color = up ? 'var(--up)' : 'var(--down)';
     var line = data.map(function (p, i) { return (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1); }).join(' ');
     var area = line + ' L' + X(xmax).toFixed(1) + ',' + (H - padB) + ' L' + X(xmin).toFixed(1) + ',' + (H - padB) + ' Z';
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:300px">' +
+    var phChg = ys[0] ? ((ys[ys.length - 1] - ys[0]) / ys[0]) * 100 : 0;
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:300px" role="img" ' +
+      'aria-label="' + esc(sym) + ' price, ' + esc(phRange) + ' range, ' + F.pct(phChg) +
+      ', from ' + F.money(ys[0]) + ' to ' + F.money(ys[ys.length - 1]) + '">' +
       '<defs><linearGradient id="phg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".18"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' +
       [0.25, 0.5, 0.75].map(function (g) { var y = padT + g * (H - padT - padB); return '<line x1="0" x2="' + W + '" y1="' + y + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>'; }).join('') +
       '<path d="' + area + '" fill="url(#phg)"/><path d="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linejoin="round"/>';
@@ -888,15 +986,38 @@
   // ---- latest prices table ----
   function renderLatestPrices() {
     var rows = DATA.latestPrices || [], tb = $('#latest-prices'); if (!tb) return;
-    function px(v) { return v == null ? '<span style="color:var(--faint)">—</span>' : F.money(v); }
+    // 0.0 is what yfinance hands back for bid/ask outside regular hours, and the
+    // collector stores it. It is an absent quote, not a price of nothing, and
+    // rendering it as $0.00 in a money column is the one thing this table must
+    // never do — a spread computed from it would be pure fiction.
+    function px(v) {
+      if (v == null || v === 0) return '<span style="color:var(--faint)" title="Not quoted at this snapshot">—</span>';
+      return F.money(v);
+    }
+    // Freshness is judged against the newest row — the collector's own last run —
+    // never against a wall clock: the weekend gap alone is 64.2h, so any absolute
+    // threshold either fires every Monday or misses a real mid-week outage.
+    var stamps = rows.map(function (r) { return Date.parse(String(r.ts || '').replace(' ', 'T')); })
+                     .filter(function (t) { return !isNaN(t); });
+    var newest = stamps.length ? Math.max.apply(null, stamps) : null;
+    var STALE_MS = 4 * 864e5;   // clears a long weekend plus a public holiday
+    var staleCount = 0;
     tb.innerHTML = rows.map(function (r) {
-      return '<tr><td><b>' + esc(r.symbol) + '</b></td><td class="price">' + px(r.last) + '</td>' +
+      var t = Date.parse(String(r.ts || '').replace(' ', 'T'));
+      var age = (newest != null && !isNaN(t)) ? newest - t : 0;
+      var stale = age > STALE_MS;
+      if (stale) staleCount++;
+      var days = Math.round(age / 864e5);
+      return '<tr' + (stale ? ' class="lp-stale" title="Last collected ' + days + ' days before the most recent snapshot"' : '') + '>' +
+        '<td><b>' + esc(r.symbol) + '</b></td><td class="price">' + px(r.last) + '</td>' +
         '<td class="num" style="color:var(--muted)">' + px(r.bid) + '</td>' +
         '<td class="num" style="color:var(--muted)">' + px(r.ask) + '</td>' +
         '<td class="num" style="color:var(--muted)">' + esc(r.source) + '</td>' +
-        '<td class="num" style="color:var(--muted)">' + esc(r.ts) + '</td></tr>';
+        '<td class="num" style="color:var(--muted)">' + (stale ? CLOCK_SVG + ' ' : '') + esc(r.ts) + '</td></tr>';
     }).join('');
-    var sub = $('#lp-sub'); if (sub) sub.textContent = rows.length + ' symbols';
+    var sub = $('#lp-sub');
+    if (sub) sub.textContent = rows.length + ' symbols' +
+      (staleCount ? ' · ' + staleCount + ' not refreshed in the last 4 days' : '');
   }
 
 
@@ -934,8 +1055,12 @@
   function monthTint(v, peak) {
     if (v == null || !peak) return '';
     var a = Math.min(Math.abs(v) / peak, 1) * 0.42 + 0.06;
-    return 'background:' + (v >= 0 ? 'oklch(62% .17 152/' + a.toFixed(3) + ')'
-                                   : 'oklch(58% .19 26/' + a.toFixed(3) + ')') + ';';
+    // background-color, not the `background` shorthand: the shorthand resets
+    // background-image, which silently defeated .stbl td.part's hatch — so every
+    // partial period rendered identically to a finished one, and the legend
+    // promised a marking that never appeared.
+    return 'background-color:' + (v >= 0 ? 'oklch(62% .17 152/' + a.toFixed(3) + ')'
+                                         : 'oklch(58% .19 26/' + a.toFixed(3) + ')') + ';';
   }
 
   function renderStats() {
@@ -1031,7 +1156,7 @@
     if (Math.abs(p) < 0.08) return isDark() ? 'oklch(38% 0.012 260)' : 'oklch(72% 0.015 260)';
     return 'oklch(' + (64-m*20).toFixed(1) + '% ' + (0.05+m*0.13).toFixed(3) + ' ' + (p>=0?152:26) + ')'; }
   function moverRow(s, rank) {
-    return '<div class="mv" data-sym="' + s.sym + '"><span class="mv__rank">' + rank + '</span><span class="mv__sym"><b>' + s.sym + '</b><span>' + esc(s.name) +
+    return '<div class="mv" ' + symTrigger(s.sym) + '><span class="mv__rank">' + rank + '</span><span class="mv__sym"><b>' + s.sym + '</b><span>' + esc(s.name) +
       '</span></span><span class="mv__px">' + F.money(s.price) + '</span><span class="mv__chg ' + chgCls(s.dayPct) + '">' + F.pct(s.dayPct) + '</span></div>'; }
   function renderMovers() {
     // exclude unknown day change (null) — can't rank what we can't measure
@@ -1043,7 +1168,7 @@
   }
   var heatState = { sector: 'All', query: '' };
   var SECTORS = (function () { var set = {}; list().forEach(function (s) { set[s.sector] = 1; }); return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); }); })();
-  function tileHTML(s) { return '<div class="heat__tile" data-sym="' + s.sym + '" style="background:' + heatColor(s.dayPct) + '" title="' + esc(s.name) + ' · ' + F.money(s.price) +
+  function tileHTML(s) { return '<div class="heat__tile" ' + symTrigger(s.sym, s.sym + ' ' + F.pct(s.dayPct) + ' — open details') + ' style="background:' + heatColor(s.dayPct) + '" title="' + esc(s.name) + ' · ' + F.money(s.price) +
     '"><div><b>' + s.sym + '</b><div class="nm">' + esc(s.name) + '</div></div><div class="pc">' + F.pct(s.dayPct) + '</div></div>'; }
   function heatVisible(s) { if (heatState.sector !== 'All' && s.sector !== heatState.sector) return false;
     if (heatState.query) { var q = heatState.query.toLowerCase(); if (s.sym.toLowerCase().indexOf(q) < 0 && (s.name||'').toLowerCase().indexOf(q) < 0) return false; } return true; }
@@ -1200,8 +1325,21 @@
     });
   }
   function runCmdk(i) { var c = cmdkItems[i]; closeCmdk(); if (c) c.run(); }
-  function openCmdk() { if (!cmdk) return; cmdk.classList.add('open'); cmdkIn.value = ''; cmdkSel = 0; renderCmdk(); cmdkIn.focus(); }
-  function closeCmdk() { if (cmdk) cmdk.classList.remove('open'); }
+  var cmdkPrevFocus = null;
+  function openCmdk() {
+    if (!cmdk) return;
+    cmdkPrevFocus = document.activeElement;
+    cmdk.classList.add('open'); cmdkIn.value = ''; cmdkSel = 0; renderCmdk(); cmdkIn.focus();
+  }
+  function closeCmdk() {
+    if (!cmdk || !cmdk.classList.contains('open')) return;
+    cmdk.classList.remove('open');
+    // Hand focus back where it came from. A command that moves the user itself
+    // (openDrawer, switchView) takes focus from here afterwards, which is why
+    // runCmdk closes before it runs.
+    if (cmdkPrevFocus && cmdkPrevFocus.focus) { try { cmdkPrevFocus.focus(); } catch (e) {} }
+    cmdkPrevFocus = null;
+  }
   if (cmdk) {
     cmdk.addEventListener('mousedown', function (e) { if (e.target === cmdk) closeCmdk(); });
     cmdkIn.addEventListener('input', function () { cmdkSel = 0; renderCmdk(); });
@@ -1222,7 +1360,13 @@
   var gsearch = $('[data-global-search]');
   if (gsearch) {
     gsearch.addEventListener('click', openCmdk);
-    gsearch.addEventListener('focus', function () { gsearch.blur(); openCmdk(); });
+    // Opening on `focus` used to blur the field and trap the caller in the
+    // palette: tabbing into the topbar ejected keyboard users from the document
+    // and nothing after this field was ever reachable in a linear walk. Enter or
+    // Space opens it deliberately; Tab now passes straight through.
+    gsearch.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCmdk(); }
+    });
   }
 
   // ---- symbol drill-down drawer: click any symbol for its full dossier ----
@@ -1331,16 +1475,48 @@
     if (e.key === 'Escape' && drawerEl && drawerEl.classList.contains('open') &&
         !(cmdk && cmdk.classList.contains('open'))) closeDrawer();
   });
+  // Both overlays declare aria-modal="true". Without a trap, Tab walks out of a
+  // dialog that has just told assistive tech nothing else is reachable.
+  var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  function trapTab(container, e) {
+    var f = $all(FOCUSABLE, container).filter(function (el) {
+      return el.offsetWidth || el.offsetHeight || el.getClientRects().length;
+    });
+    if (!f.length) { e.preventDefault(); return; }
+    var first = f[0], last = f[f.length - 1], active = document.activeElement;
+    if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab') return;
+    if (cmdk && cmdk.classList.contains('open')) trapTab(cmdk, e);
+    else if (drawerEl && drawerEl.classList.contains('open')) trapTab(drawerEl, e);
+  });
   // delegate: any element carrying data-sym opens the dossier (links/controls excluded)
   document.addEventListener('click', function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
-    if (t.closest('a,button,input,select,label')) return;
+    // Controls inside a trigger keep their own behaviour — except .sym-open,
+    // which exists precisely to be a table row's keyboard-operable equivalent.
+    var ctl = t.closest('a,button,input,select,label');
+    if (ctl && !ctl.classList.contains('sym-open')) return;
     if (t.closest('[data-drawer]')) return;
     var el = t.closest('[data-sym]');
     if (!el) return;
     var sym = el.getAttribute('data-sym');
     if (get(sym)) openDrawer(sym);
+  });
+  // Enter/Space on a focused div trigger. The .sym-open buttons need nothing
+  // here — a button activates natively and arrives at the click delegate above.
+  // Space would otherwise scroll the page, so it is prevented rather than left.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var t = e.target;
+    if (!t || !t.getAttribute || t.getAttribute('role') !== 'button') return;
+    var sym = t.getAttribute('data-sym');
+    if (!sym || !get(sym)) return;
+    e.preventDefault();
+    openDrawer(sym);
   });
 
   // ---- fundamentals ----
