@@ -17,6 +17,10 @@
   --rail:oklch(26% 0.035 264);--rail-2:oklch(31% 0.04 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
   --rail-edge:oklch(20% 0.03 264);--rail-line:oklch(33% 0.03 264);
   --scrim:rgba(10,14,24,.45);
+  /* The label colour for a heat tile. Each theme's fill range is composed so
+     that one of these two clears AA across the whole scale — pale fills take
+     ink, deep fills take white. Kept in step with INK_ON_FILL in app.js. */
+  --heat-ink:oklch(22% 0.02 260);
   --accent:oklch(55% 0.19 264);--accent-fg:#fff;--accent-soft:oklch(95% 0.04 264);
   /* Green reads lighter than red at equal lightness, so it sits lower to hit
      the same contrast — 51/56 is closer to perceptually equal than 58/58 was. */
@@ -61,6 +65,7 @@
   --border:oklch(29% 0.015 260);--border-2:oklch(35% 0.018 260);
   --rail:oklch(18.5% 0.028 264);--rail-2:oklch(24% 0.032 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
   --rail-edge:oklch(13% 0.025 264);--rail-line:oklch(26% 0.028 264);
+  --heat-ink:#fff;
   --accent:oklch(62% 0.18 264);--accent-soft:oklch(29% 0.06 264);
   --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);--down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);--warn:oklch(76% 0.13 75);
   --topbar-bg:oklch(18% 0.015 260 / .82);
@@ -207,12 +212,19 @@ table.tbl{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
 td.price{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500}
 .spark-cell svg{width:84px;height:28px;vertical-align:middle}
 .heat{display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(128px,1fr))}
-.heat__tile{border-radius:var(--r-sm);padding:12px 13px;color:#fff;position:relative;overflow:hidden;min-height:78px;display:flex;flex-direction:column;justify-content:space-between;cursor:default;transition:transform .12s}
+.heat__tile{border-radius:var(--r-sm);padding:12px 13px;color:var(--heat-ink);position:relative;overflow:hidden;min-height:78px;display:flex;flex-direction:column;justify-content:space-between;cursor:default;transition:transform .12s}
 .heat__tile:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
-.heat__tile b{font-size:var(--fs-base);font-weight:700}.heat__tile .nm{font-size:var(--fs-micro);opacity:.82}
+.heat__tile b{font-size:var(--fs-base);font-weight:700}.heat__tile .nm{font-size:var(--fs-micro)}
 .heat__tile .pc{font-family:var(--mono);font-size:var(--fs-lg);font-weight:600;align-self:flex-end}
 .heat__sector-title{grid-column:1 / -1;font-size:var(--fs-micro);font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-2);display:flex;gap:10px;align-items:baseline}
 .heat__sector-title:first-child{margin-top:0;padding-top:0;border-top:0}
+/* The legend has to be the scale it describes. Its stops were hardcoded to the
+   old single range, so a theme-aware scale left it showing colours the map no
+   longer produces — the two endpoints are the formula at m=1, the middle is the
+   below-noise-floor neutral. */
+.heat-legend{flex:0 0 220px;height:8px;border-radius:var(--r-pill);
+  background:linear-gradient(90deg,oklch(64% .20 26),oklch(72% .015 260),oklch(64% .20 152))}
+[data-theme="dark"] .heat-legend{background:linear-gradient(90deg,oklch(36% .19 26),oklch(38% .012 260),oklch(36% .19 152))}
 .mvlist{display:flex;flex-direction:column}
 .mv{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:11px 6px;border-bottom:1px solid var(--border)}
 .mv:last-child{border-bottom:0}
