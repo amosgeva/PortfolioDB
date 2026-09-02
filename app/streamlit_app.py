@@ -164,8 +164,14 @@ def _fetch_news_now() -> tuple[bool, str]:
     app_dir = Path(__file__).resolve().parent
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"  # the script prints emoji; avoid cp1252 crash
+    # Every element of the command is fixed by this module, not by anything a
+    # caller supplies: sys.executable is the interpreter already running and the
+    # rest are literals. No shell (shell=False is the default), so nothing is
+    # word-split or glob-expanded either. The audit rules below fire on any
+    # subprocess call whose argv is not a literal string, which this cannot be —
+    # hardcoding an interpreter path would break every venv and container.
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603  # nosemgrep
             [sys.executable, "fd_weekly_enrichment.py", "--profile", "daily-light"],
             cwd=str(app_dir), env=env, capture_output=True, text=True, timeout=180,
         )
