@@ -357,7 +357,9 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .hcards-sort select{flex:1;min-width:0;cursor:pointer}
 .hcards-sort [data-hc-dir]{font-family:var(--mono);min-width:38px}
 .rail__close{margin-left:auto;border-color:oklch(34% 0.03 264);background:transparent;color:var(--rail-muted)}
-.rail__close:hover{background:oklch(33% 0.04 264);color:var(--rail-fg);border-color:oklch(40% 0.04 264)}
+/* Same hover treatment as a nav row, using the rail's existing values rather
+   than a new one — the close button is part of that vocabulary, not its own. */
+.rail__close:hover{background:oklch(33% 0.04 264);color:var(--rail-fg)}
 
 @media (max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.row2{grid-template-columns:1fr}
   /* Grid items keep min-width:auto, so a card refuses to shrink below its own
