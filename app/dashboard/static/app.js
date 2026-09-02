@@ -223,8 +223,13 @@
     return { level: 'closed', label: 'Closed' };
   }
   function updClock() {
-    if (clockEl) clockEl.textContent = tzHM('America/New_York') + ' ET · ' + tzHM(LOCAL_TZ) + ' ' + tzLabel(LOCAL_TZ);
+    var clockTxt = tzHM('America/New_York') + ' ET · ' + tzHM(LOCAL_TZ) + ' ' + tzLabel(LOCAL_TZ);
+    if (clockEl) clockEl.textContent = clockTxt;
     var s = marketState();
+    // Below 860px the two clocks are hidden — they wrapped the pill onto four
+    // lines — so the pill itself has to carry them or the information is gone.
+    var pill = $('[data-mkt-pill]');
+    if (pill) pill.title = s.label + ' · ' + clockTxt;
     if (lblEl) lblEl.textContent = s.label;
     if (dotEl) { dotEl.style.setProperty('--dot-c', MKT_COLORS[s.level]);
       dotEl.style.backgroundColor = MKT_COLORS[s.level];  // direct value so the .4s crossfade animates
@@ -237,6 +242,10 @@
     var snap = DATA.snapshot || {};
     var snapTxt = snapEl.querySelector('[data-snap-text]');
     if (snapTxt) snapTxt.textContent = snap.text || '—';
+    // This pill is the first thing to give up width when the topbar is tight,
+    // so the full sentence has to survive somewhere. The static title said only
+    // "Last price snapshot", which is not what the truncation hides.
+    snapEl.title = snap.text || 'Last price snapshot';
     snapEl.classList.remove('warn', 'error', 'none');
     if (snap.level === 'warn' || snap.level === 'error' || snap.level === 'none') snapEl.classList.add(snap.level);
   }
@@ -245,6 +254,13 @@
   function openRail(v) { if (!rail) return; rail.classList.toggle('open', v); if (scrim) scrim.classList.toggle('show', v); }
   if (menuBtn) menuBtn.addEventListener('click', function () { openRail(!rail.classList.contains('open')); });
   if (scrim) scrim.addEventListener('click', function () { openRail(false); });
+  // Tapping the scrim already closed the rail, but a scrim is a convention, not
+  // an affordance — on a phone there was nothing visible that said "close".
+  var railClose = $('[data-rail-close]');
+  if (railClose) railClose.addEventListener('click', function () { openRail(false); if (menuBtn) menuBtn.focus(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && rail && rail.classList.contains('open')) { openRail(false); if (menuBtn) menuBtn.focus(); }
+  });
 
   // The component iframe is sandboxed without allow-top-navigation, so the
   // iframe itself cannot navigate the parent. But with allow-same-origin we can
@@ -764,6 +780,22 @@
   }
   $all('#holdings-tbl thead th[data-key]').forEach(function (th) { clickable(th, function () {
     var k = th.dataset.key; if (sortState.key === k) sortState.dir *= -1; else { sortState.key = k; sortState.dir = (k==='sym'||k==='name')?1:-1; } renderTable(); }); });
+  // Below 640px the table is replaced by cards, which took the column headers —
+  // and with them every sort control — out of the document. Same sortState, so
+  // the two controls stay in step whichever width the operator is at.
+  var hcSort = $('#hc-sort'), hcDir = $('[data-hc-dir]');
+  function syncHcSort() {
+    if (hcSort) hcSort.value = sortState.key;
+    if (hcDir) { hcDir.textContent = sortState.dir === 1 ? '↑' : '↓';
+      hcDir.title = sortState.dir === 1 ? 'Ascending — tap for descending' : 'Descending — tap for ascending'; }
+  }
+  if (hcSort) hcSort.addEventListener('change', function () {
+    sortState.key = hcSort.value;
+    sortState.dir = (sortState.key === 'sym' || sortState.key === 'name') ? 1 : -1;
+    renderTable(); syncHcSort();
+  });
+  if (hcDir) hcDir.addEventListener('click', function () { sortState.dir *= -1; renderTable(); syncHcSort(); });
+  syncHcSort();
 
   // ---- terminal-style price flash: green/red pulse on cells whose price
   // moved since the last visit (previous prices kept in localStorage) ----
@@ -1375,6 +1407,10 @@
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCmdk(); }
     });
   }
+  // The phone's route to the palette. The search field is display:none below
+  // 980px and Ctrl+K needs a keyboard, so this button is the only way in.
+  var searchBtn = $('[data-open-search]');
+  if (searchBtn) searchBtn.addEventListener('click', openCmdk);
 
   // ---- symbol drill-down drawer: click any symbol for its full dossier ----
   var drawerEl = $('[data-drawer]'), drawerScrimEl = $('[data-drawer-scrim]');
