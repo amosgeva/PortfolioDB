@@ -14,12 +14,10 @@ message; lists let us pre-seed assistant context where helpful.
 
 from __future__ import annotations
 
-import json
 from datetime import date, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.prompts import Message
 
 from app.mcp.services import (
     activity as activity_service,
