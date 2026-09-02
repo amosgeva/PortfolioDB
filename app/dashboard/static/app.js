@@ -61,6 +61,14 @@
     for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) n += m[k].length;
     return n;
   }
+  // A ticker whose name is just the ticker - VOO, GLD, XLE - stacked the same
+  // four letters twice and read as a rendering fault rather than as data. Emit
+  // the subtitle only when it says something the symbol does not.
+  function subName(sym, name, tag, attrs) {
+    var n = (name == null ? '' : String(name)).trim();
+    if (!n || n.toUpperCase() === String(sym).toUpperCase()) return '';
+    return '<' + tag + (attrs || '') + '>' + esc(n) + '</' + tag + '>';
+  }
   // Hashes over CAT[0..8] only: index 9 belongs to the Other bucket, and a
   // symbol tinted the same as the aggregate beside it reads as a duplicate.
   function symColor(sym) { var h = 0; for (var i = 0; i < sym.length; i++) h = (h*31 + sym.charCodeAt(i)) >>> 0; return CAT[h % 9]; }
@@ -586,7 +594,7 @@
       var col = dir > 0 ? 'var(--up)' : dir < 0 ? 'var(--down)' : 'var(--muted)';
       var pv = hasP ? F.pct(p.portfolio) : '—';
       var bv = p.benchmark != null ? F.pct(p.benchmark) : '—';
-      return '<div class="stat-mini card" style="min-width:96px">' +
+      return '<div class="stat-mini stat-mini--well" style="min-width:96px">' +
         '<div class="l">' + esc(p.period) + '</div>' +
         '<div class="v" style="color:' + col + '">' + pv + '</div>' +
         '<div class="l" style="margin-top:4px">SPY ' + bv + '</div></div>';
@@ -815,7 +823,7 @@
     var gUp = r.gl >= 0;
     return '<tr data-sym="' + r.sym + '"><td>' +
       symOpenBtn(r.sym, '<span class="sym-cell">' + symBadge(r.sym) +
-        '<span class="nm"><b>' + r.sym + '</b><span>' + esc(r.name) + '</span></span></span>') + '</td>' +
+        '<span class="nm"><b>' + r.sym + '</b>' + subName(r.sym, r.name, 'span') + '</span></span>') + '</td>' +
       '<td class="price">' + F.money(r.price) + '</td>' +
       '<td><span class="tag ' + dTag + '">' + F.pct(r.dayPct) + '</span></td>' +
       '<td class="num">' + (Math.round(r.qty*1e4)/1e4) + '</td>' +
@@ -830,7 +838,7 @@
     return '<div class="hcard" ' + symTrigger(r.sym) + '><div class="hcard__top">' +
       symBadge(r.sym) +
       '<span class="nm" style="display:flex;flex-direction:column;line-height:1.25"><b>' + r.sym + '</b>' +
-      '<span style="font-size:var(--fs-micro);color:var(--muted)">' + esc(r.name) + '</span></span>' +
+      subName(r.sym, r.name, 'span', ' style="font-size:var(--fs-micro);color:var(--muted)"') + '</span>' +
       '<span class="tag ' + dTag + '">' + F.pct(r.dayPct) + '</span></div>' +
       '<div class="hcard__row"><span class="mv">' + F.money(r.mktVal) + '</span>' +
       '<span class="num ' + (gUp?'up':'down') + '">' + (gUp?'+':'−') + F.money(Math.abs(r.gl)) + ' (' + F.pct(r.glPct) + ')</span></div>' +
@@ -975,7 +983,7 @@
     var sub = $('#risk-sub'); if (sub) sub.textContent = R.days + ' trading days · SPY benchmark · current positions over historical closes';
     var p = R.portfolio || {}, conc = R.concentration || {};
     function tile(l, v, cls) {
-      return '<div class="card stat-mini"><div class="v num' + (cls ? ' ' + cls : '') + '">' + v + '</div><div class="l">' + l + '</div></div>';
+      return '<div class="stat-mini stat-mini--well"><div class="v num' + (cls ? ' ' + cls : '') + '">' + v + '</div><div class="l">' + l + '</div></div>';
     }
     $('#risk-stats').innerHTML =
       tile('Beta vs SPY', p.beta != null ? p.beta.toFixed(2) : '—') +
@@ -1289,7 +1297,7 @@
       ? 'oklch(' + (52-m*16).toFixed(1) + '% ' + (0.06+m*0.13).toFixed(3) + ' ' + hue + ')'
       : 'oklch(' + (80-m*16).toFixed(1) + '% ' + (0.04+m*0.16).toFixed(3) + ' ' + hue + ')'; }
   function moverRow(s, rank) {
-    return '<div class="mv" ' + symTrigger(s.sym) + '><span class="mv__rank">' + rank + '</span><span class="mv__sym"><b>' + s.sym + '</b><span>' + esc(s.name) +
+    return '<div class="mv" ' + symTrigger(s.sym) + '><span class="mv__rank">' + rank + '</span><span class="mv__sym"><b>' + s.sym + '</b>' + subName(s.sym, s.name, 'span') +
       '</span></span><span class="mv__px">' + F.money(s.price) + '</span><span class="mv__chg ' + chgCls(s.dayPct) + '">' + F.pct(s.dayPct) + '</span></div>'; }
   function renderMovers() {
     // exclude unknown day change (null) — can't rank what we can't measure
@@ -1313,7 +1321,7 @@
   var heatState = { sector: 'All', query: '' };
   var SECTORS = (function () { var set = {}; list().forEach(function (s) { set[s.sector] = 1; }); return Object.keys(set).sort(function (a, b) { return a.localeCompare(b); }); })();
   function tileHTML(s) { return '<div class="heat__tile" ' + symTrigger(s.sym, s.sym + ' ' + F.pct(s.dayPct) + ' — open details') + ' style="background:' + heatColor(s.dayPct) + '" title="' + esc(s.name) + ' · ' + F.money(s.price) +
-    '"><div><b>' + s.sym + '</b><div class="nm">' + esc(s.name) + '</div></div><div class="pc">' + F.pct(s.dayPct) + '</div></div>'; }
+    '"><div><b>' + s.sym + '</b>' + subName(s.sym, s.name, 'div', ' class="nm"') + '</div><div class="pc">' + F.pct(s.dayPct) + '</div></div>'; }
   function heatVisible(s) { if (heatState.sector !== 'All' && s.sector !== heatState.sector) return false;
     if (heatState.query) { var q = heatState.query.toLowerCase(); if (s.sym.toLowerCase().indexOf(q) < 0 && (s.name||'').toLowerCase().indexOf(q) < 0) return false; } return true; }
   function renderHeat() { var html = '', any = false;
@@ -1370,6 +1378,10 @@
   function updateCounts() { var unread = feedItems.filter(function (it) { return it.unread; }).length;
     $all('.nav .badge').forEach(function (b) { b.textContent = unread; b.style.display = unread ? '' : 'none'; });
     var hc = $('#unread-count'); if (hc) hc.textContent = unread;
+    // Offering "Mark all read" against nothing promises work that will not
+    // happen; the control now says so before it is pressed.
+    var ma = $('#mark-all');
+    if (ma) { ma.disabled = unread === 0; ma.title = unread === 0 ? 'Nothing unread' : 'Mark ' + unread + ' as read'; }
     var arm = feedItems.filter(function (it) { return it.cat==='alert' && it.status==='armed'; }).length;
     var ac = $('#armed-count'); if (ac) ac.textContent = arm; }
   function renderFeed() { var list2 = feedItems.filter(passes); var host = $('#feed');

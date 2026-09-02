@@ -60,11 +60,18 @@ def _format_age(fetched_at) -> str:
     secs = (datetime.now(timezone.utc) - fetched_at).total_seconds()
     if secs < 60:
         return "just now"
-    if secs < 3600:
-        return f"{int(secs / 60)}m ago"
-    if secs < 86400 * 2:
-        return f"{secs / 3600:.1f}h ago"
-    return f"{int(secs / 86400)}d ago"
+    mins = int(secs // 60)
+    if mins < 60:
+        return f"{mins}m ago"
+    hours = int(secs // 3600)
+    if hours < 24:
+        return f"{hours}h ago"
+    # Hours used to run to 48, so a two-day-old headline read "35.2h ago" — a
+    # unit nobody holds in their head, at a precision (0.1h is six minutes)
+    # that means nothing on a story that old. This labels one thing, the
+    # publication time of a news item, where the reader wants an ordering and
+    # not a duration; past a day, the day count is the whole answer.
+    return f"{int(hours // 24)}d ago"
 
 
 def _in_snapshot_window(now_local) -> bool:
