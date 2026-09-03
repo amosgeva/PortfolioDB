@@ -15,6 +15,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Everything routes through the `Makefile`, which wraps `docker compose`. `make`
 on its own lists every target.
 
+The Makefile is **POSIX-only** — its recipes use `sed`, `base64`, `gzip` and
+`/dev/urandom`, so it is not the Windows path. `docs/commands.md` is the
+canonical `make` → `docker compose` mapping and must stay in sync with the
+Makefile; `pdb.ps1` is the Windows runner and implements only the three targets
+with real logic (`init`, `backup`, `restore`). A change to any of those three, or
+to a compose invocation in the Makefile, has to land in all three places — CI
+enforces the parity (`.github/workflows/ci.yml`, the `wrapper-*` jobs).
+
+**Never hand-translate `backup`/`restore` for Windows.** There is no host `gzip`,
+and PowerShell 5.1 decodes native-command output as text before redirection, so
+piping a dump through `>` corrupts it silently and only fails at restore time.
+Compress inside the container and move the file with `docker compose cp` — see
+`docs/commands.md#backup`.
+
 ```bash
 make up          # postgres + dashboard (:8501) + scheduler
 make schema      # create/refresh tables, then apply sql/migrations/* in order

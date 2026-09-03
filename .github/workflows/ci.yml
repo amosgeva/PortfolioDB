@@ -159,3 +159,161 @@ jobs:
 
       - name: Reconciliation suite
         run: python -m pytest app/mcp/tests/ -m slow -q
+
+  # pdb.ps1 is the Windows runner, and until this job existed nothing on a
+  # Linux-only CI could tell whether it still parsed, let alone worked. It is
+  # split in two on purpose, because of one hard constraint:
+  #
+  #   GitHub-hosted windows-latest runners cannot run Linux containers.
+  #
+  # Docker there is in Windows-container mode and `services:` is unsupported, so
+  # the obvious "drive the wrapper against a real stack on Windows" job is not
+  # available at any price. Instead:
+  #
+  #   wrapper-windows  the real Windows hosts, no Docker  -> init, parse, lint
+  #   wrapper-live     real Docker, no Windows            -> backup/restore
+  #
+  # Neither is sufficient alone. Together they cover the script.
+  wrapper-windows:
+    name: Windows runner (init, both PowerShell hosts)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pester 5 is not a given: the runner images have carried 3.4.0, whose
+      # syntax is incompatible, and this box did too. Install explicitly rather
+      # than hope, and pin the major so a v6 cannot land here unannounced.
+      - name: Install Pester and PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.0.0 -MaximumVersion 5.99.99 -Force -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -Force -SkipPublisherCheck
+
+      - name: Lint
+        shell: pwsh
+        run: |
+          $found = @()
+          foreach ($f in @('pdb.ps1', 'tools/tests/pdb.Tests.ps1')) {
+            $found += Invoke-ScriptAnalyzer -Path $f -Settings PSScriptAnalyzerSettings.psd1 -Severity Error,Warning
+          }
+          if ($found) {
+            $found | ForEach-Object { Write-Host "::error file=$($_.ScriptName),line=$($_.Line)::$($_.RuleName): $($_.Message)" }
+            exit 1
+          }
+          Write-Host 'PSScriptAnalyzer clean'
+
+      # A fresh Windows box has Windows PowerShell 5.1, so 5.1 is the host that
+      # actually matters; 7 is what a developer is likely to be testing in. The
+      # suite runs under both because the two disagree in ways that bite:
+      # 5.1 reads a BOM-less .ps1 as the system codepage (an em-dash in output
+      # became mojibake), and cannot parse ??, ?. or a ternary at all.
+      #
+      # Pester itself always runs under pwsh; PDB_PS_HOST picks the host that
+      # the script under test is launched with.
+      - name: Pester under Windows PowerShell 5.1
+        shell: pwsh
+        env:
+          PDB_PS_HOST: powershell.exe
+        run: |
+          $r = Invoke-Pester -Path tools/tests/pdb.Tests.ps1 -PassThru -Output Detailed
+          if ($r.FailedCount -gt 0) { exit 1 }
+
+      - name: Pester under PowerShell 7
+        shell: pwsh
+        env:
+          PDB_PS_HOST: pwsh
+        run: |
+          $r = Invoke-Pester -Path tools/tests/pdb.Tests.ps1 -PassThru -Output Detailed
+          if ($r.FailedCount -gt 0) { exit 1 }
+
+  # The half windows-latest cannot do: drive pdb.ps1's backup and restore
+  # against a real Postgres container. pwsh is preinstalled on the Ubuntu runner
+  # images, so this exercises the script's actual command construction rather
+  # than a reimplementation of it.
+  #
+  # Only the postgres service is started. backup and restore touch nothing else,
+  # and skipping the app image keeps the job to seconds and independent of
+  # whether a published image happens to be pullable.
+  wrapper-live:
+    name: Windows runner (backup/restore round trip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Also the first real test of init: everything after it needs the .env it
+      # writes, because compose declares `env_file: .env` and hard-errors
+      # without it.
+      - name: init writes a usable .env
+        shell: pwsh
+        run: |
+          ./pdb.ps1 init
+          if (-not (Test-Path .env)) { throw '.env was not created' }
+          $pg = (Select-String -Path .env -Pattern '^POSTGRES_PASSWORD=(.+)$').Matches.Groups[1].Value
+          $app = (Select-String -Path .env -Pattern '^PORTFOLIODB_PASSWORD=(.+)$').Matches.Groups[1].Value
+          if ($pg -ne $app) { throw 'init left the two passwords different' }
+          # A UTF-16 or BOM'd .env is unreadable to Compose, which reports the
+          # variables as unset rather than as malformed.
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path .env))
+          if ($bytes[0] -eq 0xEF -or $bytes[0] -eq 0xFF -or $bytes[0] -eq 0xFE) { throw '.env has a BOM' }
+
+      - name: Start postgres
+        run: docker compose up -d --wait postgres
+
+      - name: Seed a ledger
+        run: |
+          docker compose exec -T postgres psql -q -U portfoliouser -d portfoliodb -c "
+            CREATE TABLE lots (id serial primary key, symbol text, quantity numeric, price numeric);
+            INSERT INTO lots (symbol, quantity, price)
+              SELECT 'NVDA', g, 100 + g FROM generate_series(1, 7) g;"
+
+      - name: Back it up
+        shell: pwsh
+        run: ./pdb.ps1 backup
+
+      # The assertion the whole Windows backup design exists for. `pg_dump |
+      # gzip > file` is right on POSIX and wrong on Windows -- there is no host
+      # gzip, and 5.1 re-encodes a native command's binary output on
+      # redirection. The same dump measured 5.6 MB and unreadable that way
+      # against 2.9 MB and valid. Nothing warns you until you restore, so the
+      # test is `gzip -t`, not "a file appeared".
+      - name: The dump must be a valid gzip
+        run: |
+          dump=$(ls backups/portfoliodb-*.sql.gz | head -1)
+          test -s "$dump" || { echo "::error::backup produced an empty file"; exit 1; }
+          gzip -t "$dump" || { echo "::error::backup produced a CORRUPT gzip"; exit 1; }
+          gunzip -c "$dump" | grep -q 'CREATE TABLE public.lots' \
+            || { echo "::error::dump has no lots table in it"; exit 1; }
+          echo "valid gzip: $dump ($(du -h "$dump" | cut -f1))"
+
+      - name: Restore must refuse a non-empty database
+        shell: pwsh
+        run: |
+          $dump = (Get-ChildItem backups -Filter '*.sql.gz')[0].FullName
+          ./pdb.ps1 restore $dump
+          # Refusing is the correct outcome, so a zero exit code is the failure.
+          if ($LASTEXITCODE -eq 0) { throw 'restore overwrote a live database' }
+          Write-Host 'restore correctly refused a non-empty database'
+          # Explicit, because the expected $LASTEXITCODE here is 1: leaving it
+          # dangling at the end of the block invites the step to report the
+          # refusal we just asked for as a failure.
+          exit 0
+
+      - name: Wipe, then restore for real
+        run: |
+          docker compose exec -T postgres psql -q -U portfoliouser -d portfoliodb \
+            -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+
+      - name: Round trip must return the same rows
+        shell: pwsh
+        run: |
+          $dump = (Get-ChildItem backups -Filter '*.sql.gz')[0].FullName
+          ./pdb.ps1 restore $dump
+          if ($LASTEXITCODE -ne 0) { throw 'restore failed' }
+          $n = (docker compose exec -T postgres psql -tAc 'SELECT count(*) FROM lots' -U portfoliouser -d portfoliodb | Out-String).Trim()
+          if ($n -ne '7') { throw "expected 7 lots after restore, got '$n'" }
+          Write-Host "round trip clean: $n lots restored"
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v

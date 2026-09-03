@@ -1,5 +1,11 @@
 # Running it: backups, upgrades, health
 
+Commands are written as `make` targets throughout. That is a macOS/Linux
+shorthand — every one of them wraps a single `docker compose` invocation, and
+[commands.md](commands.md) lists both forms side by side. On Windows use the
+compose form or `pdb.ps1`; the two exceptions where the translation is *not*
+mechanical are backup and restore, called out below.
+
 ## Backups
 
 The whole point of this project is that the data outlives the software, so this
@@ -9,10 +15,20 @@ is the section that matters most.
 make backup                       # -> backups/portfoliodb-YYYYmmdd-HHMMSS.sql.gz
 make backup ARGS=/mnt/nas/pdb     # somewhere else
 ```
+```powershell
+.\pdb.ps1 backup                  # Windows — same output, same layout
+.\pdb.ps1 backup D:\nas\pdb
+```
 
 That's a `pg_dump` of the entire database — schema, ledger, price history,
 settings, briefs — gzipped. It runs against the live container; no downtime, and
 no need to stop the scheduler.
+
+Both runners write to `backups/` by default and take any other destination as an
+argument. **If you do it by hand instead, read
+[commands.md](commands.md#backup) first** — the POSIX one-liner cannot be reused
+verbatim on Windows, and the naive translation produces a corrupt gzip that only
+fails on the day you try to restore it.
 
 **A backup on the same machine is not a backup.** Copy it off:
 
@@ -26,6 +42,20 @@ A weekly cron entry on the host is enough for most people:
 0 3 * * 0  cd /path/to/PortfolioDB && make backup && rsync -a backups/ you@nas:/backups/portfoliodb/
 ```
 
+On Windows, a Scheduled Task doing the same thing. Register it once:
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+  -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\path\to\PortfolioDB\pdb.ps1 backup D:\nas\pdb' `
+  -WorkingDirectory 'C:\path\to\PortfolioDB'
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 3am
+Register-ScheduledTask -TaskName 'PortfolioDB Backup' -Action $action -Trigger $trigger
+```
+
+Set `-WorkingDirectory` to the folder holding `docker-compose.yml`; `docker
+compose` resolves the project from the working directory, and a task that starts
+anywhere else will not find the stack. Avoid a colon in the task name.
+
 Your investor one-pager is inside the dump when you saved it through the
 dashboard; it is a separate file only if you mounted `philosophy.md` instead.
 Keep at least one copy of `.env` (and that file, if you use it) alongside the
@@ -38,6 +68,9 @@ password in `.env` gets you a database you can't open.
 ```bash
 make restore ARGS=backups/portfoliodb-20260813-030000.sql.gz
 ```
+```powershell
+.\pdb.ps1 restore .\backups\portfoliodb-20260813-030000.sql.gz
+```
 
 It refuses to run unless the target database is empty, because restoring over a
 live ledger is how you lose data twice. To rebuild from scratch:
@@ -48,6 +81,9 @@ docker volume rm portfoliodb_pgdata      # destroys the current database
 make up
 make restore ARGS=backups/portfoliodb-20260813-030000.sql.gz
 ```
+
+Without a runner, [commands.md](commands.md#restore) has the `docker compose`
+form for both platforms, including how to check the target is empty first.
 
 Test this once, on purpose, before you need it. An untested backup is a
 hypothesis.

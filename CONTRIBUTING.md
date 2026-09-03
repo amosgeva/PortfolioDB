@@ -19,6 +19,15 @@ make test
 `make` on its own lists every target. `make shell` drops you into the app
 container.
 
+**On Windows:** the Makefile assumes a POSIX shell — its recipes use `sed`,
+`base64`, `gzip` and `/dev/urandom` — so a `make.exe` alone will not run it.
+[docs/commands.md](docs/commands.md) gives the `docker compose` line behind every
+target, and `pdb.ps1` covers `init`, `backup` and `restore`. For the contributor
+workflow specifically, where you want `make test` and `make build` too, develop
+inside **WSL2** with the clone in the Linux filesystem (`~/portfoliodb`, not
+`/mnt/c`). Docker Desktop's own backend is WSL2, so it is almost certainly
+already installed.
+
 Enable the pre-commit hook once per clone (hooks aren't cloned):
 
 ```bash
