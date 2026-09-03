@@ -74,6 +74,13 @@ have no container assumptions): install `app/requirements.txt`, set
 box does exactly that through gitignored `run_*.ps1` launchers, which is why
 those are absent from a fresh clone.
 
+A repo-local venv at `.venv/` (gitignored) is the preferred home for that
+install, so the project's pins are not resolved against whatever else shares a
+system-wide interpreter. The launchers and `.githooks/pre-commit` look for
+`.venv/Scripts/python.exe` (Windows) or `.venv/bin/python` (POSIX) first and
+fall back to PATH, so a clone without a venv still runs — but a global install
+means an unrelated project's upgrade can change what this one imports.
+
 Enable the pre-commit hook (once per clone — hooks are not cloned):
 ```powershell
 git config core.hooksPath .githooks
