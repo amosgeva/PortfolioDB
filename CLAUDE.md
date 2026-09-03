@@ -134,7 +134,7 @@ Shared invariants across both:
 - `app/tests/` — pytest suite, currently only FIFO coverage.
 
 ### Snapshot collection
-`snapshot_prices.py` selects symbols with open quantity OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`fast_info` first, `info` fallback), and inserts with `ON CONFLICT DO NOTHING`. It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`.
+`snapshot_prices.py` selects symbols with open quantity OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`Ticker.info` only — `fast_info` is deliberately unused: its keys are camelCase, so the old `fi.get("last_price")` always returned `None` and every symbol fell through to `info` anyway, and it exposes neither bid/ask nor the trade timestamp the staleness guard needs), and inserts with `ON CONFLICT DO NOTHING`. It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`.
 
 ## Conventions
 
