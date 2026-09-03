@@ -13,7 +13,17 @@ set -e
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
-python=$(command -v python || command -v python3)
+# A repo-local venv wins when there is one, so the hook tests the same
+# interpreter the launchers use. `.venv/bin` is the POSIX layout, `.venv/Scripts`
+# the Windows one; PATH is the fallback for a clone with no venv.
+# Absolute, because check 2 runs from `app/` and a relative path would break.
+if [ -x "$repo_root/.venv/bin/python" ]; then
+    python="$repo_root/.venv/bin/python"
+elif [ -x "$repo_root/.venv/Scripts/python.exe" ]; then
+    python="$repo_root/.venv/Scripts/python.exe"
+else
+    python=$(command -v python || command -v python3)
+fi
 if [ -z "$python" ]; then
     echo "pre-commit: no python on PATH, skipping checks" >&2
     exit 0

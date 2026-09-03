@@ -74,6 +74,13 @@ have no container assumptions): install `app/requirements.txt`, set
 box does exactly that through gitignored `run_*.ps1` launchers, which is why
 those are absent from a fresh clone.
 
+A repo-local venv at `.venv/` (gitignored) is the preferred home for that
+install, so the project's pins are not resolved against whatever else shares a
+system-wide interpreter. The launchers and `.githooks/pre-commit` look for
+`.venv/Scripts/python.exe` (Windows) or `.venv/bin/python` (POSIX) first and
+fall back to PATH, so a clone without a venv still runs — but a global install
+means an unrelated project's upgrade can change what this one imports.
+
 Enable the pre-commit hook (once per clone — hooks are not cloned):
 ```powershell
 git config core.hooksPath .githooks
@@ -134,7 +141,7 @@ Shared invariants across both:
 - `app/tests/` — pytest suite, currently only FIFO coverage.
 
 ### Snapshot collection
-`snapshot_prices.py` selects symbols with open quantity OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`fast_info` first, `info` fallback), and inserts with `ON CONFLICT DO NOTHING`. It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`.
+`snapshot_prices.py` selects symbols with open quantity OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`Ticker.info` only — `fast_info` is deliberately unused: its keys are camelCase, so the old `fi.get("last_price")` always returned `None` and every symbol fell through to `info` anyway, and it exposes neither bid/ask nor the trade timestamp the staleness guard needs), and inserts with `ON CONFLICT DO NOTHING`. It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`.
 
 ## Conventions
 
