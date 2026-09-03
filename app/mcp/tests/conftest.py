@@ -146,13 +146,23 @@ def fake_db(monkeypatch):
     def fake_get_conn():
         yield FakeConn(state)
 
-    # Patch all call sites. Services and tools imported `get_conn` by name at
-    # import time, so we have to replace it inside every module that uses it.
+    # Import every call site BEFORE patching anything. Each of these modules
+    # binds `get_conn` into its own namespace with `from app.mcp.deps import
+    # get_conn` at import time, so a module first imported *after* deps was
+    # patched captures the fake as its module-level binding. monkeypatch then
+    # records the fake as that module's "original" and faithfully restores it
+    # on teardown — leaking a FakeConn into every later test, including the
+    # live-database ones in test_reconciliation.py. Which modules were already
+    # imported depends on which tests ran first, which is what made the leak
+    # look like flakiness. Import first, patch second, and the recorded
+    # original is always the real function.
     from app.mcp import deps
-    monkeypatch.setattr(deps, "get_conn", fake_get_conn)
+    from app.mcp.resources import reports as reports_resource
     from app.mcp.services import (
         activity as activity_service,
         analytics as analytics_service,
+        cutoff as cutoff_service,
+        data_quality as data_quality_service,
         fees as fees_service,
         fundamentals as fundamentals_service,
         health as health_service,
@@ -162,15 +172,20 @@ def fake_db(monkeypatch):
         positions as positions_service,
         prices as prices_service,
         returns as returns_service,
+        review as review_service,
     )
+    from app.mcp.tools import meta_tools
+
+    # Every module that holds its own `get_conn` reference — keep in sync with
+    # `grep -rl 'import get_conn' app/mcp`, which the hygiene test enforces.
     for mod in (
-        health_service, activity_service, analytics_service,
-        fees_service, fundamentals_service, income_service, kpis_service,
-        pnl_service, positions_service, prices_service, returns_service,
+        deps, health_service, activity_service, analytics_service,
+        cutoff_service, data_quality_service, fees_service,
+        fundamentals_service, income_service, kpis_service, pnl_service,
+        positions_service, prices_service, returns_service, review_service,
+        reports_resource, meta_tools,
     ):
         monkeypatch.setattr(mod, "get_conn", fake_get_conn)
-    from app.mcp.tools import meta_tools
-    monkeypatch.setattr(meta_tools, "get_conn", fake_get_conn)
     # ping_db inside health.py uses deps.ping_db -> deps.get_conn, but
     # ping_db is also imported by name; patch that direct reference too.
     monkeypatch.setattr(
