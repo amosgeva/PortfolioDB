@@ -21,8 +21,8 @@ investing rules you wrote yourself before it says anything, and an MCP server le
 your own AI agents query the whole thing. Self-hosted, single-user, no accounts, no
 telemetry, no broker credentials.
 
-Runs anywhere Docker runs: `make init && make up && make schema` and you have a
-dashboard on port 8501.
+Runs anywhere Docker runs — Windows, macOS and Linux: three `docker compose`
+commands and you have a dashboard on port 8501.
 
 > ### What this is, and what it is not
 >
@@ -119,11 +119,15 @@ random-walk prices, not anyone's holdings.</sub>
 
 ## Quick start
 
-You need Docker with Compose. Nothing else: the application image is **pulled,
-not built**, so there is no Python, no toolchain, and no compile step on your
-machine.
+You need Docker with Compose, on Windows, macOS or Linux. Nothing else: the
+application image is **pulled, not built**, so there is no Python, no toolchain,
+and no compile step on your machine — and no `make` either. Every step below is
+plain `docker compose`; the per-platform shortcut runners are
+[optional](#shortcuts).
 
 ### 1. Make a directory and fetch two files
+
+**macOS / Linux**
 
 ```bash
 mkdir portfoliodb && cd portfoliodb
@@ -131,16 +135,33 @@ curl -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/docker-c
 curl -fsSL  https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/.env.template -o .env
 ```
 
-Optionally a third, if you want the shortcuts (`make positions`, `make backup`, …):
+**Windows (PowerShell)**
+
+```powershell
+mkdir portfoliodb; cd portfoliodb
+curl.exe -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/docker-compose.yml
+curl.exe -fsSL  https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/.env.template -o .env
+```
+
+Note the `.exe`. Windows has shipped `curl.exe` since Windows 10 1803, but in
+Windows PowerShell 5.1 the bare word `curl` is an alias for `Invoke-WebRequest`,
+which rejects those flags. Naming the executable skips the alias.
+
+Optionally a third, if you want the [shortcuts](#shortcuts) — the Makefile on
+macOS/Linux, `pdb.ps1` on Windows:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/Makefile
+```
+```powershell
+curl.exe -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/pdb.ps1
 ```
 
 ### 2. Configure `.env` before starting anything
 
 ```bash
-$EDITOR .env
+$EDITOR .env        # macOS/Linux
+notepad .env        # Windows
 ```
 
 Two values matter for a first start; everything else can stay empty:
@@ -158,7 +179,18 @@ Worth setting now if they apply to you:
 | `LLM_API_KEY` | Enables the advisor. Any provider — Anthropic, OpenAI, OpenRouter, or a local model with no key at all ([providers](docs/llm-providers.md)) |
 | `PORTFOLIODB_MCP_TOKEN` | Only if you plan to let AI agents query the ledger |
 
-Then keep it private: `chmod 600 .env`.
+Then keep it private:
+
+```bash
+chmod 600 .env                                                    # macOS/Linux
+```
+```powershell
+icacls .env /inheritance:r /grant:r "$($env:USERNAME):(R,W)"      # Windows
+```
+
+On NTFS this is an ACL, not a mode bit. `/inheritance:r` is the part that
+matters — it drops the permissions the file inherited from its parent, without
+which the grant is merely additive and the file stays readable by others.
 
 ### 3. Start it, create the tables, and look around
 
@@ -170,10 +202,18 @@ docker compose run --rm dashboard python app/demo_seed.py --yes   # optional dem
 
 Open <http://localhost:8501>.
 
-With the Makefile those three become `make up`, `make schema`, `make demo-seed`,
-and `make` on its own lists every target. It also gives you a shortcut for step
-2 — `make init` generates the password, writes it to both keys, generates an MCP
-token and `chmod 600`s the file, so the whole install is:
+These three are identical on macOS, Linux and Windows — Docker takes the same
+arguments everywhere. Only fetching the files and locking down `.env` above
+differ by platform, and everything from here on is the same on all three.
+
+### Shortcuts
+
+Those `docker compose` lines are the whole product and you never need anything
+else. Each platform also has a shortcut runner that wraps them, and both give
+you the same one-command version of step 2 — generate a password, write it to
+both keys, generate an MCP token, and lock the file down:
+
+**macOS / Linux — the Makefile.** `make` on its own lists every target.
 
 ```bash
 mkdir portfoliodb && cd portfoliodb
@@ -183,8 +223,53 @@ curl -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/Makefile
 make init && make up && make schema
 ```
 
-`make init` is safe to re-run: it fills in only what is empty and never rotates a
-secret you already have. Set `PORTFOLIODB_TZ` and any LLM key by hand afterwards.
+**Windows — `pdb.ps1`.** `.\pdb.ps1 help` lists what it covers.
+
+```powershell
+mkdir portfoliodb; cd portfoliodb
+curl.exe -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/docker-compose.yml
+curl.exe -fsSL  https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/.env.template -o .env
+curl.exe -fsSLO https://raw.githubusercontent.com/amosgeva/PortfolioDB/main/pdb.ps1
+.\pdb.ps1 init
+docker compose up -d
+docker compose run --rm dashboard python app/apply_schema.py
+```
+
+If that reports **"running scripts is disabled on this system"**, Windows is
+refusing to run *any* local script — its default on a client machine. Allow your
+own scripts once, which is the narrowest setting that works:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Or leave the machine alone and pass it per run:
+`powershell -ExecutionPolicy Bypass -File .\pdb.ps1 init`. If you downloaded the
+file with a *browser* rather than `curl.exe`, also run `Unblock-File .\pdb.ps1` —
+a browser tags downloads in a way that `RemoteSigned` rejects.
+
+`init` is safe to re-run on either platform: it fills in only what is empty and
+never rotates a secret you already have. Set `PORTFOLIODB_TZ` and any LLM key by
+hand afterwards.
+
+**The Makefile needs a POSIX shell, so it is not the Windows path.** Its recipes
+use `sed`, `base64`, `gzip` and `/dev/urandom`, so installing a `make.exe` is not
+enough on its own. `pdb.ps1` covers the three targets that carry real logic —
+`init`, `backup` and `restore` — and [docs/commands.md](docs/commands.md)
+translates every other target into the `docker compose` line it runs. Prefer the
+full Makefile on Windows? Run the project inside **WSL2**, which Docker Desktop
+almost certainly already installed for you, since it is Docker's own backend:
+
+```bash
+wsl                                  # then work inside the Linux filesystem
+git clone https://github.com/amosgeva/PortfolioDB.git ~/portfoliodb
+```
+
+Keep the project in the WSL filesystem (`~/portfoliodb`), not under `/mnt/c`, and
+if you use WSL do **not** apply the `./data` bind-mount override described in
+`docker-compose.override.yml.example` — Postgres on a `/mnt/c` mount hits
+permission and `fsync` problems. The default `pgdata` named volume is the right
+choice there.
 
 To upgrade later: `docker compose pull && docker compose up -d` then
 `apply_schema.py` again (it is idempotent). Read
@@ -349,9 +434,12 @@ make test                          # both suites, inside the container
 ```
 
 Each target is a thin wrapper — `docker compose run --rm dashboard python app/positions.py`
-and friends work directly if you prefer. Running the Python on the host also
-works: install `app/requirements.txt`, set `PORTFOLIODB_PASSWORD`, and run the
-scripts from `app/`.
+and friends work directly if you prefer, on any platform.
+**[docs/commands.md](docs/commands.md) lists every target beside the exact
+`docker compose` line it runs**, which is what to use on Windows or anywhere
+without `make`. Running the Python on the host also works: install
+`app/requirements.txt`, set `PORTFOLIODB_PASSWORD`, and run the scripts from
+`app/`.
 
 ---
 

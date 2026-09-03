@@ -16,6 +16,102 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-03
+
+A release about installing this on Windows. No figure changes, no schema and no
+migration — see **Upgrading** — and nothing here alters an existing install on
+macOS or Linux. What changes is that the documented path now works on all three
+platforms, and one of the ways it previously did not was capable of losing a
+backup.
+
+The project told everyone to run `make`, which is a POSIX shell script runner
+wearing a build tool's name. Its recipes reach for `sed`, `base64`, `gzip` and
+`/dev/urandom`, so on Windows even a current `make.exe` cannot run six of the
+thirty-one targets — including the bare `make` that lists them. The README's
+`make`-free path was no better: it opened with `curl -fsSLO`, `$EDITOR` and
+`chmod 600`, none of which do what they say on a stock Windows box.
+
+### Added
+
+- **`pdb.ps1`, a Windows runner** for the three targets that carry real logic:
+  `init`, `backup` and `restore`. It runs on Windows PowerShell 5.1 — what a
+  fresh Windows box actually has — as well as PowerShell 7. Everything else the
+  Makefile does is a single `docker compose` command that is identical on every
+  platform, so wrapping those would add a second thing to keep in step and buy
+  nothing.
+
+- **[docs/commands.md](docs/commands.md), every target beside the command it
+  runs.** This is the reference for anyone without `make`, and CI now fails if a
+  Makefile target exists that appears in neither this page nor `pdb.ps1` — the
+  drift is otherwise silent and invisible to a Linux-only build.
+
+- **A per-platform quick start**, with the Windows equivalents written out
+  rather than left as an exercise: `curl.exe` (in PowerShell 5.1 the bare word
+  `curl` is an alias for `Invoke-WebRequest`, which rejects those flags),
+  `notepad`, and `icacls .env /inheritance:r` in place of `chmod 600` — on NTFS
+  this is an ACL, and without dropping inherited entries the grant is merely
+  additive and the file stays readable.
+  - Also the first-run wall nobody warns you about: Windows refuses to run any
+    local script by default, so `.\pdb.ps1` reports "running scripts is disabled
+    on this system" until you allow it.
+
+- **WSL2 named as the way to get the full Makefile on Windows**, since Docker
+  Desktop's own backend is WSL2 and has almost certainly installed it already.
+  With the warning that goes with it: keep the project in the Linux filesystem,
+  and do not point the `./data` bind-mount override at a `/mnt/c` path.
+
+### Fixed
+
+- **A Windows backup could produce a corrupt archive and tell you it had
+  worked.** This is the one item here that could have cost data. Translating
+  `pg_dump | gzip > file` to Windows fails twice: there is no host `gzip`, and
+  Windows PowerShell 5.1 decodes a native command's output as *text* before
+  redirecting it, so the compressed stream is re-encoded on its way to disk.
+  Measured on a real ledger, the same dump came out 5.6 MB and unreadable that
+  way against 2.9 MB and valid. Nothing reports an error; `gzip -t` rejects the
+  file, and otherwise you find out on the day you restore.
+  - `pdb.ps1 backup` compresses **inside** the container and moves the finished
+    file out with `docker compose cp`, so no binary data crosses the host shell.
+    `docs/commands.md` documents that form for anyone doing it by hand, and CI
+    asserts the round trip with `gzip -t` rather than checking that a file
+    appeared. PowerShell 7 does not corrupt the redirect; the documented form
+    works on both, so there is nothing to remember.
+  - `pdb.ps1 restore` keeps the Makefile's guard and refuses to load a dump
+    into a database that already has tables.
+
+### Changed
+
+- `CONTRIBUTING.md`, `CLAUDE.md`, `docs/operations.md`, `docs/csv-import.md`
+  and `docs/exposure.md` now say where `make` does not apply and what to run
+  instead. `docs/operations.md` gains a Windows Scheduled Task recipe beside the
+  weekly cron entry.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+**No figure changes.** No schema, no stored value and no computation was
+touched. Not one file under `app/` changed — the engines, the dashboard and the
+MCP server are the same code as 1.3.0, and the only reason the image is rebuilt
+at all is the version number in `server.json` that the footer reports. This
+release is documentation, one new script, and tests.
+
+**Nothing to do on macOS or Linux.** The Makefile is unchanged — not one recipe
+was edited — so every `make` command keeps working exactly as before. `pdb.ps1`
+is additive and irrelevant to those platforms.
+
+**If you already installed on Windows**, the thing worth acting on is the backup
+note above. Test any Windows-made dump you are relying on:
+
+```powershell
+docker compose cp .\backups\your-dump.sql.gz postgres:/tmp/t.gz
+docker compose exec -T postgres sh -c 'gunzip -t /tmp/t.gz && echo VALID || echo CORRUPT'
+docker compose exec -T postgres rm /tmp/t.gz
+```
+
+An untested backup is a hypothesis, and this is the release that says which
+hypothesis was wrong.
+
 ## [1.3.0] — 2026-09-02
 
 A security and hygiene release. No figure changes and no migration — see
@@ -773,7 +869,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.4.0
 [1.3.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.3.0
 [1.2.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.2
 [1.2.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.1

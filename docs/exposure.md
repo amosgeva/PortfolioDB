@@ -114,7 +114,8 @@ services:
 - [ ] Nothing forwarded from the router to 8501 or 54320
 - [ ] Dashboard bound to `127.0.0.1` if the LAN isn't trusted
 - [ ] Remote access via tailnet or an authenticating proxy, never raw
-- [ ] `PORTFOLIODB_MCP_TOKEN` is long and random (`make init` generates one)
+- [ ] `PORTFOLIODB_MCP_TOKEN` is long and random (`make init` / `.\pdb.ps1 init`
+      generates one)
 - [ ] `portfoliodb_ro` role created, so the MCP surface can't write
 - [ ] `.env` is not world-readable (`chmod 600 .env`)
 - [ ] Backups exist and live somewhere other than this host

@@ -161,6 +161,10 @@ without claiming you own it.
 make positions        # does the ledger look right?
 ```
 
+(Without `make` — on Windows, say — that is
+`docker compose run --rm dashboard python app/positions.py`. See
+[commands.md](commands.md) for the rest.)
+
 Check a couple of positions against your broker before trusting the numbers —
 cost basis is recomputed from the lots you just imported, so an import error
 shows up as a wrong average cost rather than an error message. If something is

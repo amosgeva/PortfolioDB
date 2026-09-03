@@ -15,6 +15,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Everything routes through the `Makefile`, which wraps `docker compose`. `make`
 on its own lists every target.
 
+The Makefile assumes a **POSIX** shell (the Unix command-line environment macOS
+and Linux provide and Windows does not) — its recipes use `sed`, `base64`, `gzip`
+and `/dev/urandom`, so it is not the Windows path. There are three descriptions
+of how to run this project and they are meant to agree:
+
+- `Makefile` — the runner on macOS and Linux.
+- `docs/commands.md` — the canonical `make` → `docker compose` mapping.
+- `pdb.ps1` — the Windows runner, implementing only the three targets with real
+  logic (`init`, `backup`, `restore`).
+
+So a change to one of those three targets, or to a compose invocation in the
+Makefile, normally has to land in all three places, and CI enforces it
+(`.github/workflows/ci.yml`, the `wrapper-*` jobs). **Exception:** a target that
+is deliberately POSIX-only needs no `pdb.ps1` counterpart — add it to
+`docs/commands.md` and to the `NOT_TRANSLATABLE` or `WRAPPED` set in
+`tools/tests/test_runner_parity.py`, which is where that judgement is recorded.
+
+**Do not hand-translate `backup`/`restore` for Windows.** There is no host
+`gzip`, and PowerShell 5.1 decodes native-command output as text before
+redirection, so piping a dump through `>` corrupts it silently and only fails at
+restore time. Compress inside the container and move the file with
+`docker compose cp` — see `docs/commands.md#backup`. **Exception:** on
+PowerShell 7 the redirect is safe, so a one-off `docker compose exec` pipeline is
+fine when you know the host is 7 and you verify the result with `gzip -t`.
+Anything written down for someone else to run should still use the portable
+form, because a reader on 5.1 gets a corrupt archive and no error.
+
 ```bash
 make up          # postgres + dashboard (:8501) + scheduler
 make schema      # create/refresh tables, then apply sql/migrations/* in order
