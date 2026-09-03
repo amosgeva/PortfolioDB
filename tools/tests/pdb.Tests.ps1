@@ -23,6 +23,13 @@ BeforeAll {
     if (-not $script:PsHost) { $script:PsHost = 'pwsh' }
 
     function New-Sandbox {
+        # A -WhatIf switch on a test fixture would be ceremony: it makes a temp
+        # directory that the test itself removes in its own finally block.
+        # Suppressed here rather than repo-wide, so the settings file keeps
+        # excluding exactly one rule.
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+            'PSUseShouldProcessForStateChangingFunctions', '',
+            Justification = 'Test fixture; creates and removes its own temp directory.')]
         param([switch]$NoTemplate)
         $dir = Join-Path ([System.IO.Path]::GetTempPath()) ("pdbt-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Path $dir -Force | Out-Null

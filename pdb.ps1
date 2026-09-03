@@ -50,7 +50,7 @@ function Test-OnWindows {
     return [bool]$IsWindows
 }
 
-function Write-EnvLines {
+function Write-EnvFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         # AllowEmptyString as well as AllowEmptyCollection: a mandatory
@@ -67,7 +67,7 @@ function Write-EnvLines {
     [System.IO.File]::WriteAllText($Path, $text, $utf8NoBom)
 }
 
-function Read-EnvLines {
+function Read-EnvFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return @() }
     return [System.IO.File]::ReadAllLines($Path)
@@ -79,19 +79,24 @@ function Get-EnvValue {
         [Parameter(Mandatory = $true)][string]$Key
     )
     $pattern = '^' + [regex]::Escape($Key) + '=(.*)$'
-    foreach ($line in (Read-EnvLines -Path $Path)) {
+    foreach ($line in (Read-EnvFile -Path $Path)) {
         if ($line -match $pattern) { return $Matches[1] }
     }
     return ''
 }
 
 function Set-EnvValue {
+    # SupportsShouldProcess because this one really does change state -- it
+    # rewrites a file holding secrets. That makes -WhatIf work through
+    # $WhatIfPreference, which is worth having on the only function here that
+    # can overwrite a password.
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Key,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value
     )
-    $lines = @(Read-EnvLines -Path $Path)
+    $lines = @(Read-EnvFile -Path $Path)
     $pattern = '^' + [regex]::Escape($Key) + '='
     $found = $false
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -101,10 +106,14 @@ function Set-EnvValue {
         }
     }
     if (-not $found) { $lines += "$Key=$Value" }
-    Write-EnvLines -Path $Path -Lines $lines
+    # The value is deliberately not in the message: it is a secret, and
+    # -WhatIf output goes to a console and often into a log.
+    if ($PSCmdlet.ShouldProcess($Path, "set $Key")) {
+        Write-EnvFile -Path $Path -Lines $lines
+    }
 }
 
-function New-Secret {
+function Get-RandomSecret {
     param([Parameter(Mandatory = $true)][int]$Length)
     # Mirrors the Makefile: head -c 48 /dev/urandom | base64 | tr -d '/+=' .
     # RandomNumberGenerator::Create() rather than Get-Random (not cryptographic)
@@ -179,7 +188,7 @@ function Invoke-Init {
     $app = Get-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_PASSWORD'
 
     if ((-not $pg) -and (-not $app)) {
-        $pw = New-Secret -Length 22
+        $pw = Get-RandomSecret -Length 22
         Set-EnvValue -Path $EnvFile -Key 'POSTGRES_PASSWORD'   -Value $pw
         Set-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_PASSWORD' -Value $pw
         Write-Host 'Generated a Postgres password and set both keys to it.'
@@ -202,7 +211,7 @@ function Invoke-Init {
     }
 
     if (-not (Get-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_MCP_TOKEN')) {
-        Set-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_MCP_TOKEN' -Value (New-Secret -Length 40)
+        Set-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_MCP_TOKEN' -Value (Get-RandomSecret -Length 40)
         Write-Host 'Generated an MCP token.'
     }
     else {
