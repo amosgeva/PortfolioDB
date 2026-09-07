@@ -16,21 +16,73 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-09-07
+
+The application image moves to Python 3.14, and CI now builds that image before
+a change to it can be merged. No figure changes, no schema and no migration —
+see **Upgrading**.
+
+Minor rather than patch because the interpreter the image ships is part of what
+it delivers, not an implementation detail: anything built `FROM` this image that
+installs a wheel with no 3.14 build breaks across this boundary, and a patch
+should not be able to do that. Nothing inside the application changed.
+
+### Added
+
+- **CI builds `app/Dockerfile`, then runs the suites inside the result.** Until
+  this release nothing in CI ever built the image. `ci.yml` starts only the
+  `postgres` service, the Python suites run on the host runner, and `make test`
+  runs against the *pulled* image because `docker-compose.yml` declares
+  `image:` and not `build:`. The publish workflow does build it — after merge.
+
+  So a change to the Dockerfile could pass every check without anyone learning
+  whether the image still built, and one did: a scanner's base-image PR
+  swapping Debian for Alpine went green on all seven checks while
+  `docker build` failed at the second of thirteen steps with
+  `apt-get: not found`. The new job fails on that Dockerfile and passes on this
+  one, which is the only evidence worth having that the gap is closed.
+
+  Building alone is necessary and not sufficient, so the job also imports every
+  pin and validates the crontab — a base image can build cleanly and still ship
+  an interpreter your pins have no wheels for, which was true of that same PR.
+  It builds amd64 only; the publish workflow covers arm64.
+
 ### Changed
 
-- The application image is built on `python:3.14-slim` instead of
-  `python:3.13-slim`. No figure changes: both engines' `Decimal` math, the
-  merge step and the reconciliation suite are unaffected, and the full suite
-  passes inside the image on 3.14. Nothing is required of an existing install —
-  `docker compose pull` picks up the new interpreter on its own.
+- **The application image is built on `python:3.14-slim` instead of
+  `python:3.13-slim`.** Verified in the built image: both suites pass, every
+  pin imports, supercronic is present with a valid crontab, and `zoneinfo`
+  still resolves. pandas 3.0.5 and streamlit 1.63.0 are the versions 1.4.0
+  shipped; the only other difference is numpy 2.5.2 to 2.5.3, a patch-level
+  float any rebuild would have picked up.
 
-  This is a currency bump and **not** a security fix, which is worth stating
-  because a bot will keep proposing it as one. The open Snyk finding on this
-  image is a medium-severity util-linux use-after-free
-  (`SNYK-DEBIAN13-UTILLINUX-17690419`), and both tags carry the identical
-  `util-linux 2.41.5-0+deb13u1` — already the newest build Debian ships, from
-  `trixie-security`. There is no patched util-linux to move to, so no
-  Debian-based tag clears that finding today. Leaving Debian would.
+  This is a currency bump and **not** the security fix a scanner will keep
+  proposing it as. Verified on 2026-09-07: `python:3.13-slim` and
+  `python:3.14-slim` carried the identical `util-linux 2.41.5-0+deb13u1`, and
+  `apt-cache policy` inside the image reported that same version as the newest
+  available, from `trixie-security`. There was no patched util-linux to move
+  to, so no Debian-based tag cleared `SNYK-DEBIAN13-UTILLINUX-17690419` — a
+  medium-severity use-after-free on code paths this container never calls.
+  Leaving Debian would clear it, at the cost of a port: this Dockerfile reaches
+  for `apt-get` in three places and `useradd` in a fourth.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+**No figure changes.** No schema, no stored value and no computation was
+touched. The engines, the dashboard and the MCP server are the same code as
+1.4.0 — the only file under `app/` that differs is the Dockerfile, and the only
+other change is the version number in `server.json` that the footer reports.
+What moved is the interpreter underneath them.
+
+**If you build your own image `FROM` this one, check it still builds before you
+roll it out.** A wheel pinned to cp313, or a `pip install` of anything with no
+3.14 build, will fail where it previously worked. This is the one case in this
+release that can break something.
+
+**Host installs (not compose) are unaffected.** They run whatever Python you
+installed, and this release does not touch `app/requirements.txt`.
 
 ## [1.4.0] — 2026-09-03
 
