@@ -160,6 +160,80 @@ jobs:
       - name: Reconciliation suite
         run: python -m pytest app/mcp/tests/ -m slow -q
 
+  # Until this job existed, nothing in CI ever built app/Dockerfile — so a
+  # Dockerfile-only PR passed every check without anyone learning whether the
+  # image still built. Not hypothetical: PR #65, a bot's base-image "fix"
+  # swapping Debian for Alpine, went green on all seven checks while
+  # `docker build` died on line 35 with `apt-get: not found`.
+  #
+  # The other two Docker-touching jobs cannot catch it. `reconciliation` only
+  # starts the `postgres` service, and `make test` runs against the *pulled*
+  # image — docker-compose.yml declares `image:`, not `build:`, so the tree's
+  # own Dockerfile is never consulted. publish.yml does build it, but only on a
+  # release tag, which is after merge.
+  #
+  # Building is necessary and not sufficient: a base-image change can build
+  # cleanly and still ship an interpreter the pins have no wheels for. So the
+  # suites run *inside* the image as well, which is what actually proves the
+  # dependency set resolved on whatever `FROM` now names.
+  #
+  # amd64 only. The one arch-sensitive line is the supercronic SHA `case`, and
+  # covering arm64 here would mean QEMU plus an emulated pip install on every
+  # PR; publish.yml builds both platforms at release. If that trade stops
+  # looking right, add `docker/setup-qemu-action` and a matrix.
+  image:
+    name: Application image (build and self-test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Plain `docker build`, deliberately: the runner already has BuildKit, and
+      # this way one build needs no third-party action pinned and audited.
+      - name: Build the image
+        run: docker build -f app/Dockerfile -t portfoliodb-ci:${{ github.sha }} .
+
+      # The same two invocations `make test` uses, split for the same reason:
+      # run both in one pytest process and four reconciliation tests fail on
+      # cross-test state. The MCP suite runs from /app, never /app/app — there
+      # the local app/mcp/ package lands on the path as top-level `mcp` and
+      # shadows the SDK that fastmcp imports.
+      - name: Test suites inside the image
+        run: |
+          docker run --rm portfoliodb-ci:${{ github.sha }} sh -c '
+            pip install --user --quiet pytest &&
+            export PATH=$PATH:/home/appuser/.local/bin &&
+            echo "-- app suite --" && cd /app/app && python -m pytest tests/ -q &&
+            echo "-- MCP suite --" && cd /app && python -m pytest app/mcp/tests/ -m "not slow" -q'
+
+      # Every dependency must *import*, not merely install. This is the check
+      # that fails loudly on a base image the pins have no wheels for, and the
+      # `mcp` entry doubles as the shadowing guard: it resolves to the installed
+      # SDK only because PYTHONPATH is /app and the package lives at /app/app.
+      - name: Every dependency imports
+        run: |
+          docker run --rm portfoliodb-ci:${{ github.sha }} python -c '
+          import importlib, sys
+          bad = []
+          for m in ["psycopg2", "pandas", "yfinance", "dotenv", "streamlit",
+                    "dateutil", "plotly", "anthropic", "openai", "fastmcp",
+                    "uvicorn", "mcp"]:
+              try:
+                  importlib.import_module(m)
+              except Exception as exc:
+                  bad.append(f"{m}: {exc}")
+          print(sys.version)
+          for line in bad:
+              print("::error::dependency failed to import:", line)
+          sys.exit(1 if bad else 0)'
+
+      # The scheduler's two silent-at-runtime failure modes: a supercronic that
+      # did not land where the compose command looks for it, and a crontab it
+      # will refuse to start on. `-test` exits non-zero on an invalid one.
+      - name: Scheduler entrypoint and crontab
+        run: |
+          docker run --rm portfoliodb-ci:${{ github.sha }} \
+            /usr/local/bin/supercronic -test /app/docker/crontab
+
   # pdb.ps1 is the Windows runner, and until this job existed nothing on a
   # Linux-only CI could tell whether it still parsed, let alone worked. It is
   # split in two on purpose, because of one hard constraint:
