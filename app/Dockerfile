@@ -9,7 +9,7 @@
 #   scheduler  /usr/local/bin/supercronic /app/docker/crontab  (absolute path!)
 #   CLIs       docker compose run --rm dashboard python app/add_lot.py ...
 
-FROM python:3.13-slim
+FROM python:3.15-rc-alpine3.22
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
