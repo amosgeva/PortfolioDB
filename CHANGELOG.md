@@ -16,6 +16,22 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Changed
+
+- The application image is built on `python:3.14-slim` instead of
+  `python:3.13-slim`. No figure changes: both engines' `Decimal` math, the
+  merge step and the reconciliation suite are unaffected, and the full suite
+  passes inside the image on 3.14. Nothing is required of an existing install —
+  `docker compose pull` picks up the new interpreter on its own.
+
+  This is a currency bump and **not** a security fix, which is worth stating
+  because a bot will keep proposing it as one. The open Snyk finding on this
+  image is a medium-severity util-linux use-after-free
+  (`SNYK-DEBIAN13-UTILLINUX-17690419`), and both tags carry the identical
+  `util-linux 2.41.5-0+deb13u1` — already the newest build Debian ships, from
+  `trixie-security`. There is no patched util-linux to move to, so no
+  Debian-based tag clears that finding today. Leaving Debian would.
+
 ## [1.4.0] — 2026-09-03
 
 A release about installing this on Windows. No figure changes, no schema and no

@@ -110,7 +110,7 @@ random-walk prices, not anyone's holdings.</sub>
 - **Postgres 16** in Docker; the database lives in a named volume (`pgdata`)
 - **One application image** for every service — dashboard (Streamlit), scheduler
   (supercronic), MCP server (uvicorn), and the CLIs
-- Python 3.13 in the image; `psycopg2`, `pandas`, `yfinance`, `streamlit`,
+- Python 3.14 in the image; `psycopg2`, `pandas`, `yfinance`, `streamlit`,
   `plotly`, and whichever LLM SDK your provider needs
 - No cloud dependencies. Price data comes from yfinance; everything else is
   yours and stays local.
