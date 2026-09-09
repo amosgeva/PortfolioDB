@@ -730,11 +730,15 @@ def _render_settings_section() -> None:
                 value=settings.get("llm_model", env=("LLM_MODEL", "PORTFOLIODB_ADVISOR_MODEL"), default="") or "",
                 help="Empty = provider default.",
             )
-            base_url_val = sc2.text_input(
-                "Base URL (openrouter / ollama / custom only)",
-                value=settings.get("llm_base_url", env="LLM_BASE_URL", default="") or "",
-                help="Empty = provider default. From Docker, host Ollama is "
-                     "http://host.docker.internal:11434/v1",
+            # Read-only on purpose. This page has no login, and a URL typed
+            # here used to decide where the provider's API key was sent —
+            # anyone who could open the dashboard could point `openai` at
+            # their own server and collect OPENAI_API_KEY from the next brief.
+            # The base URL now comes from .env only (app/llm.py).
+            sc2.markdown(
+                f"**Base URL:** `{llm.base_url(provider_val) or 'provider default'}` — "
+                "set `LLM_BASE_URL` in the repo-root `.env` to change it. Not editable "
+                "here on purpose: a URL saved from this page would receive the API key."
             )
 
         st.caption("Saving an empty field clears the override so `.env` / defaults apply again.")
@@ -764,13 +768,15 @@ def _render_settings_section() -> None:
                 ("market_week", week_val, "PORTFOLIODB_MARKET_WEEK", market_window.DEFAULT_WEEK),
                 ("llm_provider", provider_val, "LLM_PROVIDER", "anthropic"),
                 ("llm_model", model_val, ("LLM_MODEL", "PORTFOLIODB_ADVISOR_MODEL"), None),
-                ("llm_base_url", base_url_val, "LLM_BASE_URL", None),
             ):
                 val = (raw or "").strip()
                 if val and val != (settings.fallback(key, env=env_names, default=dflt) or ""):
                     settings.set_value(key, val)
                 else:
                     settings.unset(key)
+            # The base URL was a field here before 1.7.0 and may have left a
+            # row behind. llm.base_url() ignores it; this makes it go away.
+            settings.unset("llm_base_url")
             st.success("Settings saved.")
             st.cache_data.clear()
             st.rerun()
