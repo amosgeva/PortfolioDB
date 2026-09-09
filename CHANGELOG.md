@@ -18,6 +18,20 @@ needs a schema step says so under **Upgrading**.
 
 ### Security
 
+- **The advisor's base URL is read from `LLM_BASE_URL` in `.env` only; the
+  Settings-page field is gone.** The page has no login, and the base URL is
+  where the OpenAI-compatible client sends the API key: anyone who could open
+  the dashboard could point `openai` at a server they controlled, trigger a
+  brief, and receive `OPENAI_API_KEY` as a Bearer header. A URL from an
+  unauthenticated form must never decide where a secret goes. In addition a
+  vendor's named key (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) now only travels
+  to that vendor's own origin — an `LLM_BASE_URL` that points the provider
+  elsewhere sends the generic `LLM_API_KEY`, or fails with a message naming
+  the two variables. **Upgrading:** if you had set a base URL on the Settings
+  page (Ollama on the Docker host is the common case), put the same value in
+  `.env` as `LLM_BASE_URL=…` and restart. The old row is ignored, logged once,
+  and deleted the next time Settings is saved.
+
 - **The MCP server's unauthenticated `/healthz` now answers only `ok`, `db`
   and `last_snapshot_age_s`.** It used to return the full `get_health`
   payload: the last collector run's `error` text verbatim — which names the

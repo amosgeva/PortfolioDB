@@ -6,6 +6,7 @@ directly (the resolution logic under test is get()/source_of(), not psycopg2).
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -153,6 +154,138 @@ class TestProviderSelection:
         fake_db({})
         assert llm._openai_token_param("openai", 50) == {"max_completion_tokens": 50}
         assert llm._openai_token_param("openrouter", 50) == {"max_tokens": 50}
+
+
+# ── where the key is allowed to go (audit F01) ────────────────────
+
+
+def _chat_completion_json() -> dict:
+    return {
+        "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": "ok"}}],
+    }
+
+
+def _drive_real_sdk(provider: str):
+    """Build the real client, send one completion through an in-memory
+    transport, and return (url, authorization header) as the server saw them.
+    No network, no real key."""
+    import httpx
+
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json=_chat_completion_json())
+
+    client = llm._openai_client(
+        provider, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    client.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+    return seen["url"], seen["auth"]
+
+
+class TestBaseUrlIsEnvOnly:
+    """The Settings page has no login. A base URL saved there decided where the
+    provider's key was sent, so a dashboard visitor could point `openai` at
+    their own server and collect OPENAI_API_KEY. The database is no longer
+    consulted for the URL at all."""
+
+    def test_a_database_row_is_ignored(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "openai", "llm_base_url": "https://audit-sink.invalid/v1"})
+        monkeypatch.setattr(llm, "_stale_base_url_row_warned", False)
+        assert llm.base_url() == "https://api.openai.com/v1"
+
+    def test_a_database_row_is_reported_once(self, fake_db, monkeypatch, caplog):
+        fake_db({"llm_provider": "openai", "llm_base_url": "https://audit-sink.invalid/v1"})
+        monkeypatch.setattr(llm, "_stale_base_url_row_warned", False)
+        with caplog.at_level("WARNING", logger="llm"):
+            llm.base_url()
+            llm.base_url()
+        assert sum("llm_base_url" in r.getMessage() for r in caplog.records) == 1
+
+    def test_env_still_works(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "ollama"})
+        monkeypatch.setenv("LLM_BASE_URL", "http://host.docker.internal:11434/v1")
+        assert llm.base_url() == "http://host.docker.internal:11434/v1"
+
+    def test_real_sdk_ignores_the_row_and_keys_the_vendor(self, fake_db, monkeypatch):
+        """End to end through the OpenAI SDK: a poisoned settings row does not
+        move the request, and the vendor key reaches the vendor."""
+        fake_db({"llm_provider": "openai", "llm_base_url": "https://audit-sink.invalid/v1"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-synthetic")
+        url, auth = _drive_real_sdk("openai")
+        assert url.startswith("https://api.openai.com/v1/")
+        assert auth == "Bearer sk-openai-synthetic"
+
+
+class TestKeyStaysWithItsVendor:
+    """Belt and braces under the env-only rule: even an operator-set
+    LLM_BASE_URL that points a vendor elsewhere does not carry that vendor's
+    named key. A proxy gets LLM_API_KEY or nothing."""
+
+    def test_default_origin_gets_the_named_key(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "openrouter"})
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-x")
+        assert llm._key_for_destination("openrouter", llm.base_url("openrouter")) == "sk-or-x"
+
+    def test_same_origin_different_path_is_still_the_vendor(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "openai"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        assert llm._key_for_destination("openai", "https://API.OpenAI.com/v2/beta") == "sk-openai"
+
+    def test_other_origin_refuses_the_named_key(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "openai"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        with pytest.raises(RuntimeError, match="OPENAI_API_KEY stays with its vendor"):
+            llm._key_for_destination("openai", "https://proxy.example/v1")
+
+    def test_other_origin_gets_the_generic_key(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "openai"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+        monkeypatch.setenv("LLM_API_KEY", "sk-for-the-proxy")
+        assert llm._key_for_destination("openai", "https://proxy.example/v1") == "sk-for-the-proxy"
+
+    def test_real_sdk_sends_only_the_generic_key_to_a_proxy(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "openai"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-must-not-leave")
+        monkeypatch.setenv("LLM_API_KEY", "sk-proxy")
+        monkeypatch.setenv("LLM_BASE_URL", "https://proxy.example/v1")
+        url, auth = _drive_real_sdk("openai")
+        assert url.startswith("https://proxy.example/v1/")
+        assert auth == "Bearer sk-proxy"
+        assert "must-not-leave" not in (auth or "")
+
+    def test_keyless_local_provider_still_works(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "ollama"})
+        monkeypatch.setenv("LLM_BASE_URL", "http://host.docker.internal:11434/v1")
+        url, auth = _drive_real_sdk("ollama")
+        assert url.startswith("http://host.docker.internal:11434/v1/")
+        assert auth == "Bearer not-needed"
+
+    def test_custom_provider_uses_the_generic_key_only(self, fake_db, monkeypatch):
+        fake_db({"llm_provider": "custom"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-must-not-leave")
+        monkeypatch.setenv("LLM_API_KEY", "sk-custom")
+        monkeypatch.setenv("LLM_BASE_URL", "https://llm.internal/v1")
+        url, auth = _drive_real_sdk("custom")
+        assert url.startswith("https://llm.internal/v1/")
+        assert auth == "Bearer sk-custom"
+
+
+class TestSettingsPageHasNoBaseUrlField:
+    """The form is the attack surface; the source must not grow the field back."""
+
+    def test_no_base_url_input_and_a_stale_row_cleanup(self):
+        from pathlib import Path
+        src = Path(llm.__file__).with_name("modern2_native.py").read_text(encoding="utf-8")
+        # The save loop's tuple form, `("llm_base_url", <value>, ...)`; the
+        # cleanup call `unset("llm_base_url")` has no comma and is allowed.
+        assert '("llm_base_url",' not in src, "the Settings save loop writes llm_base_url again"
+        assert 'settings.unset("llm_base_url")' in src, "saving must delete a pre-1.7.0 row"
+        assert not re.search(r'text_input\(\s*"Base URL', src), "the base URL field is back"
 
 
 # ── brief-parse degradation ──────────────────────────────────────

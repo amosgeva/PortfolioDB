@@ -6,12 +6,23 @@
 > recommendation to act on — and never let it place a trade, which is why this
 > project has no broker credentials at all.
 
-The advisor works with any of five provider modes. Provider, model, and base
-URL are set from the dashboard (**Manage → Settings**) or via env vars; the
-**API key always lives in the repo-root `.env`** — it is never stored in the
-database or shown in the UI.
+The advisor works with any of five provider modes. Provider and model are set
+from the dashboard (**Manage → Settings**) or via env vars; the **API key and
+the base URL live in the repo-root `.env` only** — neither is stored in the
+database, and the key is never shown in the UI.
 
-Resolution order for every value: Settings page → env var → default.
+Resolution order for provider and model: Settings page → env var → default.
+The base URL is `LLM_BASE_URL` → the provider's default, and nothing else.
+
+Why the base URL is not a Settings field: the dashboard has no login, and the
+base URL is where the OpenAI-compatible client sends the API key. A URL that
+anyone who can open the page could type in would let them collect
+`OPENAI_API_KEY` with one advisor request. So it is set where the key is set.
+On top of that, a vendor's named key only ever travels to that vendor:
+pointing `openai` or `openrouter` at another server with `LLM_BASE_URL` sends
+the generic `LLM_API_KEY` instead (and fails with a clear message if there is
+none), so a proxy or a self-hosted server gets a credential meant for it and
+never the vendor's.
 
 | Provider | Default model | Key env var(s) | Base URL |
 |---|---|---|---|
@@ -45,9 +56,9 @@ LLM_MODEL=llama3.3
 ```
 
 Running the dashboard in Docker with Ollama on the host? The host is not
-`localhost` from inside a container — set the base URL to
-`http://host.docker.internal:11434/v1` (and on Linux add
-`extra_hosts: ["host.docker.internal:host-gateway"]` to the service).
+`localhost` from inside a container — set
+`LLM_BASE_URL=http://host.docker.internal:11434/v1` in `.env` (and on Linux
+add `extra_hosts: ["host.docker.internal:host-gateway"]` to the service).
 
 ## Weaker / local models and the daily brief
 
