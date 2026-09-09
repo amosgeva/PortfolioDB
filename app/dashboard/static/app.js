@@ -145,7 +145,7 @@
   function relLum(hex) {
     var h = String(hex).replace('#', '');
     if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];   // #fff -> #ffffff
-    var c = [0, 2, 4].map(function (i) { return Number.parseInt(h.substr(i, 2), 16) / 255; })
+    var c = [0, 2, 4].map(function (i) { return Number.parseInt(h.slice(i, i + 2), 16) / 255; })
       .map(function (v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
     return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
   }
@@ -271,7 +271,7 @@
       var meta = pd0.querySelector('meta[name="theme-color"]');
       if (!meta) { meta = pd0.createElement('meta'); meta.name = 'theme-color'; pd0.head.appendChild(meta); }
       meta.content = t === 'dark' ? '#16181d' : '#ffffff';
-    } catch (e) {}
+    } catch (e) { /* sandboxed: parent document unreachable */ }
     if (typeof renderHeat === 'function') { try { renderHeat(); } catch (e) {} }
     if (typeof renderRisk === 'function') { try { renderRisk(); } catch (e) {} }
   }
@@ -298,7 +298,7 @@
         var ml = pd.createElement('link'); ml.rel = 'manifest'; ml.href = '/app/static/manifest.json';
         pd.head.appendChild(ml);
       }
-    } catch (e) {}
+    } catch (e) { /* sandboxed: parent document unreachable */ }
   }
   applyTheme(isDark() ? 'dark' : 'light');
   var themeBtn = $('[data-theme-toggle]');
@@ -323,7 +323,7 @@
       var parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(new Date());
       var name = parts.find(function (p) { return p.type === 'timeZoneName'; });
       return name ? name.value : tz;
-    } catch (e) { return tz; }
+    } catch (e) { return tz; /* unknown zone: show the IANA name */ }
   }
   var LOCAL_TZ = DATA.reportingTz || 'Asia/Jerusalem';
   function etParts() {
@@ -397,6 +397,7 @@
       a.href = qs; a.style.display = 'none';
       d.body.appendChild(a); a.click(); d.body.removeChild(a);
     } catch (e) {
+      // sandboxed: the parent is unreachable, so navigate this frame instead
       try { window.open(qs, '_self'); } catch (e2) { location.href = qs; }
     }
   }
@@ -416,11 +417,11 @@
         try {
           window.parent.sessionStorage.setItem('pdb_refresh_view', currentView());
           window.parent.sessionStorage.setItem('pdb_refreshed', '1');
-        } catch (e) {}
+        } catch (e) { /* storage unavailable: the pane is not restored */ }
         btn.click();
         return;
       }
-    } catch (e) {}
+    } catch (e) { /* sandboxed: fall through to the hard reload */ }
     // Fallback (sandbox blocked parent access): hard reload with cache-bust.
     topNavigate('?view=' + currentView() + '&r=' + new Date().getTime());
   });
@@ -461,7 +462,7 @@
       var st = { pdbView: name };
       if (replace) h.replaceState(st, '', '?view=' + name);
       else h.pushState(st, '', '?view=' + name);
-    } catch (e) {}
+    } catch (e) { /* sandboxed: the URL is not kept in sync */ }
   }
   function switchView(name, skipHistory) {
     $all('.nav a[data-view]').forEach(function (a) {
@@ -832,7 +833,7 @@
         lineEl.style.transition = 'stroke-dashoffset .7s cubic-bezier(.25,1,.5,1)';
         lineEl.style.strokeDashoffset = '0';
         setTimeout(function () { lineEl.style.strokeDasharray = 'none'; }, 750);
-      } catch (e) {}
+      } catch (e) { /* getTotalLength unsupported: draw without the sweep */ }
     }
     // The wrapper now includes a y-axis gutter and an x-axis strip, so it is no
     // longer the plot. Measure the svg itself or every reading is offset.
@@ -1041,7 +1042,7 @@
         if (cell) cell.classList.add(cur[sym] > prev[sym] ? 'flash-up' : 'flash-down');
       });
       localStorage.setItem('pdb_prices', JSON.stringify(cur));
-    } catch (e) {}
+    } catch (e) { /* storage unavailable: no flash on the next load */ }
   }
 
   // ---- P&L attribution: diverging contribution bars + net-P&L waterfall ----
@@ -2200,9 +2201,8 @@
   wireFolds();
   try {
     var foldMq = window.matchMedia && matchMedia('(max-width:640px)');
-    if (foldMq && foldMq.addEventListener) foldMq.addEventListener('change', wireFolds);
-    else if (foldMq && foldMq.addListener) foldMq.addListener(wireFolds);
-  } catch (e) {}
+    if (foldMq) foldMq.addEventListener('change', wireFolds);
+  } catch (e) { /* matchMedia unavailable: folds stay as rendered */ }
   // ---- fundamentals ----
   function fpct(x, d) { if (x == null) return '—'; return (Number(x) * 100).toFixed(d == null ? 1 : d) + '%'; }
   function fratio(x, d) { if (x == null) return '—'; return Number(x).toFixed(d == null ? 2 : d); }
@@ -2380,7 +2380,7 @@
         var blob = new Blob([csv], { type: 'text/csv' }), url = URL.createObjectURL(blob);
         var a = document.createElement('a'); a.href = url; a.download = 'lots.csv'; a.click(); URL.revokeObjectURL(url);
         toast('Exported ' + lots.length + ' lots');
-      } catch (e) { toast('Export blocked by browser sandbox'); }
+      } catch (e) { toast('Export blocked by browser sandbox'); /* download refused: the user is told */ }
     });
   }
 
@@ -2396,7 +2396,7 @@
       var blob = new Blob([csv], { type: 'text/csv' }), url = URL.createObjectURL(blob);
       var a = document.createElement('a'); a.href = url; a.download = 'positions.csv'; a.click(); URL.revokeObjectURL(url);
       toast('Exported ' + rs.length + ' positions');
-    } catch (e) { toast('Export blocked — use Manage › Exports'); }
+    } catch (e) { toast('Export blocked — use Manage › Exports'); /* download refused: the user is told */ }
   });
 
   // ---- viewport-fit iframe (replaces the old hardcoded height=1180) ----
@@ -2425,7 +2425,7 @@
       var pd = window.parent.document;
       pd.documentElement.style.overflow = 'hidden';
       pd.body.style.overflow = 'hidden';
-    } catch (e) {}  // sandbox blocked parent access → server-side height stands
+    } catch (e) { /* sandboxed: parent unreachable, the server-side height stands */ }
   }
   fitViewport();
   try { window.parent.addEventListener('resize', fitViewport); } catch (e) {}
@@ -2444,7 +2444,7 @@
   try {
     var rv = window.parent.sessionStorage.getItem('pdb_refresh_view');
     if (rv) { window.parent.sessionStorage.removeItem('pdb_refresh_view'); initial = rv; }
-  } catch (e) {}
+  } catch (e) { /* storage unavailable: open the view from the URL */ }
   if (initial && initial !== 'portfolio' && TITLES[initial]) switchView(initial, true);
   // Browser back/forward moves between panes (history entries pushed by
   // switchView). Falls back to the URL param when there's no state object.

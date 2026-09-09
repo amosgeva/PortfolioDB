@@ -9,7 +9,7 @@ try{
     ((window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light');
   document.documentElement.setAttribute('data-theme',_t);
   try{window.parent.document.body.style.background=_t==='dark'?'#16181d':'#ffffff';}catch(e){}
-}catch(e){}
+}catch(e){/* storage or matchMedia unavailable: the default theme stands */}
 </script>
 <style>
 :root{--bg:oklch(98% 0.005 255);--surface:#fff;--border:oklch(91% 0.008 260);
@@ -101,6 +101,6 @@ try{
     var box=fe.closest&&fe.closest('[data-testid="stElementContainer"]');
     if(box){box.style.flexBasis=h;box.style.height=h;}
   }
-}catch(e){}
+}catch(e){/* sandboxed: parent unreachable, the server-side height stands */}
 </script>
 </body></html>

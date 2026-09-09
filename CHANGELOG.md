@@ -16,6 +16,38 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Added
+
+- **`summary.cash_by_account` in `get_portfolio_review_snapshot`.** The
+  per-account breakdown behind `summary.cash` — the latest balance each account
+  had entered at the cutoff — was computed on every call and then discarded. It
+  is now returned next to the total it explains, so a reader can see which
+  account holds the cash. Additive: no existing field moved or changed meaning.
+
+### Changed
+
+- **Period statistics release a finished week or month as soon as the date has
+  moved past it.** `period_stats.build` accepted a `today` argument and never
+  read it, so the last group in the curve was always treated as still running
+  and kept out of best/worst. A complete August therefore stayed excluded until
+  September's first snapshot landed — every 1st of the month before the
+  collector ran, and every Monday morning for the week. The dashboard passes
+  `today`; with it, a period whose calendar end is behind today counts as
+  complete. Callers that omit `today` keep the old behaviour. This can change
+  the "best month" / "worst week" records shown during that window, and only
+  then.
+
+### Upgrading
+
+No migration. `docker compose pull && docker compose up -d`.
+
+The rest is the first round of fixes from the Sonar way quality profile:
+`build_payload_data`, the prompt registry and the CSV importer's `main` are
+split into smaller functions, and the tests that wrapped several calls in one
+`pytest.raises` block now isolate the call under test. **No figure changes from
+any of that**: the dashboard payload built by the old and new `payload.py`
+against the same live database was diffed field by field and is identical.
+
 ## [1.5.0] — 2026-09-07
 
 The application image moves to Python 3.14, and CI now builds that image before

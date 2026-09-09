@@ -37,17 +37,20 @@ class TestCheckFresh:
         sp.check_fresh(quote("REGULAR", sp.QUOTE_MAX_AGE_MIN), NOW)
 
     def test_just_past_the_threshold_is_rejected(self):
+        q = quote("REGULAR", sp.QUOTE_MAX_AGE_MIN + 1)
         with pytest.raises(sp.StaleQuote):
-            sp.check_fresh(quote("REGULAR", sp.QUOTE_MAX_AGE_MIN + 1), NOW)
+            sp.check_fresh(q, NOW)
 
     def test_the_2026_08_06_incident_is_rejected(self):
         """Previous session's close served as a live regular-session quote."""
+        q = quote("REGULAR", 1193)
         with pytest.raises(sp.StaleQuote, match="1193 min old"):
-            sp.check_fresh(quote("REGULAR", 1193), NOW)
+            sp.check_fresh(q, NOW)
 
     def test_message_names_the_trade_time_and_state(self):
+        q = quote("REGULAR", 120)
         with pytest.raises(sp.StaleQuote) as e:
-            sp.check_fresh(quote("REGULAR", 120), NOW)
+            sp.check_fresh(q, NOW)
         assert "marketState=REGULAR" in str(e.value)
         assert "2026-08-06T14:00:00" in str(e.value)
 
@@ -67,8 +70,9 @@ class TestCheckFresh:
         sp.check_fresh(quote("REGULAR", None), NOW)
 
     def test_state_comparison_is_case_insensitive(self):
+        q = quote("regular", 1193)
         with pytest.raises(sp.StaleQuote):
-            sp.check_fresh(quote("regular", 1193), NOW)
+            sp.check_fresh(q, NOW)
 
 
 class TestGetQuote:

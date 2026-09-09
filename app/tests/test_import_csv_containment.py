@@ -58,13 +58,16 @@ def test_traversal_patterns_are_refused_before_the_glob(tree, pattern):
     Backslashes are checked too: they are a separator on Windows, and on Linux
     a literal backslash-dot-dot filename should not be quietly accepted either.
     """
+    base = tree.resolve()
     with pytest.raises(ValueError, match="must stay inside"):
-        contained_matches(tree.resolve(), pattern)
+        contained_matches(base, pattern)
 
 
 def test_absolute_patterns_are_refused(tree, tmp_path):
+    base = tree.resolve()
+    pattern = str(tmp_path / "*.csv")
     with pytest.raises(ValueError, match="must stay inside"):
-        contained_matches(tree.resolve(), str(tmp_path / "*.csv"))
+        contained_matches(base, pattern)
 
 
 def test_a_sibling_directory_is_not_reachable(tree):

@@ -20,15 +20,15 @@ class TestValidation:
 
     def test_value_history_rejects_unknown_basis(self, env_token, fake_db):
         from app.mcp.services import prices
+        start = date(2026, 1, 1)
         with pytest.raises(ValueError, match="holdings_basis"):
-            prices.portfolio_value_history(
-                date(2026, 1, 1), holdings_basis="whatever"
-            )
+            prices.portfolio_value_history(start, holdings_basis="whatever")
 
     def test_value_history_still_validates_freq(self, env_token, fake_db):
         from app.mcp.services import prices
+        start = date(2026, 1, 1)
         with pytest.raises(ValueError, match="freq"):
-            prices.portfolio_value_history(date(2026, 1, 1), freq="hourly")
+            prices.portfolio_value_history(start, freq="hourly")
 
 
 class TestSeriesUsesHistoricalHoldings:
