@@ -526,7 +526,14 @@ Liveness check (unauthenticated, for tunnels / health probes):
 
 ```
 GET http://127.0.0.1:8765/healthz
+→ {"ok": true, "db": "up", "last_snapshot_age_s": 412}
 ```
+
+That is the whole answer — 200 or 503, and how long since the collector last
+finished. It carries no symbols, counts or error text on purpose, because it
+answers anyone who can reach the port. The diagnostic version (last run's
+status and error, per-table enrichment freshness, the database's own failure
+reason) is the `get_health` tool, behind the bearer token.
 
 ### Connect an agent
 

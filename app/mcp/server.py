@@ -3,7 +3,9 @@
 Mounts the MCP Streamable HTTP transport at /mcp/ and an unauthenticated
 /healthz probe. All MCP-protocol traffic is gated by a static Bearer token
 (see app/mcp/auth.py); /healthz is intentionally open so a tunnel / load
-balancer can health-check without credentials.
+balancer can health-check without credentials — which is why it answers only
+up/down and the age of the last snapshot (app/mcp/healthz.py). The detailed
+diagnostic is the get_health tool, behind the token.
 
 Run modes:
     1. uvicorn app.mcp.server:asgi --host 0.0.0.0 --port 8765
@@ -25,9 +27,8 @@ if str(_APP_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_APP_DIR.parent))
 
 from fastmcp import FastMCP
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
+from app.mcp import healthz
 from app.mcp.auth import build_verifier
 from app.mcp.deps import close_pool, init_pool
 from app.mcp.resources import conventions as conventions_resource
@@ -37,7 +38,6 @@ from app.mcp.resources import positions_current as positions_current_resource
 from app.mcp.resources import reports as reports_resource
 from app.mcp.resources import schema as schema_resource
 from app.mcp.resources import summary as summary_resource
-from app.mcp.services import health as health_service
 from app.mcp.tools import activity_tools
 from app.mcp.tools import analytics_tools
 from app.mcp.tools import fees_tools
@@ -123,24 +123,8 @@ def build_server() -> FastMCP:
 
     prompts_module.register(mcp)
 
-    @mcp.custom_route("/healthz", methods=["GET"])
-    async def healthz(_request: Request) -> JSONResponse:
-        """Unauthenticated liveness probe.
-
-        Returns 200 with a small JSON payload describing DB reachability and
-        the last snapshot run's status. Intentionally cheap — just one
-        SELECT 1 + one row from snapshot_runs.
-        """
-        try:
-            payload = health_service.server_health()
-        except Exception as e:
-            log.exception("healthz failed")
-            return JSONResponse(
-                {"ok": False, "error": str(e)},
-                status_code=503,
-            )
-        status_code = 200 if payload.get("ok") else 503
-        return JSONResponse(payload, status_code=status_code)
+    # Unauthenticated, and therefore minimal — see app/mcp/healthz.py.
+    healthz.register(mcp)
 
     return mcp
 

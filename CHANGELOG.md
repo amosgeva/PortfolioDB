@@ -16,6 +16,19 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Security
+
+- **The MCP server's unauthenticated `/healthz` now answers only `ok`, `db`
+  and `last_snapshot_age_s`.** It used to return the full `get_health`
+  payload: the last collector run's `error` text verbatim — which names the
+  symbols that failed and carries a traceback when yfinance raised — plus
+  per-table enrichment counts and the database's own failure reason (role
+  and container IP). Anyone who could reach the port learned part of the
+  portfolio universe without a token. The full diagnostic is unchanged behind
+  the bearer token as the `get_health` tool. Monitors that parsed the old
+  body need the new three keys; the status code contract (200 up, 503 down)
+  is the same, so the compose healthcheck is unaffected.
+
 ### Fixed
 
 - **`backup` and `restore` can no longer report success after failing.** Both
