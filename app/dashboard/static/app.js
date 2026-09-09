@@ -1311,7 +1311,11 @@
     var sel = $('#ph-symbol'); if (!sel) return;
     var syms = (DATA.chartSyms || []).filter(function (s) { return DATA.priceHist && DATA.priceHist[s]; });
     if (!syms.length) syms = Object.keys(DATA.priceHist || {});
-    sel.innerHTML = syms.map(function (s) { return '<option value="' + s + '">' + s + '</option>'; }).join('');
+    // DOM nodes, not markup: a symbol is operator-entered text (the CSV
+    // importer and add-lot take any string), and this was one of two places
+    // it reached innerHTML unescaped. new Option() sets text as text.
+    sel.replaceChildren();
+    syms.forEach(function (s) { sel.appendChild(new Option(s, s)); });
     sel.addEventListener('change', renderPriceChart);
     $('#ph-spy').addEventListener('change', function () { phSpy = this.checked; renderPriceChart(); });
     $all('#ph-chips [data-phr]').forEach(function (b) { b.addEventListener('click', function () {
@@ -2249,7 +2253,9 @@
     var sel = $('#fd-symbol'), host = $('#fd-body'); if (!sel || !host) return;
     if (!sel.options.length) {
       var uni = DATA.fdUniverse || [];
-      sel.innerHTML = uni.map(function (s) { return '<option value="' + s + '">' + s + '</option>'; }).join('');
+      // DOM nodes, not markup — see initPriceChart for why.
+      sel.replaceChildren();
+      uni.forEach(function (s) { sel.appendChild(new Option(s, s)); });
       if (DATA.fdDefault) sel.value = DATA.fdDefault;
       sel.addEventListener('change', renderFundamentals);
     }
