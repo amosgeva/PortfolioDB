@@ -157,6 +157,19 @@ jobs:
       - name: Seed the fictional demo ledger
         run: python app/demo_seed.py --yes
 
+      # The MCP pool requires the read-only role (app/mcp/deps.py), so the
+      # suite below runs the way an install does: role created by the same
+      # script an operator runs, credentials taken from the two lines it
+      # prints. This is also the only place create_ro_role.py is exercised.
+      # The password is a throwaway for this job's database and still stays
+      # out of the log.
+      - name: Create the read-only MCP role
+        run: |
+          python app/create_ro_role.py --generate > ro-role.out
+          grep -E '^PORTFOLIODB_MCP_RO_(USER|PASSWORD)=' ro-role.out >> "$GITHUB_ENV"
+          grep -E '^PORTFOLIODB_MCP_RO_USER=' ro-role.out
+          rm ro-role.out
+
       - name: Reconciliation suite
         run: python -m pytest app/mcp/tests/ -m slow -q
 

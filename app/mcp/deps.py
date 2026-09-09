@@ -30,25 +30,62 @@ log = logging.getLogger(__name__)
 
 _pool: ThreadedConnectionPool | None = None
 
+RO_USER_ENV = "PORTFOLIODB_MCP_RO_USER"
+RO_PASSWORD_ENV = "PORTFOLIODB_MCP_RO_PASSWORD"
+# The explicit opt-out. Set it and the server connects with the application's
+# read-write credentials, protected only by the session setting below.
+ALLOW_RW_FALLBACK_ENV = "PORTFOLIODB_MCP_ALLOW_RW_FALLBACK"
+
+
+def _credentials(cfg) -> tuple[str, str, bool]:
+    """(user, password, is_read_only_role) for the pool.
+
+    The MCP server answers an LLM. Its surface is read-only by design, and
+    `default_transaction_read_only=on` below makes it read-only by session —
+    but a session setting is a promise the code makes, and any statement can
+    unmake it (`SET default_transaction_read_only = off` is allowed to every
+    role). The read-only role is what makes it a property of the database:
+    it holds SELECT and nothing else, so a bug or a prompt injection that
+    reaches a write fails on privilege whatever the session says.
+
+    So the role is the default, not the recommendation. Without it the server
+    refuses to connect and says how to create the role (`make ro-role` prints
+    the two .env lines). The fallback to the application's credentials is
+    still there for a deliberate operator, behind PORTFOLIODB_MCP_ALLOW_RW_FALLBACK,
+    and is logged as a warning every time the pool is built.
+    """
+    ro_user = (os.getenv(RO_USER_ENV) or "").strip()
+    if ro_user:
+        return ro_user, os.getenv(RO_PASSWORD_ENV) or "", True
+    if (os.getenv(ALLOW_RW_FALLBACK_ENV) or "").strip().lower() in ("1", "true", "yes"):
+        log.warning(
+            "MCP server is connecting as %s, the application's READ-WRITE role, because "
+            "%s is set. Read-only is then only a session setting. Create the read-only "
+            "role with `make ro-role` and put the two lines it prints in .env.",
+            cfg.user, ALLOW_RW_FALLBACK_ENV,
+        )
+        return cfg.user, cfg.password, False
+    raise RuntimeError(
+        f"The MCP server needs its read-only database role: set {RO_USER_ENV} and "
+        f"{RO_PASSWORD_ENV} in the repo-root .env. `make ro-role` (or `docker compose "
+        "run --rm dashboard python app/create_ro_role.py --generate`) creates the role "
+        "and prints both lines. To run on the application's read-write credentials "
+        f"anyway, set {ALLOW_RW_FALLBACK_ENV}=1."
+    )
+
 
 def _build_pool() -> ThreadedConnectionPool:
     cfg = load_config()
     minconn = int(os.getenv("PORTFOLIODB_MCP_POOL_MIN", "1"))
     maxconn = int(os.getenv("PORTFOLIODB_MCP_POOL_MAX", "10"))
-    # Defense-in-depth for an LLM-facing read-only server:
-    # 1. Prefer the SELECT-only role when configured (sql/create_ro_role.sql +
-    #    PORTFOLIODB_MCP_RO_USER / _PASSWORD in .env); fall back to the full
-    #    credentials otherwise.
-    # 2. Regardless of role, force read-only transactions at the session
-    #    level, so a stray write fails even on the fallback credentials.
-    ro_user = os.getenv("PORTFOLIODB_MCP_RO_USER")
-    ro_password = os.getenv("PORTFOLIODB_MCP_RO_PASSWORD")
-    user = ro_user or cfg.user
-    password = ro_password if ro_user else cfg.password
+    # Two layers, see _credentials: the role decides what the connection MAY
+    # do; the session option below makes a stray write fail early even on the
+    # fallback credentials.
+    user, password, ro_role = _credentials(cfg)
     log.info(
         "Creating MCP DB pool: host=%s port=%s db=%s user=%s min=%s max=%s read_only=session%s",
         cfg.host, cfg.port, cfg.dbname, user, minconn, maxconn,
-        "+role" if ro_user else "",
+        "+role" if ro_role else " ONLY (fallback)",
     )
     return ThreadedConnectionPool(
         minconn,

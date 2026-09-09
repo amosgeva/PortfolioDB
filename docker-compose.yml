@@ -141,11 +141,28 @@ services:
     <<: *app-base
     container_name: portfoliodb-mcp
     profiles: ["mcp"]
+    # NOT the whole .env. The base anchor hands every service the entire file —
+    # LLM keys, the Financial Datasets key, pgAdmin's login — which is right for
+    # the dashboard and the scheduler and wrong for a process whose job is to
+    # answer an LLM over the network. This service gets the database, its own
+    # settings, and nothing it has no use for. Add a key here when the MCP
+    # code starts reading it, not before.
+    env_file: []
     environment:
       <<: *app-env
       PORTFOLIODB_MCP_TOKEN: ${PORTFOLIODB_MCP_TOKEN}
       PORTFOLIODB_MCP_HOST: 0.0.0.0
       PORTFOLIODB_MCP_PORT: 8765
+      # The read-only role is required (app/mcp/deps.py); create it with
+      # `make ro-role`. The fallback flag is the explicit, logged opt-out.
+      PORTFOLIODB_MCP_RO_USER: ${PORTFOLIODB_MCP_RO_USER:-}
+      PORTFOLIODB_MCP_RO_PASSWORD: ${PORTFOLIODB_MCP_RO_PASSWORD:-}
+      PORTFOLIODB_MCP_ALLOW_RW_FALLBACK: ${PORTFOLIODB_MCP_ALLOW_RW_FALLBACK:-}
+      PORTFOLIODB_MCP_LOG_LEVEL: ${PORTFOLIODB_MCP_LOG_LEVEL:-INFO}
+      PORTFOLIODB_BENCHMARK_SYMBOL: ${PORTFOLIODB_BENCHMARK_SYMBOL:-SPY}
+      PORTFOLIODB_MARKET_START: ${PORTFOLIODB_MARKET_START:-}
+      PORTFOLIODB_MARKET_END: ${PORTFOLIODB_MARKET_END:-}
+      PORTFOLIODB_MARKET_WEEK: ${PORTFOLIODB_MARKET_WEEK:-}
     command: ["sh", "-c", "uvicorn app.mcp.server:asgi --host ${PORTFOLIODB_MCP_HOST:-0.0.0.0} --port ${PORTFOLIODB_MCP_PORT:-8765}"]
     ports:
       - "127.0.0.1:8765:8765"

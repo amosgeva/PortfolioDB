@@ -96,10 +96,19 @@ writable by anyone who loads the page.
 ## The MCP server
 
 It binds to `127.0.0.1` and requires a bearer token
-(`PORTFOLIODB_MCP_TOKEN`). Its database role is read-only when you create it
-with `sql/create_ro_role.sql` and set `PORTFOLIODB_MCP_RO_USER` /
-`PORTFOLIODB_MCP_RO_PASSWORD` — worth doing, because it makes "read-only" a
-property of the database rather than a promise of the code.
+(`PORTFOLIODB_MCP_TOKEN`). It connects to the database as a **read-only role**
+that holds `SELECT` and nothing else — `make ro-role` creates it and prints
+the two `.env` lines (`PORTFOLIODB_MCP_RO_USER` / `PORTFOLIODB_MCP_RO_PASSWORD`).
+The role is required: without it the server refuses to connect and says how to
+create it. That makes "read-only" a property of the database rather than a
+promise of the code — a session setting can be switched off by any statement,
+a missing grant cannot. The escape hatch for a deliberate operator is
+`PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1`, which runs the server on the
+application's read-write credentials and logs a warning on every start.
+
+The MCP container also receives only the environment it needs (the database,
+its own settings) rather than the whole `.env`: the LLM keys and the vendor
+API key have no business in a process that answers an LLM over the network.
 
 To let an agent on another machine reach it, tunnel rather than publish:
 
