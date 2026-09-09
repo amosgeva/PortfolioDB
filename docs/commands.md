@@ -69,7 +69,7 @@ instead.
 | `shell` | `docker compose run --rm --entrypoint sh dashboard` |
 | `build` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build` |
 | `dev-up` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` |
-| `lock` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps dashboard pip freeze --exclude-editable` written into `app/constraints.txt` below its comment header. Regenerates the tested dependency lock after a `requirements.txt` change; run it in the image, never from a host interpreter, or CI rejects the result. On Windows PowerShell 5.1 redirect with `\| Out-File -Encoding utf8`, not `>`, which writes UTF-16. |
+| `lock` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps dashboard pip freeze --all --exclude-editable` written into `app/constraints.txt` below its comment header. Regenerates the tested dependency lock after a `requirements.txt` change; run it in the image, never from a host interpreter, or CI rejects the result. On Windows PowerShell 5.1 redirect with `\| Out-File -Encoding utf8`, not `>`, which writes UTF-16. |
 | `test` | `docker compose run --rm dashboard sh -c 'pip install --user --quiet pytest && export PATH=$PATH:/home/appuser/.local/bin && cd /app/app && python -m pytest tests/ -q && cd /app && python -m pytest app/mcp/tests/ -m "not slow" -q'` |
 
 `make build` also stamps the image with your short commit SHA

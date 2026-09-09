@@ -42,7 +42,8 @@ def test_read_only_role_is_used_when_configured(recorder, monkeypatch):
     monkeypatch.setenv(deps.RO_PW_ENV, "ro-secret")
     deps._build_pool()
     (call,) = recorder
-    assert call["user"] == "portfoliodb_ro" and call["password"] == "ro-secret"
+    assert call["user"] == "portfoliodb_ro"
+    assert call["password"] == "ro-secret"
     assert "default_transaction_read_only=on" in call["options"]
 
 
@@ -51,7 +52,8 @@ def test_without_the_role_the_pool_refuses_and_says_how_to_fix_it(recorder):
         deps._build_pool()
     msg = str(exc.value)
     assert "make ro-role" in msg
-    assert deps.RO_USER_ENV in msg and deps.RO_PW_ENV in msg
+    assert deps.RO_USER_ENV in msg
+    assert deps.RO_PW_ENV in msg
     assert deps.ALLOW_RW_FALLBACK_ENV in msg
     assert recorder == [], "no connection may be attempted with read-write credentials"
 
@@ -70,7 +72,8 @@ def test_the_fallback_is_explicit_and_logged(recorder, monkeypatch, caplog, flag
     with caplog.at_level(logging.WARNING, logger=deps.__name__):
         deps._build_pool()
     (call,) = recorder
-    assert call["user"] == "portfoliouser" and call["password"] == "app-rw-secret"
+    assert call["user"] == "portfoliouser"
+    assert call["password"] == "app-rw-secret"
     assert "default_transaction_read_only=on" in call["options"], "the session guard stays on"
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("READ-WRITE" in w and "make ro-role" in w for w in warnings)

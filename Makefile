@@ -111,7 +111,7 @@ dev-up: ## Start the stack from a locally built image
 lock: ## Refresh app/constraints.txt from a fresh image build (after editing requirements.txt)
 	$(COMPOSE_DEV) build dashboard
 	@{ sed -n '/^#/p' app/constraints.txt; \
-	   $(COMPOSE_DEV) run --rm --no-deps dashboard pip freeze --exclude-editable; } > app/constraints.txt.new \
+	   $(COMPOSE_DEV) run --rm --no-deps dashboard pip freeze --all --exclude-editable; } > app/constraints.txt.new \
 	&& mv app/constraints.txt.new app/constraints.txt \
 	&& echo "app/constraints.txt refreshed: $$(grep -vc '^#' app/constraints.txt) pins — review the diff and commit"
 
