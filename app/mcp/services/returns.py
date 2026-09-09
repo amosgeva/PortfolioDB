@@ -1,10 +1,11 @@
 """Returns service — time-weighted multi-period returns + benchmark comparison.
 
 Backed by the pure ``twr`` module: historical holdings are reconstructed per
-snapshot day and daily sub-period returns are chained, so deposits and the
-timing/size of trades are neutralised (a contribution is never counted as a
-gain). The benchmark (default SPY) is valued flat, so its TWR is a plain price
-return — it excludes the benchmark's own dividends.
+snapshot day and daily sub-period returns are chained, so a contribution is
+never counted as a gain nor a sale as a loss (within a day, purchases are
+start-weighted and proceeds end-weighted — see twr.py). The benchmark (default
+SPY) is valued flat, so its TWR is a plain price return — it excludes the
+benchmark's own dividends.
 
 A ``Cutoff`` truncates the daily series rather than selecting a point: these are
 series metrics, so "as of" means "stop the chain here", not "read this instant".

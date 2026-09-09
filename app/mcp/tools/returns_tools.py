@@ -16,9 +16,10 @@ def register(mcp: FastMCP) -> None:
         """Time-weighted portfolio return over 1D / WTD / MTD / YTD / 1Y / MAX.
 
         TWR reconstructs historical holdings and chains daily sub-period
-        returns, so deposits and trade timing are neutralised (a contribution
-        is not counted as a gain). Returns {basis, as_of, periods:{period: pct}}
-        where pct is null when there isn't enough history for that window.
+        returns, so a contribution is not counted as a gain nor a sale as a
+        loss. Returns {basis, as_of, periods:{period: pct}} where pct is null
+        when there isn't enough history for that window, or when no capital
+        was at work inside it (everything sold, nothing bought since).
         """
         return returns_service.period_returns()
 

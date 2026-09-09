@@ -612,8 +612,9 @@ def _price_by_day(ts_prices, jer) -> dict:
 def _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer) -> tuple[dict, dict]:
     """Multi-period TIME-WEIGHTED returns against SPY, and the period statistics.
 
-    TWR reconstructs historical holdings and neutralises deposits/trade
-    timing, so a contribution is not mistaken for a gain. See app/twr.py.
+    TWR reconstructs historical holdings, so a contribution is not mistaken
+    for a gain nor a sale for a loss. See app/twr.py for the day-level
+    convention (purchases start-weighted, proceeds end-weighted).
     """
     twr_lots = [
         {"symbol": r["symbol"], "side": r["side"], "trade_date": r["trade_date"],
@@ -632,7 +633,7 @@ def _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer) -> tuple[
     stats_block = period_stats.build(twr.growth_curve(records), today=today_jer)
     spy_ret = twr.period_returns(twr.benchmark_records(price_by_day, "SPY"), today_jer)
     returns_strip = {
-        "basis": "Time-weighted return (neutralizes deposits & trade timing).",
+        "basis": "Time-weighted return (contributions and withdrawals are not gains or losses).",
         "benchmark": "SPY (price return, excl. its dividends)",
         "periods": [
             {"period": p, "portfolio": pv_ret.get(p), "benchmark": spy_ret.get(p)}

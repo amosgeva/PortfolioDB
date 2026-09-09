@@ -116,16 +116,25 @@ older — this is how a tax report reads.
 ## 4. Returns
 
 `get_period_returns` reports **time-weighted return**. Holdings are
-reconstructed per snapshot day and daily sub-period returns are chained, so the
-size and timing of contributions are neutralised — money added is never counted
-as a gain.
+reconstructed per snapshot day and daily sub-period returns are chained, so
+money added is never counted as a gain and money taken out is never counted as
+a loss.
 
 ```
-r_i = (MV_i + div_i) / (MV_{i−1} + flow_i) − 1
+r_i = (MV_i + div_i + out_i) / (MV_{i−1} + in_i) − 1
 ```
 
-where `flow_i` is net external cash into securities that day and `div_i` is
-income earned. See `app/twr.py`.
+where `in_i` is what was paid for securities that day (fees included), `out_i`
+what was received for securities sold (fees deducted), and `div_i` income
+earned. See `app/twr.py`.
+
+Trades carry a date, not a time, so a trade's own day is an approximation:
+a purchase is valued from its price to that day's close, a sale from the
+previous close to its price. A day on which nothing was held and nothing was
+bought has no capital at work; the growth factor passes through it unchanged,
+and a period made only of such days reports `null` rather than 0%. Income that
+arrives after a position was sold is credited against the last capital that
+earned it.
 
 **Not available, and why:**
 

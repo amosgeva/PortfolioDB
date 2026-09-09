@@ -16,6 +16,28 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Changed
+
+- **Time-weighted return: a sale is now valued at its own price, and closing
+  a position no longer produces 0% or −100%.** The daily sub-period formula
+  netted a sale into the *denominator* as a negative flow, so a day that
+  closed the position had a denominator of value-minus-proceeds: selling one
+  share bought at 100 for 110 froze the growth factor (0% instead of +10%),
+  and selling it for 90 multiplied the factor by zero (−100%, and every later
+  period stuck there). A partial-sale day was overstated the same way — a +10%
+  day with half the position sold read as +22%. Purchases are now weighted at
+  the start of the day and sale proceeds at the end:
+  `r = (MV + div + proceeds) / (MV_prev + purchases) − 1`. A day with nothing
+  held and nothing bought carries the factor through unchanged, a period made
+  only of such days reports `null` rather than 0%, and income that arrives
+  after a position was sold is credited against the last capital that earned
+  it. **Every TWR figure changes** on any day that had a sale — dashboard
+  strip, `get_period_returns`, `get_benchmark_comparison`, volatility and the
+  period statistics all read the same curve. Days with only purchases or no
+  trades are unchanged. Records from `twr.build_daily_records` gain `inflow`
+  and `outflow`; `flow` (the net) is still there. `docs/methodology.md` §4
+  states the convention.
+
 ### Security
 
 - **The advisor's base URL is read from `LLM_BASE_URL` in `.env` only; the
