@@ -121,17 +121,30 @@ stop the scheduler.
 By hand on **macOS / Linux**:
 
 ```bash
-docker compose exec -T postgres pg_dump -U portfoliouser -d portfoliodb \
-  | gzip > backups/portfoliodb-$(date +%Y%m%d-%H%M%S).sql.gz
+set -o pipefail   # without it a failed pg_dump still leaves a valid, empty gzip
+out=backups/portfoliodb-$(date +%Y%m%d-%H%M%S).sql.gz
+docker compose exec -T postgres pg_dump -U portfoliouser -d portfoliodb | gzip > "$out" \
+  && gzip -t "$out" \
+  && gunzip -c "$out" | grep -q 'PostgreSQL database dump complete' \
+  || { rm -f "$out"; echo "backup failed — nothing kept"; }
 ```
 
 By hand on **Windows**, which is *not* the same command:
 
 ```powershell
-docker compose exec -T postgres sh -c 'pg_dump -U portfoliouser -d portfoliodb | gzip -c > /tmp/pdb.sql.gz'
+docker compose exec -T postgres bash -o pipefail -c 'pg_dump -U portfoliouser -d portfoliodb | gzip -c > /tmp/pdb.sql.gz && gzip -t /tmp/pdb.sql.gz'
 docker compose cp postgres:/tmp/pdb.sql.gz .\backups\portfoliodb-20260903-030000.sql.gz
 docker compose exec -T postgres rm /tmp/pdb.sql.gz
 ```
+
+Both forms check more than "a file appeared", and the runners do the same. A
+shell reports a pipeline's exit status as its *last* command's, so a `pg_dump`
+that died — wrong password, container still starting, disk full — still handed
+`gzip` a perfectly valid archive of nothing, and a size check passed it.
+`pipefail` makes the producer's failure the pipeline's; `gzip -t` proves the
+archive decompresses; and the completion marker is the line `pg_dump` writes
+last, which a dump killed mid-way never reaches. The runners build the file
+under a `.part` name and rename it only after all three pass.
 
 Two reasons the POSIX one-liner cannot simply be reused, and both produce a file
 that looks fine until the day you try to restore it:
@@ -177,17 +190,33 @@ live ledger is how data gets lost twice. Keep that guard if you do it by hand.
 By hand on **macOS / Linux**:
 
 ```bash
-gunzip -c backups/portfoliodb-20260903-030000.sql.gz \
-  | docker compose exec -T postgres psql -q -U portfoliouser -d portfoliodb
+gzip -t backups/portfoliodb-20260903-030000.sql.gz && gunzip -c backups/portfoliodb-20260903-030000.sql.gz \
+  | docker compose exec -T postgres psql -X -q -v ON_ERROR_STOP=1 --single-transaction -U portfoliouser -d portfoliodb
 ```
 
 By hand on **Windows** — copy the file in, decompress inside the container:
 
 ```powershell
 docker compose cp .\backups\portfoliodb-20260903-030000.sql.gz postgres:/tmp/pdb.sql.gz
-docker compose exec -T postgres sh -c 'gunzip -c /tmp/pdb.sql.gz | psql -q -U portfoliouser -d portfoliodb'
+docker compose exec -T postgres bash -o pipefail -c 'gzip -t /tmp/pdb.sql.gz && gunzip -c /tmp/pdb.sql.gz | psql -X -q -v ON_ERROR_STOP=1 --single-transaction -U portfoliouser -d portfoliodb'
 docker compose exec -T postgres rm /tmp/pdb.sql.gz
 ```
+
+The two `psql` flags are what make "restored" mean restored. By default `psql`
+prints a SQL error, **carries on with the next statement, and exits 0**, so a
+dump that failed halfway left a database with some tables and a success
+message. `-v ON_ERROR_STOP=1` makes the first error fatal (exit code 3), and
+`--single-transaction` rolls the whole load back so the target is as empty as
+you found it and a retry needs no cleanup. `gzip -t` first, so a truncated or
+corrupt archive fails before a byte of it reaches the database. The runners do
+all three.
+
+One error that the old defaults hid and the new flags surface: if the by-hand
+restore stops at `schema "public" already exists`, the dump was taken from a
+database whose `public` schema had been dropped and recreated, so it carries a
+`CREATE SCHEMA public;` of its own. The target is empty (you checked), so drop
+its schema and run the restore again — `DROP SCHEMA public;` — or use a runner,
+which does this for you inside the same transaction.
 
 To check the target is empty first — this must print `0`:
 

@@ -252,12 +252,30 @@ function Invoke-Backup {
     # there is no host gzip, and PowerShell 5.1 decodes a native command's
     # output as text before redirection, so piping a binary dump through `>`
     # silently corrupts it - a corruption that only surfaces on restore day.
-    Invoke-Compose -ComposeArgs @(
-        'exec', '-T', 'postgres', 'sh', '-c',
-        "pg_dump -U portfoliouser -d portfoliodb | gzip -c > $tmp"
-    )
+    #
+    # Three checks, in the container, before anything is copied out. A
+    # pipeline's exit status is its LAST command's, so a pg_dump that died
+    # still handed gzip a valid, non-empty archive of nothing, and Docker
+    # reported the pipeline as a success. `bash -o pipefail` makes a producer
+    # failure the pipeline's failure; `gzip -t` proves the archive
+    # decompresses; the completion marker is the line pg_dump writes last and a
+    # dump killed mid-way never reaches. `grep -c` rather than `grep -q`: -q
+    # exits on the first match and the SIGPIPE it sends gunzip would count as a
+    # failure under pipefail. No double quotes anywhere in the command string:
+    # Windows PowerShell 5.1 passes a native argument's embedded double quotes
+    # unescaped, and bash then fails to parse the command (exit 2). `grep -c`
+    # always prints exactly one word, so the substitution is safe unquoted.
+    $partFile = "$outFile.part"
     try {
-        Invoke-Compose -ComposeArgs @('cp', "postgres:$tmp", $outFile)
+        Invoke-Compose -ComposeArgs @(
+            'exec', '-T', 'postgres', 'bash', '-o', 'pipefail', '-c',
+            "pg_dump -U portfoliouser -d portfoliodb | gzip -c > $tmp && gzip -t $tmp && test `$(gunzip -c $tmp | grep -c 'PostgreSQL database dump complete') -gt 0"
+        )
+        Invoke-Compose -ComposeArgs @('cp', "postgres:$tmp", $partFile)
+    }
+    catch {
+        if (Test-Path -LiteralPath $partFile) { Remove-Item -LiteralPath $partFile -Force }
+        throw "backup FAILED - nothing was written. pg_dump did not finish, or the archive did not verify: $($_.Exception.Message)"
     }
     finally {
         # Never leave the dump inside the container, even if the copy failed.
@@ -265,14 +283,17 @@ function Invoke-Backup {
         catch { Write-Warning "Could not remove $tmp from the container: $($_.Exception.Message)" }
     }
 
-    if (-not (Test-Path -LiteralPath $outFile)) {
-        throw "backup produced no file at $outFile."
+    if (-not (Test-Path -LiteralPath $partFile)) {
+        throw "backup produced no file at $partFile."
     }
-    $size = (Get-Item -LiteralPath $outFile).Length
+    $size = (Get-Item -LiteralPath $partFile).Length
     if ($size -le 0) {
-        Remove-Item -LiteralPath $outFile -Force
+        Remove-Item -LiteralPath $partFile -Force
         throw 'backup is empty - is postgres running?'
     }
+    # Only a verified archive gets the real name: nothing that failed above can
+    # be mistaken for a backup by a script that globs *.sql.gz.
+    Move-Item -LiteralPath $partFile -Destination $outFile -Force
 
     Write-Host "wrote $outFile ($([math]::Round($size / 1KB, 1)) KB)"
     Write-Host 'Copy it off this machine, and keep .env + philosophy.md with it.'
@@ -313,10 +334,38 @@ function Invoke-Restore {
     $tmp = "/tmp/pdb-restore-$(Get-Date -Format 'yyyyMMdd-HHmmss').sql.gz"
     Invoke-Compose -ComposeArgs @('cp', $DumpPath, "postgres:$tmp")
     try {
-        Invoke-Compose -ComposeArgs @(
-            'exec', '-T', 'postgres', 'sh', '-c',
-            "gunzip -c $tmp | psql -q -U portfoliouser -d portfoliodb"
-        )
+        # The archive must decompress whole before a byte of it reaches psql:
+        # a truncated download or a corrupt copy fails here, with the database
+        # untouched, instead of half-loading and stopping at a syntax error.
+        try {
+            Invoke-Compose -ComposeArgs @('exec', '-T', 'postgres', 'gzip', '-t', $tmp)
+        }
+        catch {
+            throw "not a valid gzip: $DumpPath - the archive is truncated or corrupt, nothing was restored."
+        }
+        # psql keeps going after a SQL error by default and exits 0, so a
+        # half-loaded database used to print "restored". ON_ERROR_STOP makes
+        # the first error fatal (exit 3), --single-transaction rolls everything
+        # back so the target is as empty as the guard above found it, and
+        # pipefail makes a gunzip failure count even though psql is last.
+        #
+        # One error that used to be skipped silently and is now fatal: a dump
+        # taken from a database whose public schema had been dropped and
+        # recreated carries `CREATE SCHEMA public;`, and a fresh database
+        # already has one. The guard above proved the target holds no tables,
+        # so when the dump wants to create the schema, drop the empty one
+        # first - inside the same transaction, so a failed restore puts it
+        # back. `grep -c` rather than `grep -q`, for the pipefail reason above,
+        # and no double quotes in the command string, for the 5.1 reason above.
+        try {
+            Invoke-Compose -ComposeArgs @(
+                'exec', '-T', 'postgres', 'bash', '-o', 'pipefail', '-c',
+                "pre=''; if test `$(gunzip -c $tmp | grep -c '^CREATE SCHEMA public;') -gt 0; then pre='DROP SCHEMA IF EXISTS public CASCADE;'; fi; { echo `$pre; gunzip -c $tmp; } | psql -X -q -v ON_ERROR_STOP=1 --single-transaction -U portfoliouser -d portfoliodb"
+            )
+        }
+        catch {
+            throw "restore FAILED: psql stopped at the first error and rolled back - the database is still empty. $($_.Exception.Message)"
+        }
     }
     finally {
         try { Invoke-Compose -ComposeArgs @('exec', '-T', 'postgres', 'rm', '-f', $tmp) }

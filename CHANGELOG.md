@@ -16,6 +16,29 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`backup` and `restore` can no longer report success after failing.** Both
+  runners piped `pg_dump` into `gzip` and trusted the pipeline's exit status,
+  which is the *last* command's: a `pg_dump` that died still handed `gzip` a
+  valid, non-empty archive of nothing, the size check passed it, and the
+  runner printed `wrote …`. `restore` ran `psql` with its defaults, which log
+  a SQL error, carry on, and exit 0 — so a dump that failed halfway printed
+  `restored` and a lots count. Now the dump runs under `pipefail`, the archive
+  must decompress and carry `pg_dump`'s completion marker before it is renamed
+  from `.part` to its final name, and restore runs `gzip -t` first and `psql
+  -v ON_ERROR_STOP=1 --single-transaction`, so the first error aborts and
+  rolls back, leaving the target as empty as the guard found it. One error
+  the old defaults skipped and the new ones stop on is handled: a dump that
+  carries its own `CREATE SCHEMA public;` (older `pg_dump` versions emit it
+  when the schema was recreated) has the empty target schema dropped first,
+  inside the same transaction. CI now injects a failing and a half-finished
+  `pg_dump`, a truncated archive and a dump with a mid-file SQL error against
+  both `make` and `pdb.ps1`. **Check
+  the backups you already have** with `gzip -t` *and*
+  `gunzip -c <file> | grep -c 'PostgreSQL database dump complete'`; an archive
+  that passes the first and fails the second is empty.
+
 ### Security
 
 - **The "localhost only" and "stop publishing Postgres" overrides in

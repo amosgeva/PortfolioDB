@@ -132,12 +132,33 @@ ro-role: ## Create the read-only role for the MCP server (PASSWORD= optional)
 
 # ── backup / restore ─────────────────────────────────────────────────────
 
-backup: ## pg_dump the database, gzipped — make backup ARGS=/other/dir
+# Three checks, because a pipeline's exit status is its LAST command's: a
+# pg_dump that died still fed gzip a valid, non-empty archive of nothing, and
+# `test -s` waved it through. So (1) the dump and gzip run under `bash -o
+# pipefail` inside the container, which makes a producer failure the pipeline's
+# failure; (2) the archive must decompress; (3) it must carry pg_dump's own
+# completion marker, which a dump killed mid-way never writes. The file is built
+# under a .part name and renamed only once all three pass, so a failed run never
+# leaves something that looks like a backup.
+backup: ## pg_dump the database, gzipped and verified — make backup ARGS=/other/dir
 	@dir="$(if $(ARGS),$(ARGS),$(BACKUP_DIR))"; \
 	mkdir -p "$$dir"; \
 	out="$$dir/portfoliodb-$$(date +%Y%m%d-%H%M%S).sql.gz"; \
-	$(COMPOSE) exec -T postgres pg_dump -U portfoliouser -d portfoliodb | gzip > "$$out"; \
-	test -s "$$out" || { echo "backup is empty — is postgres running?"; rm -f "$$out"; exit 1; }; \
+	if ! $(COMPOSE) exec -T postgres bash -o pipefail -c \
+	     'pg_dump -U portfoliouser -d portfoliodb | gzip -c' > "$$out.part"; then \
+	  rm -f "$$out.part"; \
+	  echo "backup FAILED: pg_dump or gzip exited non-zero — nothing was written. Is postgres running?"; \
+	  exit 1; \
+	fi; \
+	if ! gzip -t "$$out.part" 2>/dev/null; then \
+	  rm -f "$$out.part"; echo "backup FAILED: the archive is not a valid gzip — nothing was kept"; exit 1; \
+	fi; \
+	if ! gunzip -c "$$out.part" | grep -q 'PostgreSQL database dump complete'; then \
+	  rm -f "$$out.part"; \
+	  echo "backup FAILED: the dump has no completion marker, so pg_dump did not finish — nothing was kept"; \
+	  exit 1; \
+	fi; \
+	mv "$$out.part" "$$out"; \
 	echo "wrote $$out ($$(du -h "$$out" | cut -f1))"; \
 	echo "Copy it off this machine, and keep .env + philosophy.md with it."
 
@@ -151,7 +172,25 @@ restore: ## Restore a dump into an EMPTY database — make restore ARGS=backups/
 	  echo "To rebuild from scratch: make down && docker volume rm portfoliodb_pgdata && make up"; \
 	  exit 1; \
 	fi
-	gunzip -c "$(ARGS)" | $(PSQL)
+	@gzip -t "$(ARGS)" 2>/dev/null || { \
+	  echo "not a valid gzip: $(ARGS) — the archive is truncated or corrupt, nothing was restored"; exit 1; }
+	@# psql keeps going after a SQL error by default and exits 0, so a half-loaded
+	@# database used to print "restored". ON_ERROR_STOP makes the first error fatal
+	@# (exit 3) and --single-transaction rolls everything back, leaving the target
+	@# as empty as the guard above found it. The archive was verified whole just
+	@# above, which is why a mid-stream gunzip failure needs no separate check.
+	@#
+	@# A dump taken from a database whose public schema had been dropped and
+	@# recreated carries `CREATE SCHEMA public;`, which a fresh database rejects —
+	@# an error psql used to skip and now stops on. The guard proved the target
+	@# holds no tables, so when the dump wants to create the schema, drop the empty
+	@# one first, inside the same transaction so a failed restore puts it back.
+	@pre=""; \
+	if gunzip -c "$(ARGS)" | grep -q '^CREATE SCHEMA public;'; then pre="DROP SCHEMA IF EXISTS public CASCADE;"; fi; \
+	if ! { echo "$$pre"; gunzip -c "$(ARGS)"; } | $(PSQL) -X -v ON_ERROR_STOP=1 --single-transaction; then \
+	  echo "restore FAILED: psql stopped at the first error and rolled back — the database is still empty"; \
+	  exit 1; \
+	fi
 	@echo "restored $(ARGS)"
 	@$(PSQL) -tAc "SELECT 'lots: '||count(*) FROM lots"
 
