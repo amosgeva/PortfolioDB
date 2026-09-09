@@ -22,6 +22,7 @@ import ledger_inputs
 import market_overview
 import market_window
 import period_stats
+import symbol_paths
 import twr
 from portfolio import compute_fifo_merged
 
@@ -44,8 +45,11 @@ def _logo_data_uris(symbols) -> dict[str, str]:
     to the CDN."""
     out: dict[str, str] = {}
     for sym in symbols:
-        p = _LOGO_DIR / f"{sym}.png"
-        if p.is_file():
+        # None for anything that does not look like a symbol: a path separator
+        # in an operator-entered symbol must not read a file from outside the
+        # cache into the page.
+        p = symbol_paths.logo_path(_LOGO_DIR, sym)
+        if p is not None and p.is_file():
             out[sym] = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode("ascii")
     return out
 
