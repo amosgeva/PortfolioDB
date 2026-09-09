@@ -65,7 +65,8 @@ of a 10-share BUY that cost \$5 in fees allocates \$2 — not \$5, not \$0.
 ### Fees on still-open positions are not realized
 
 Only fees attached to closed parcels appear in realized figures. The remainder
-sits inside the open cost basis. Measured on the live ledger:
+sits inside the open cost basis. A worked example — a ledger that paid \$22.50
+in buy fees and \$32.50 in sell fees and has since closed most of its parcels:
 
 ```
 ledger total fees            55.00   (buy 22.50 + sell 32.50)
@@ -73,14 +74,16 @@ allocated to closed parcels  47.50
 residual, in open cost basis  7.50   (≤ buy fees, by construction)
 ```
 
+`get_fees` reports the same three figures for your own ledger.
+
 ### Avg-cost differs, deliberately
 
 Under avg-cost the buy fee is folded into the running average and cannot be
 recovered from it afterwards, so `gross_realized_pnl` is accumulated on a
 *parallel* average carried at raw price. The identity above still holds, but the
-allocated total differs slightly from FIFO (\$48.00 vs \$47.50 on the live
-ledger) because the two engines match different parcels. That is a real
-difference between the methods, not a rounding artifact.
+allocated total differs slightly from FIFO (in the example above, \$48.00
+against FIFO's \$47.50) because the two engines match different parcels. That is
+a real difference between the methods, not a rounding artifact.
 
 ---
 
@@ -141,8 +144,12 @@ earned it.
 - **Money-weighted return / XIRR at portfolio level** — there is no
   external-flow ledger. `cash_snapshots` are manual balances only, so a deposit
   is indistinguishable from a market move.
-- **Anything before the first price snapshot.** Coverage starts 2025-09-22;
-  trades start 2024-12-03. Every "inception" figure is inception-of-coverage.
+- **Anything before the first price snapshot.** Coverage starts with your
+  first collected quote, which on most ledgers is months after the first trade
+  (the trades were entered from statements; the prices were not). Every
+  "inception" figure is inception-of-coverage. The review snapshot reports
+  `coverage_start` and the gap to your first trade, and `get_data_quality`
+  names each holding whose first trade predates coverage.
 
 The benchmark is a **price return** from `price_snapshots` and excludes the
 benchmark's own dividends, making it slightly conservative against a
@@ -300,7 +307,11 @@ zero quote as missing.
 
 ## 11. Reporting currency
 
-`USD`, stated explicitly in every `meta` block. All 35 instruments are USD
-(verified 2026-08-12), there is no FX table and no rate source. Endpoints accept
+`USD`, stated explicitly in every `meta` block. The ledger is single-currency:
+every instrument is taken to be USD, there is no FX table and no rate source,
+and nothing checks an instrument's quote currency. An instrument quoted in
+another currency would be summed at face value — wrong, not approximate — so
+import one currency, or one account per currency and read them separately
+(see the CSV import guide). Endpoints accept
 a `reporting_currency` input only to reject anything but USD rather than
 pretending to convert.

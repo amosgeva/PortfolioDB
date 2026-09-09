@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from decimal import Decimal
 
 
 def test_is_etf_recognizes_known_etfs():

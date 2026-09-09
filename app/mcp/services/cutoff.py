@@ -52,8 +52,8 @@ except Exception:  # typo'd setting — fall back rather than break every import
     REPORTING_TZ = "UTC"
     LOCAL_TZ = ZoneInfo(REPORTING_TZ)
 
-# Every instrument is USD (verified 2026-08-12: 35/35). Stated explicitly so a
-# response declares its currency rather than leaving it to be assumed, and so
+# The ledger is single-currency and that currency is USD. Stated explicitly so
+# a response declares its currency rather than leaving it to be assumed, and so
 # the day a non-USD instrument appears there is something to check against.
 REPORTING_CURRENCY = "USD"
 

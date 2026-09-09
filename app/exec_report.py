@@ -719,8 +719,9 @@ def _section_advisor_brief(d: ReportData) -> str:
     if not brief:
         return (
             '<section class="section"><h2>Advisor Brief</h2>'
-            '<p class="empty">No briefs generated yet. Run <code>.\\run_brief.ps1</code> '
-            'or click <em>Generate Brief</em> in the dashboard\'s Advisor tab.</p></section>'
+            '<p class="empty">No briefs generated yet. Run <code>make brief</code> '
+            '(the compose equivalent is in docs/commands.md) or click <em>Generate Brief</em> '
+            'in the dashboard\'s Advisor tab.</p></section>'
         )
     payload = brief.get("payload") or {}
     age_label, age_cls = _brief_age_badge(brief["ts"])

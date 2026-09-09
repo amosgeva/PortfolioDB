@@ -6,9 +6,10 @@ via ``st.components.v1.html`` and feeding it live Postgres data. Native
 Streamlit widgets are used only for the Manage/Advisor views (see
 ``modern2_native.py``).
 
-Run via the repo-root launcher (loads .env, serves on 0.0.0.0:8501):
+Run it with the stack (`make up`, or `docker compose up -d`), or on a host
+from app/ with PORTFOLIODB_PASSWORD in the environment:
 
-    .\\run_dashboard.ps1
+    cd app && streamlit run streamlit_app.py
 """
 
 import contextlib
