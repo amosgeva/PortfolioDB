@@ -1,7 +1,26 @@
-"""Health and freshness probes — reused by the get_health tool and /healthz."""
+"""Health and freshness probes.
+
+Two payloads, deliberately different:
+
+* ``liveness()`` — what the unauthenticated ``/healthz`` route serves. Up or
+  down, and how old the last snapshot is. Nothing that names a symbol, a host,
+  a role or a table.
+* ``server_health()`` — the full diagnostic the ``get_health`` tool returns,
+  behind the bearer token: the last run's counts and error text, per-table
+  freshness, and the database's own failure reason.
+
+They used to be one payload, served without a token. ``snapshot_runs.error``
+is written verbatim by the collector and names the symbols that failed, with a
+traceback when yfinance threw one; the FD freshness block enumerates tables
+and row counts; a database failure reason names the role and the container
+IP. Anyone who could open a TCP connection to the port learned part of the
+portfolio universe (audit F11, 2026-09-09). The route now serves the small
+payload, and everything a human needs to debug is one authenticated call away.
+"""
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,6 +29,43 @@ from psycopg2 import sql
 from app.mcp.services import common
 
 from app.mcp.deps import get_conn, ping_db_detail
+
+log = logging.getLogger(__name__)
+
+LIVENESS_KEYS = ("ok", "db", "last_snapshot_age_s")
+
+
+def liveness() -> dict[str, Any]:
+    """The ``/healthz`` payload: exactly the keys in LIVENESS_KEYS, nothing else.
+
+    One ``SELECT 1`` and one row from ``snapshot_runs`` — the cheap probe the
+    route always promised. The ping's failure reason stays server-side: it can
+    name the read-only role and the database host, and the caller has not
+    shown a token. ``get_health`` returns it.
+    """
+    reachable, _reason = ping_db_detail()
+    if not reachable:
+        return {"ok": False, "db": "down", "last_snapshot_age_s": None}
+
+    age: int | None = None
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ts_end FROM snapshot_runs "
+                    "WHERE ts_end IS NOT NULL ORDER BY id DESC LIMIT 1"
+                )
+                row = cur.fetchone()
+        if row and row[0] is not None:
+            ts = row[0]
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = max(0, int((datetime.now(timezone.utc) - ts).total_seconds()))
+    except Exception:
+        # A missing table on a fresh install is not a reason to report the
+        # server down; log the detail, serve the age as unknown.
+        log.exception("liveness: could not read snapshot_runs")
+    return {"ok": True, "db": "up", "last_snapshot_age_s": age}
 
 
 def db_status() -> dict[str, Any]:
