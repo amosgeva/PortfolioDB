@@ -224,6 +224,38 @@ class TestDashboardPayload:
         data = payload_module.build_payload_data(object(), lambda syms: {})
         assert data["degraded"] == []
 
+    def test_full_liquidation_keeps_history_and_realised_figures(self, payload_module, monkeypatch):
+        """Everything sold on D5: no holdings, no active symbols, but the value
+        chart still shows what was held, and the realised return is reported
+        rather than a fictitious 0% or −100%."""
+        sold_out = LOTS + [
+            {"id": 9, "symbol": "AAA", "account": "IBKR", "side": "SELL", "trade_date": D5,
+             "quantity": Decimal("16"), "price": Decimal("55"), "fees": Decimal("0")},
+            {"id": 10, "symbol": "AAA", "account": "SCHW", "side": "SELL", "trade_date": D5,
+             "quantity": Decimal("4"), "price": Decimal("55"), "fees": Decimal("0")},
+            {"id": 11, "symbol": "BBB", "account": "IBKR", "side": "SELL", "trade_date": D5,
+             "quantity": Decimal("1"), "price": Decimal("40"), "fees": Decimal("0")},
+        ]
+        monkeypatch.setattr(payload_module.ledger_inputs, "load",
+                            lambda conn, **kw: ledger_inputs.prepare(sold_out, ACTIONS))
+        data = payload_module.build_payload_data(object(), lambda syms: {})
+        assert data["holdings"] == []
+        assert data["pv"]["1Y"][0][1] == pytest.approx(1280.0), "history survives the sale"
+        by_period = {p["period"]: p["portfolio"] for p in data["returns"]["periods"]}
+        # D4 was the only day with a move (+9.68%); the D5 sale at the same
+        # prices adds nothing and takes nothing away.
+        assert by_period["MAX"] == pytest.approx(9.68, abs=0.01)
+        assert data["kpi"]["realized"] != 0
+
+    def test_a_symbol_with_no_quote_since_it_was_sold_stays_out_of_the_universe(self, payload_module):
+        """BBB has quotes through D5 but the quote table's latest row per symbol
+        is what defines the active universe; a symbol with no holdings and no
+        watchlist flag is not a stock card even though its history remains."""
+        data = payload_module.build_payload_data(object(), lambda syms: {})
+        assert "BBB" in data["stocks"]            # still held (1 share)
+        assert "BBB" in data["priceHist"]
+        assert all(s["sym"] in data["stocks"] for s in data["holdings"])
+
     def test_holdings_are_in_post_split_units(self, payload_module):
         data = payload_module.build_payload_data(object(), lambda syms: {})
         holdings = {h["sym"]: h for h in data["holdings"]}

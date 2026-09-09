@@ -51,6 +51,7 @@ from zoneinfo import ZoneInfo
 from dateutil import parser as dtparser
 
 import ledger_numbers
+import oversell
 from db import connect, load_config, run
 
 
@@ -306,7 +307,7 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_PARTIAL = 2
 
-COUNT_KEYS = ("attempted", "inserted", "duplicate", "rejected", "sells",
+COUNT_KEYS = ("attempted", "inserted", "duplicate", "rejected", "sells", "oversells",
               "snaps_inserted", "snaps_duplicate")
 
 
@@ -401,6 +402,16 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
             counts["attempted"] += 1
 
             def _insert(lot=lot):
+                if lot["side"] == "SELL":
+                    # Against the ledger as it stands inside this transaction,
+                    # so earlier rows of the same file count. Warns, never
+                    # refuses — see app/oversell.py.
+                    warning = oversell.oversell_warning(
+                        conn, lot["symbol"], lot["account"], lot["trade_date"], lot["quantity"]
+                    )
+                    if warning:
+                        counts["oversells"] += 1
+                        print(f"{base} | {warning}")
                 upsert_instrument(conn, lot["symbol"])
                 n = insert_lot(conn, lot["symbol"], lot["account"], lot["trade_date"],
                                lot["quantity"], lot["price"], lot["fees"], lot["notes"],
@@ -475,6 +486,7 @@ def _import_file(conn, fp: str, args, tagged_accounts: list[str]) -> dict[str, i
         f"{base} | lots: {written['inserted']} inserted, {written['duplicate']} already present"
         f" ({written['sells']} SELL) | snapshots: {written['snaps_inserted']} inserted,"
         f" {written['snaps_duplicate']} already present | rejected={written['rejected']}"
+        f" oversells={written['oversells']}"
         f" ts_utc={ts_utc.isoformat() if ts_utc else 'N/A'}"
     )
     return written
