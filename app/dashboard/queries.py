@@ -44,28 +44,22 @@ def prev_close(conn) -> list[dict]:
           SELECT symbol, MAX(ts) AS ts FROM price_snapshots GROUP BY symbol
         ),
         prev AS (
-          SELECT ps.symbol, ps.last_price,
+          SELECT ps.symbol, ps.ts, ps.last_price,
                  ROW_NUMBER() OVER (PARTITION BY ps.symbol ORDER BY ps.ts DESC) AS rn
           FROM price_snapshots ps
           JOIN latest l ON l.symbol = ps.symbol
           WHERE (ps.ts AT TIME ZONE %s)::date < (l.ts AT TIME ZONE %s)::date
         )
-        SELECT symbol, last_price FROM prev WHERE rn = 1;
+        SELECT symbol, ts, last_price FROM prev WHERE rn = 1;
         """,
         (TZ_NAME, TZ_NAME),
     )
 
 
-def all_lots(conn) -> list[dict]:
-    """Every lot, in FIFO processing order."""
-    return fetch_all(
-        conn,
-        """
-        SELECT id, symbol, account, side, trade_date, quantity, price, fees
-        FROM lots
-        ORDER BY symbol, COALESCE(account,''), trade_date, id
-        """,
-    )
+# Lots are not queried here on purpose: every valuation reads them restated
+# through app/ledger_inputs.py (see CLAUDE.md, "Prepared ledger"). The one raw
+# lot reader left in this module is recent_lots, the Manage page's
+# trade-history table, which shows what the operator entered.
 
 
 def price_history(conn, days: int = 370) -> list[dict]:
@@ -117,11 +111,11 @@ def second_latest_prices(conn) -> list[dict]:
         conn,
         """
         WITH ranked AS (
-          SELECT symbol, last_price,
+          SELECT symbol, ts, last_price,
                  ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
           FROM price_snapshots
         )
-        SELECT symbol, last_price FROM ranked WHERE rn = 2;
+        SELECT symbol, ts, last_price FROM ranked WHERE rn = 2;
         """,
     )
 

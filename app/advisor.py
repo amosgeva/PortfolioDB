@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Iterator
 
+import ledger_inputs
 import llm
 import settings
 from db import connect, execute, fetch_all, load_config
@@ -156,15 +157,12 @@ def _latest_cash(conn) -> list[dict]:
 
 
 def snapshot_portfolio(conn) -> dict:
-    """Single source of truth: FIFO-merged positions + latest prices + cash."""
-    lot_rows = fetch_all(
-        conn,
-        """
-        SELECT id, symbol, account, side, trade_date, quantity, price, fees
-        FROM lots
-        ORDER BY trade_date, id
-        """,
-    )
+    """Single source of truth: FIFO-merged positions + latest prices + cash.
+
+    Lots come through the prepared ledger (post-split units), so the advisor
+    reads the same share counts and average costs the dashboard shows.
+    """
+    lot_rows = ledger_inputs.load(conn).lots
     fifo_df = compute_fifo_merged(lot_rows)
     prices = _latest_prices(conn)
     cash_rows = _latest_cash(conn)

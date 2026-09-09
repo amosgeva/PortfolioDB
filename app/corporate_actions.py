@@ -40,6 +40,8 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Iterable, Mapping, Sequence
 
+from psycopg2 import errors as psycopg2_errors
+
 import reporting_tz
 
 LOCAL_TZ = reporting_tz.tzinfo()
@@ -96,7 +98,13 @@ def fetch_actions(conn) -> list[CorporateAction]:
 
     Returns an empty list when the table does not exist yet, so a database that
     has not had the migration applied degrades to "no adjustment" instead of
-    breaking every price reader.
+    breaking every price reader. That is the *only* failure it absorbs. It used
+    to swallow every exception the same way, which meant a transient database
+    error — a dropped connection, a lock timeout, a permissions slip on the
+    read-only role — silently produced "no actions", and every reader in the
+    process quietly restated the ledger into pre-split units: share counts
+    halved, a −50% day appeared in every return. A wrong cost basis is worse
+    than an error message, so anything that is not "table absent" propagates.
     """
     with conn.cursor() as cur:
         try:
@@ -109,9 +117,12 @@ def fetch_actions(conn) -> list[CorporateAction]:
                 """
             )
             rows = cur.fetchall()
-        except Exception:
+        except psycopg2_errors.UndefinedTable:
             conn.rollback()
             return []
+        except Exception:
+            conn.rollback()
+            raise
     return [
         CorporateAction(
             symbol=r[0],

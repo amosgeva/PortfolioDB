@@ -174,6 +174,14 @@ invariant and keeping an action reversible by deleting its row.
 before the ex-date is restated by multiplying quantity and dividing price, so
 the money is unchanged and cost basis is unaffected.
 
+Every surface reads the same restated ledger: the dashboard, the MCP tools,
+the positions CLI, both reports and the dividend backfill all take their lots
+and their price adjusters from one loader (`app/ledger_inputs.py`), so a
+recorded split changes share counts, average cost, value history and returns
+identically everywhere. Before 1.7.0 only the MCP tools applied the
+adjustment; the dashboard and the reports showed pre-split share counts and a
+split-sized drop in every return spanning the ex-date.
+
 Two independent flags, because they answer different questions:
 
 - `adjust_prices` — was the quote series rebased? Almost always true; this is

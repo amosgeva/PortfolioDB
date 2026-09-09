@@ -23,29 +23,49 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 
-from db import fetch_all, load_config, run, transaction
+import holdings
+import ledger_inputs
+from db import load_config, run, transaction
 
 KINDS = ["DIVIDEND", "INTEREST", "CAP_GAIN_DIST"]
 
-
-def _shares_held_on(conn, symbol: str, as_of) -> float:
-    """Net BUY−SELL quantity for a symbol on/before a date (all accounts)."""
-    rows = fetch_all(
-        conn,
-        """
-        SELECT COALESCE(
-                 SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END), 0
-               ) AS qty
-        FROM lots
-        WHERE symbol = %s AND trade_date <= %s
-        """,
-        (symbol, as_of),
-    )
-    return float(rows[0]["qty"]) if rows else 0.0
+# What a backfilled row is, spelled out in the row itself: the pay date is the
+# ex-date because yfinance publishes no payment dates, and the amount is the
+# per-share figure times the shares the ledger says were held — an estimate of
+# cash received, not a statement from the broker.
+BACKFILL_NOTE = "auto-backfill (estimate: pay_date = ex_date; entitlement from ledger, split-adjusted)"
 
 
-def _insert_income(conn, **f) -> None:
-    run(
+def _shares_held_on(conn, symbol: str, as_of, *, per_account: bool = False) -> dict[str | None, float]:
+    """Shares of ``symbol`` held on ``as_of``, in the units the ledger is read in.
+
+    Goes through the prepared ledger, so a position bought before a recorded
+    split is counted in post-split shares — the units yfinance's dividend
+    series is stated in. The raw BUY−SELL sum this replaced counted ten
+    pre-split shares as ten for a dividend paid after a 2:1, and recorded half
+    the entitlement (audit F10).
+
+    Returns {account: shares}; with ``per_account`` False the accounts are
+    merged under the single key None, which is the shape the income row
+    takes.
+    """
+    ledger = ledger_inputs.load(conn, symbol=symbol, as_of=as_of)
+    sym = symbol.upper()
+    if not per_account:
+        return {None: holdings.holdings_on(ledger.lots, as_of).get(sym, 0.0)}
+    by_account: dict[str | None, float] = {}
+    for account in {lot.get("account") for lot in ledger.lots}:
+        subset = [lot for lot in ledger.lots if lot.get("account") == account]
+        qty = holdings.holdings_on(subset, as_of).get(sym, 0.0)
+        if qty:
+            by_account[account] = qty
+    return by_account
+
+
+def _insert_income(conn, **f) -> int:
+    """Insert one income row; returns 1 when written, 0 when the dedupe key
+    (symbol, account, kind, pay_date, amount) already existed."""
+    return run(
         conn,
         """
         INSERT INTO income(symbol, account, kind, ex_date, pay_date, amount,
@@ -61,33 +81,45 @@ def _insert_income(conn, **f) -> None:
     )
 
 
-def _backfill(conn, symbol: str, since) -> int:
-    """Insert one DIVIDEND row per ex-date the user held shares on."""
+def _backfill(conn, symbol: str, since, *, per_account: bool = False) -> tuple[int, int]:
+    """Insert one estimated DIVIDEND row per ex-date the ledger held shares on.
+
+    Returns (inserted, duplicates): the dedupe key is (symbol, account, kind,
+    pay_date, amount), so a rerun that inserts nothing reports every row as a
+    duplicate instead of a silent zero. ``per_account`` writes one row per
+    account; the default merges them under a NULL account, which is the shape
+    every row backfilled before 1.7.0 has, so reruns keep deduplicating.
+    """
     import yfinance as yf
 
+    # yfinance states per-share dividends in today's (split-adjusted) units,
+    # which is why the entitlement must be counted in the same units.
     divs = yf.Ticker(symbol).dividends   # per-share Series indexed by ex-date
     if divs is None or len(divs) == 0:
         print(f"No dividend history for {symbol}")
-        return 0
+        return 0, 0
 
-    inserted = 0
+    inserted = duplicates = 0
     for ts, per_share in divs.items():
         ex_d = ts.date()
         if since and ex_d < since:
             continue
-        shares = _shares_held_on(conn, symbol, ex_d)
-        if shares <= 0:
-            continue
-        amount = round(float(per_share) * shares, 8)
-        if amount <= 0:
-            continue
-        _insert_income(
-            conn, symbol=symbol, account=None, kind="DIVIDEND", ex_date=ex_d,
-            pay_date=ex_d, amount=amount, currency="USD", tax_withheld=0,
-            per_share=float(per_share), source="yfinance", notes="auto-backfill",
-        )
-        inserted += 1
-    return inserted
+        for account, shares in _shares_held_on(conn, symbol, ex_d, per_account=per_account).items():
+            if shares <= 0:
+                continue
+            amount = round(float(per_share) * shares, 8)
+            if amount <= 0:
+                continue
+            wrote = _insert_income(
+                conn, symbol=symbol, account=account, kind="DIVIDEND", ex_date=ex_d,
+                pay_date=ex_d, amount=amount, currency="USD", tax_withheld=0,
+                per_share=float(per_share), source="yfinance", notes=BACKFILL_NOTE,
+            )
+            if wrote:
+                inserted += 1
+            else:
+                duplicates += 1
+    return inserted, duplicates
 
 
 def main():
@@ -96,6 +128,9 @@ def main():
     ap.add_argument("--backfill", action="store_true",
                     help="Pull dividend history from yfinance instead of manual entry")
     ap.add_argument("--since", default=None, help="YYYY-MM-DD (backfill lower bound)")
+    ap.add_argument("--per-account", action="store_true",
+                    help="Backfill one row per account instead of one merged row (account NULL). "
+                         "Rows written before 1.7.0 are merged; mixing the two double-counts.")
     ap.add_argument("--account", default=None)
     ap.add_argument("--kind", choices=KINDS, default="DIVIDEND")
     ap.add_argument("--ex-date", default=None, help="YYYY-MM-DD")
@@ -123,8 +158,12 @@ def main():
             since = (
                 datetime.strptime(args.since, "%Y-%m-%d").date() if args.since else None
             )
-            n = _backfill(conn, symbol, since)
-            print(f"OK backfilled {n} dividend row(s) for {symbol}")
+            inserted, duplicates = _backfill(conn, symbol, since, per_account=args.per_account)
+            print(
+                f"OK backfilled {inserted} dividend row(s) for {symbol}"
+                f" ({duplicates} already present). Rows are estimates: pay date = ex-date,"
+                " entitlement from the ledger in split-adjusted shares."
+            )
             return
 
         if args.pay_date is None or args.amount is None:

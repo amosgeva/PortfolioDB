@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.offline import get_plotlyjs
 
+import ledger_inputs
 import reporting_tz
 from db import fetch_all
 from fifo import Lot, run_fifo
@@ -48,17 +49,6 @@ class ReportData:
     fd_metrics: dict[str, dict] = field(default_factory=dict)
     earnings_past: list[dict] = field(default_factory=list)
     earnings_upcoming: list[dict] = field(default_factory=list)
-
-
-def _fetch_lots(conn) -> list[dict]:
-    return fetch_all(
-        conn,
-        """
-        SELECT id, symbol, account, side, trade_date, quantity, price, fees
-        FROM lots
-        ORDER BY symbol, COALESCE(account,''), trade_date, id
-        """,
-    )
 
 
 def _fetch_latest_prices(conn) -> dict[str, dict]:
@@ -331,11 +321,15 @@ def _realized_log(lot_rows: list[dict]) -> pd.DataFrame:
 
 
 def gather(conn) -> ReportData:
-    lot_rows = _fetch_lots(conn)
+    # Lots and the EOD price series come restated through the same prepared
+    # ledger the dashboard and the MCP tools use, so a recorded split reads as
+    # a share count here and not as a cliff in the value chart.
+    ledger = ledger_inputs.load(conn)
+    lot_rows = ledger.lots
     fifo_pos = compute_fifo_merged(lot_rows)
     latest = _fetch_latest_prices(conn)
     cash_by_account = _fetch_cash(conn)
-    eod_by_day = _fetch_eod_by_day(conn)
+    eod_by_day = ledger.price_by_day(_fetch_eod_by_day(conn))
 
     if fifo_pos.empty:
         positions = pd.DataFrame(columns=[

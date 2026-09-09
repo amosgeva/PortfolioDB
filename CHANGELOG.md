@@ -18,6 +18,43 @@ needs a schema step says so under **Upgrading**.
 
 ### Changed
 
+- **Recorded splits now reach the dashboard, the positions CLI, both reports
+  and the dividend backfill — not only the MCP tools.** The FIFO engine was
+  shared, but the *inputs* were not: the MCP services restated lots and
+  prices through `corporate_actions` before running it, while every other
+  surface fed it raw rows. Ten shares bought at 100 with a recorded 2:1 split
+  and a 50 quote read as twenty shares worth 1,000 and a 0% return on the MCP
+  side, and as ten shares with a −50% day on the dashboard and in the reports.
+  A new `app/ledger_inputs.py` is now the one place lots are read and
+  restated, and hands each reader the matching price adjusters; every surface
+  goes through it. **If you have a row in `corporate_actions`, the dashboard's
+  share counts, average cost, sparklines, value history and returns change to
+  agree with the MCP tools.** Installs without one see no change.
+- **The dashboard's portfolio-value chart is now actual history.** It
+  multiplied *today's* share counts by past prices, so a position bought last
+  month appeared to have been held all year, a sold one vanished from the
+  record, and buying more rewrote the past. It now values the holdings
+  actually held on each snapshot day, with prices carried forward across a
+  symbol's missing quotes — the same reconstruction the MCP
+  `portfolio_value_history` tool and the drawdown statistics already used.
+  The risk block keeps its price-risk view of the *current* basket over
+  historical closes and now says so in its payload (`risk.basis`) as well as
+  in its caption.
+- **Dividend backfill counts entitlement in split-adjusted shares.**
+  `add_income.py --backfill` summed raw BUY−SELL quantities, so ten pre-split
+  shares were ten for a dividend paid after a 2:1 and half the entitlement
+  was recorded. It now reads the prepared ledger as of the ex-date, which is
+  the unit yfinance states its per-share figures in. Rows say what they are
+  in their `notes` (pay date = ex-date, entitlement estimated from the
+  ledger), reruns report inserted versus duplicate counts, and a new
+  `--per-account` flag writes one row per account instead of a merged row
+  with a NULL account. The merged default is unchanged so existing backfilled
+  rows keep deduplicating.
+- **A failure to read `corporate_actions` is now an error, not "no
+  actions".** Only a missing table (a database that never had the migration)
+  still degrades to no adjustment; any other failure propagates instead of
+  silently restating every figure into pre-split units.
+
 - **Time-weighted return: a sale is now valued at its own price, and closing
   a position no longer produces 0% or −100%.** The daily sub-period formula
   netted a sale into the *denominator* as a negative flow, so a day that

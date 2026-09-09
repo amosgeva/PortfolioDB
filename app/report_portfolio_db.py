@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import ledger_inputs
 from db import connect, fetch_all, load_config
 from portfolio import compute_fifo_merged, compute_avg_cost_merged
 from reporting_utils import IL_TZ, money as fmt_money, utf8_stdout
@@ -250,14 +251,9 @@ def main():
         prev_map = get_prev_snapshot_map(conn, snap.ts)
         day_start_ts, day_start_map = get_day_start_snapshot_map(conn, ts=snap.ts)
 
-        lot_rows = fetch_all(
-            conn,
-            """
-            SELECT id, symbol, account, side, trade_date, quantity, price, fees
-            FROM lots
-            ORDER BY symbol, COALESCE(account,''), trade_date, id
-            """,
-        )
+        # Restated through the prepared ledger, like every other reader, so a
+        # recorded split shows up here as a share count and not as a loss.
+        lot_rows = ledger_inputs.load(conn).lots
 
         fifo_all = _compute_fifo_merged(lot_rows)
         avg_all = _compute_avg_cost_merged(lot_rows)

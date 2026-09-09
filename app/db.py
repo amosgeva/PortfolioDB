@@ -128,10 +128,15 @@ def fetch_all(conn, sql: str, params=None):
         return list(cur.fetchall())
 
 
-def run(conn, sql: str, params=None):
-    """Execute WITHOUT committing — for use inside transaction()."""
+def run(conn, sql: str, params=None) -> int:
+    """Execute WITHOUT committing — for use inside transaction().
+
+    Returns the statement's row count, so an INSERT … ON CONFLICT DO NOTHING
+    caller can tell an inserted row (1) from a duplicate it skipped (0).
+    """
     with conn.cursor() as cur:
         cur.execute(sql, params or ())
+        return cur.rowcount
 
 
 def execute(conn, sql: str, params=None):
