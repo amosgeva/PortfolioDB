@@ -41,7 +41,7 @@ when interpreting numbers or composing analyses.
 ## Prices
 - `price_snapshots` is append-only and keyed by `(symbol, ts)`.
 - `snapshot_prices.py` runs on weekdays only, between 15:15 and 23:15
-  in the reporting timezone — PORTFOLIODB_TZ, default Asia/Jerusalem (matching the run_snapshot.ps1 guard).
+  in the reporting timezone — PORTFOLIODB_TZ (or the Settings page), default UTC; the collector window uses the same zone.
 - **Latest price** for a symbol = `MAX(ts)` for that symbol; the dashboard
   joins this to positions to compute market value.
 - **"Daily change"** is current value vs the most recent snapshot taken before

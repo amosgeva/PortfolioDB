@@ -1114,7 +1114,7 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
         watchlist,
     )
 
-    # run_dashboard.ps1 launches streamlit from app/, so the repo root is not on
+    # The dashboard is launched from app/ (see streamlit_app.py), so the repo root is not on
     # sys.path and `app.mcp...` will not resolve. Add it here rather than
     # globally: this is the only view that reaches into the MCP services, and
     # putting app/ ahead of the root would shadow the official `mcp` SDK with
