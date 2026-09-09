@@ -41,13 +41,16 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import math
 import os
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dateutil import parser as dtparser
 
+import ledger_numbers
 from db import connect, load_config, run
 
 
@@ -127,36 +130,48 @@ def parse_side(raw: str | None) -> str:
     )
 
 
-def parse_quantity(raw: str) -> float:
+def parse_quantity(raw: str) -> Decimal:
     """Quantity is always positive; `side` carries the direction.
 
     A negative quantity is how several brokers encode a sale, but guessing that
     is not safe: it is also how some encode a short, an option assignment or a
     corrective entry. Refusing costs the reader one column; guessing wrong
     corrupts a cost basis and shows up months later as an inexplicable P&L.
+
+    Finite and exact: this used to be ``float(raw)``, which accepted "NaN" —
+    and NaN is neither < 0 nor == 0, so it sailed through both checks below
+    and into a column whose `> 0` constraint NaN also satisfies (audit F09).
     """
-    qty = float(raw)
-    if qty < 0:
+    # Sign first, so the message for the common broker case stays the useful
+    # one; ledger_numbers then handles NaN, infinity, range and text.
+    try:
+        probe = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError):
+        probe = None
+    if probe is not None and probe.is_finite() and probe < 0:
         raise ValueError(
-            f"negative quantity {qty:g}. Some brokers encode a sale this way — "
+            f"negative quantity {probe}. Some brokers encode a sale this way — "
             "if that is what this row is, add a Side column with SELL and make "
             "the quantity positive. This importer will not guess."
         )
-    if qty == 0:
+    if probe is not None and probe.is_finite() and probe == 0:
         raise ValueError("quantity is 0")
-    return qty
+    return ledger_numbers.parse_quantity(raw)
 
 
 def to_float(val: str | None) -> float | None:
+    """A price for a snapshot, or None when the cell is blank, not a number,
+    or not finite — a NaN 'Current Price' is no price, not a price of NaN."""
     if val is None:
         return None
     v = str(val).strip()
     if not v:
         return None
     try:
-        return float(v)
+        f = float(v)
     except Exception:
         return None
+    return f if math.isfinite(f) else None
 
 
 # Every write below runs INSIDE the caller's transaction (db.run, never
@@ -318,8 +333,8 @@ def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | No
         "side": parse_side(r.get('Side')),
         "trade_date": parse_trade_date(trade_date_raw),
         "quantity": parse_quantity(qty_raw),
-        "price": float(purchase_raw),
-        "fees": float(comm_raw) if comm_raw else 0.0,
+        "price": ledger_numbers.parse_price(purchase_raw),
+        "fees": ledger_numbers.parse_fees(comm_raw),
         "notes": comment,
     }
 

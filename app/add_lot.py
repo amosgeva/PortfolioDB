@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 
+import ledger_numbers
 from db import fetch_all, load_config, run, transaction
 
 
@@ -20,9 +21,11 @@ def main():
     ap.add_argument("--account", default=None)
     ap.add_argument("--trade-date", required=True, help="YYYY-MM-DD")
     ap.add_argument("--side", choices=["BUY", "SELL"], default="BUY")
-    ap.add_argument("--qty", type=float, required=True)
-    ap.add_argument("--price", type=float, required=True)
-    ap.add_argument("--fees", type=float, default=0.0)
+    # Finite, in range, right sign — as Decimal, exactly as typed. float()
+    # accepted NaN and infinity, and NaN passed every later check.
+    ap.add_argument("--qty", type=ledger_numbers.quantity_arg, required=True)
+    ap.add_argument("--price", type=ledger_numbers.price_arg, required=True)
+    ap.add_argument("--fees", type=ledger_numbers.fees_arg, default=ledger_numbers.parse_fees("0"))
     ap.add_argument("--notes", default=None)
     args = ap.parse_args()
 

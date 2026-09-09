@@ -25,6 +25,7 @@ from datetime import datetime
 
 import holdings
 import ledger_inputs
+import ledger_numbers
 from db import load_config, run, transaction
 
 KINDS = ["DIVIDEND", "INTEREST", "CAP_GAIN_DIST"]
@@ -135,10 +136,11 @@ def main():
     ap.add_argument("--kind", choices=KINDS, default="DIVIDEND")
     ap.add_argument("--ex-date", default=None, help="YYYY-MM-DD")
     ap.add_argument("--pay-date", default=None, help="YYYY-MM-DD")
-    ap.add_argument("--amount", type=float, default=None, help="gross cash received")
+    # Finite, non-negative, exact Decimal — see app/ledger_numbers.py.
+    ap.add_argument("--amount", type=ledger_numbers.money_arg, default=None, help="gross cash received")
     ap.add_argument("--currency", default="USD")
-    ap.add_argument("--tax-withheld", type=float, default=0.0)
-    ap.add_argument("--per-share", type=float, default=None)
+    ap.add_argument("--tax-withheld", type=ledger_numbers.money_arg, default=ledger_numbers.parse_money("0"))
+    ap.add_argument("--per-share", type=ledger_numbers.money_arg, default=None)
     ap.add_argument("--notes", default=None)
     args = ap.parse_args()
 

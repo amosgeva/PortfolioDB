@@ -1,5 +1,10 @@
--- PortfolioDB schema v0.3
+-- PortfolioDB schema v0.4
 -- Append-only snapshots, lot-based cost basis, FIFO P&L
+--
+-- Every numeric ledger column carries a `<> 'NaN'` check besides its sign
+-- check: PostgreSQL's numeric NaN sorts above every finite value, so
+-- `quantity > 0` alone admits it (migration 003, audit F09). Infinity needs no
+-- check — NUMERIC(20,8) cannot hold it.
 
 BEGIN;
 
@@ -37,7 +42,10 @@ CREATE TABLE IF NOT EXISTS lots (
   price         NUMERIC(20,8) NOT NULL CHECK (price >= 0),
   fees          NUMERIC(20,8) NOT NULL DEFAULT 0 CHECK (fees >= 0),
   notes         TEXT,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT lots_quantity_not_nan CHECK (quantity <> 'NaN'::numeric),
+  CONSTRAINT lots_price_not_nan    CHECK (price <> 'NaN'::numeric),
+  CONSTRAINT lots_fees_not_nan     CHECK (fees <> 'NaN'::numeric)
 );
 
 -- Prevent accidental duplicate lot inserts during imports.
@@ -56,6 +64,9 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
   source        TEXT NOT NULL DEFAULT 'yfinance',
   session       TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT price_snapshots_last_price_not_nan CHECK (last_price <> 'NaN'::numeric),
+  CONSTRAINT price_snapshots_bid_not_nan        CHECK (bid <> 'NaN'::numeric),
+  CONSTRAINT price_snapshots_ask_not_nan        CHECK (ask <> 'NaN'::numeric),
   PRIMARY KEY (symbol, ts)
 );
 
@@ -85,7 +96,8 @@ CREATE TABLE IF NOT EXISTS cash_snapshots (
   cash          NUMERIC(20,8) NOT NULL CHECK (cash >= 0),
   currency      TEXT NOT NULL DEFAULT 'USD',
   note          TEXT,
-  PRIMARY KEY (account, ts)
+  PRIMARY KEY (account, ts),
+  CONSTRAINT cash_snapshots_cash_not_nan CHECK (cash <> 'NaN'::numeric)
 );
 
 CREATE INDEX IF NOT EXISTS cash_snapshots_ts_idx ON cash_snapshots(ts);
@@ -106,6 +118,9 @@ CREATE TABLE IF NOT EXISTS income (
   per_share     NUMERIC(20,8),
   source        TEXT NOT NULL DEFAULT 'manual',
   notes         TEXT,
+  CONSTRAINT income_amount_not_nan       CHECK (amount <> 'NaN'::numeric),
+  CONSTRAINT income_tax_withheld_not_nan CHECK (tax_withheld <> 'NaN'::numeric),
+  CONSTRAINT income_per_share_not_nan    CHECK (per_share <> 'NaN'::numeric),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
