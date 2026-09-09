@@ -18,6 +18,23 @@ needs a schema step says so under **Upgrading**.
 
 ### Changed
 
+- **Every number written to the ledger must be finite, in range, and the
+  right sign — and the database now refuses NaN too.** The CSV importer and
+  the write CLIs (`add-lot`, `sell-lot`, `set-cash`, `add_income`) parsed
+  quantities, prices, fees and amounts with `float()`, which accepts `NaN`
+  and `Infinity`. NaN is neither `< 0` nor `== 0`, so it passed the
+  importer's checks, and PostgreSQL's numeric NaN sorts above every finite
+  value, so it passed `CHECK (quantity > 0)` and was stored. Infinity failed
+  later at the column type, aborting the importer's transaction. One parser
+  (`app/ledger_numbers.py`) now handles all of them: exact `Decimal`, finite,
+  within the twelve integer digits `NUMERIC(20,8)` holds, sign per column.
+  A `Current Price` that is not finite imports as "no price". **Upgrading:**
+  run `make schema` (or `docker compose run --rm dashboard python
+  app/apply_schema.py`). Migration `003_finite_numeric_checks.sql` adds a
+  `<> 'NaN'` check to every numeric ledger column; it fails on purpose if a
+  NaN is already stored, which is a defect to look at rather than one to
+  keep. Schema version is now 0.4.
+
 - **CSV import: a file goes in whole, or not at all.** `import_csv_history.py`
   committed every insert on its own and carried on after a database error, so
   "Rows failed: 1" could mean the earlier rows were already in (plus the

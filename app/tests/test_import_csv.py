@@ -64,6 +64,17 @@ class TestQuantity:
         with pytest.raises(ValueError):
             parse_quantity("forty")
 
+    @pytest.mark.parametrize("bad", ["NaN", "nan", "Infinity", "inf", "-inf", "1e999"])
+    def test_non_finite_is_refused(self, bad):
+        """float("NaN") used to pass: NaN is neither < 0 nor == 0, and the
+        column's `> 0` check admits it too (audit F09)."""
+        with pytest.raises(ValueError):
+            parse_quantity(bad)
+
+    def test_precision_is_exact(self):
+        from decimal import Decimal
+        assert parse_quantity("0.12345678") == Decimal("0.12345678")
+
 
 class TestAccountInference:
     def test_tagged_account_in_comment_wins(self):

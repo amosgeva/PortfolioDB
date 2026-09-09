@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import argparse
 
+import ledger_numbers
 from db import load_config, run, transaction
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cash", type=float, required=True)
+    # Finite and non-negative, as Decimal — see app/ledger_numbers.py.
+    ap.add_argument("--cash", type=lambda s: ledger_numbers.money_arg(s), required=True,
+                    help="balance in the account's currency; must be a finite, non-negative number")
     ap.add_argument("--account", default="(merged)")
     ap.add_argument("--note", default=None)
     args = ap.parse_args()

@@ -58,7 +58,7 @@ except Exception:  # typo'd setting — fall back rather than break every import
 REPORTING_CURRENCY = "USD"
 
 # Tracks the `-- PortfolioDB schema vX.Y` header in sql/schema.sql.
-SCHEMA_VERSION = "0.3"
+SCHEMA_VERSION = "0.4"
 
 # How long a snapshot run may be in flight before we stop deferring to it.
 #
