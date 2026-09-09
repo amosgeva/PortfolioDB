@@ -137,6 +137,40 @@ at the same price on the same day in the same account import as one lot.** It's
 the same trade-off the manual `add-lot` path has. Split the quantity or add a
 distinguishing `Comment` if you need both rows.
 
+The summary tells the two apart: `inserted` is new rows, `already present` is
+rows the index recognised and skipped.
+
+## Errors, transactions and exit codes
+
+**A file is the unit of work.** Every row is validated first, and only a file
+that parses clean is written — in one transaction that commits at the end. So a
+file either went in or it did not. A rejected row is printed with its line
+number and reason, and the file is not written:
+
+```
+ERROR trades.csv:14 | NVDA | trade_date='2026-13-01' qty='10' price='184.00': month must be in 1..12
+trades.csv | REJECTED: 1 row(s) failed to parse; nothing from this file was written.
+```
+
+The same holds for a row PostgreSQL itself rejects (a constraint the parser
+could not know about): the whole file rolls back and the message says so.
+Before 1.7.0 the importer committed row by row and kept going after a database
+error, so "Rows failed: 1" could mean the rest were already in, plus the
+instruments they referenced — and the rows after the failure were reported as
+errors of their own, because the transaction was already dead.
+
+`--continue-on-error` is the explicit partial mode: the rows that pass are
+written (each under its own savepoint), the rejected ones are listed, and the
+run exits 2 so a script can tell "all in" from "most in".
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Everything the files described is in the database, or was already |
+| `1` | Something was rejected and **not** written: a file rolled back, no files found, a refused `--pattern` |
+| `2` | Partial success under `--continue-on-error`: the valid rows are in, the rejected ones were printed |
+
+`--dry-run` validates and reports with the same codes and writes nothing.
+
 ## A sample file
 
 [`examples/sample_portfolio.csv`](examples/sample_portfolio.csv) is a two-symbol

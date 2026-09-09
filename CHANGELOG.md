@@ -18,6 +18,23 @@ needs a schema step says so under **Upgrading**.
 
 ### Changed
 
+- **CSV import: a file goes in whole, or not at all.** `import_csv_history.py`
+  committed every insert on its own and carried on after a database error, so
+  "Rows failed: 1" could mean the earlier rows were already in (plus the
+  instruments they referenced) and every row after the failure had been
+  reported as an error of its own, because a failed statement leaves a
+  PostgreSQL transaction aborted. A parse failure ended the run with exit 0.
+  Now every row is validated before anything is written, a clean file is
+  written in one transaction, and a row PostgreSQL rejects rolls the whole
+  file back. `--continue-on-error` is the explicit partial mode: valid rows go
+  in under per-row savepoints, rejected ones are listed, and the run exits 2.
+  Exit codes are 0 (all in), 1 (something rejected and not written, no files,
+  refused pattern), 2 (partial). The summary distinguishes inserted from
+  already-present rows for lots and snapshots. See
+  `docs/csv-import.md#errors-transactions-and-exit-codes`. **Scripts that
+  wrapped the importer and ignored its exit status now see a nonzero code
+  when something was rejected.**
+
 - **Recorded splits now reach the dashboard, the positions CLI, both reports
   and the dividend backfill — not only the MCP tools.** The FIFO engine was
   shared, but the *inputs* were not: the MCP services restated lots and
