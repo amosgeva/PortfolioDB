@@ -18,6 +18,20 @@ needs a schema step says so under **Upgrading**.
 
 ### Security
 
+- **The "localhost only" and "stop publishing Postgres" overrides in
+  `docs/exposure.md` now actually do that.** Both examples were plain lists,
+  and Compose merges an override's `ports` into the base file's list rather
+  than replacing it, keying entries on host IP as well as port — so the
+  loopback mapping landed *beside* the inherited `0.0.0.0:8501`, and
+  `ports: []` removed nothing. An operator who followed the guide had a
+  dashboard that was still open to the network while their override said
+  otherwise. The examples and `docker-compose.override.yml.example` now use
+  `ports: !override` and `ports: !reset []` (Compose 2.24.4+), and a test
+  renders every documented override and fails if a wildcard mapping survives.
+  **If you copied the old example, re-copy it** and check with
+  `docker compose config` that no `0.0.0.0` entry remains. Nothing about the
+  base file's defaults changed.
+
 - **A source build from a populated working tree no longer bakes `app/.env`
   into the image.** `.dockerignore` excluded the root `.env` and nothing else,
   while the Dockerfile copies the whole `app/` tree — so an operator who kept

@@ -4,17 +4,21 @@
 your entire ledger and add or delete trades. This is deliberate — it keeps a
 single-user tool simple — and it means the network is your only access control.
 
-Defaults are LAN-only:
+The defaults bind to **every interface on the host**:
 
 | Surface | Default binding | Reachable from |
 |---|---|---|
-| Dashboard | `0.0.0.0:8501` | anything on your network |
-| Postgres | `0.0.0.0:54320` | anything on your network |
+| Dashboard | `0.0.0.0:8501` | every network the host is on |
+| Postgres | `0.0.0.0:54320` | every network the host is on |
 | MCP server | `127.0.0.1:8765` | the host only |
 | pgAdmin (`tools` profile) | `127.0.0.1:58080` | the host only |
 
-Two things follow: **never port-forward 8501 on your router**, and if your LAN
-has guests or devices you don't control, tighten the binding.
+On a home machine behind a router that is "your LAN". On a VPS, a machine with
+a public address, or a host that is also on a VPN, it is every one of those
+networks at once — a wildcard bind is only as private as the host's least
+private interface. Two things follow: **never port-forward 8501 on your
+router**, and if any network the host sits on has guests or devices you don't
+control, tighten the binding.
 
 ## Localhost only
 
@@ -24,12 +28,21 @@ bind to the loopback interface:
 ```yaml
 services:
   dashboard:
-    ports:
+    ports: !override
       - "127.0.0.1:8501:8501"
   postgres:
-    ports:
+    ports: !override
       - "127.0.0.1:54320:5432"
 ```
+
+The `!override` tag is not decoration. Compose merges an override file's
+`ports` *into* the base file's list rather than replacing it, and it treats a
+different host IP as a different entry — so without the tag the loopback
+mapping lands **beside** the inherited `0.0.0.0:8501`, and the dashboard stays
+open to the network while the file says otherwise. `!override` replaces the
+list (Compose 2.24.4 or newer; `docker compose version` tells you). A test in
+this repository renders these examples and fails if a wildcard mapping
+survives, because the plain-list form looked right and was not.
 
 Then reach it over SSH from another machine:
 
@@ -106,13 +119,18 @@ services talk to `postgres` over the compose network regardless:
 ```yaml
 services:
   postgres:
-    ports: []
+    ports: !reset []
 ```
+
+An empty list without the `!reset` tag removes nothing: Compose merges it
+with the base file's list and the port stays published. Check the result with
+`docker compose config` — the `postgres` service should show no `ports` key.
 
 ## A short checklist
 
 - [ ] Nothing forwarded from the router to 8501 or 54320
-- [ ] Dashboard bound to `127.0.0.1` if the LAN isn't trusted
+- [ ] Dashboard bound to `127.0.0.1` if the LAN isn't trusted — and
+      `docker compose config` confirms no `0.0.0.0` mapping is left beside it
 - [ ] Remote access via tailnet or an authenticating proxy, never raw
 - [ ] `PORTFOLIODB_MCP_TOKEN` is long and random (`make init` / `.\pdb.ps1 init`
       generates one)

@@ -19,6 +19,11 @@ services:
   dashboard:
     # Publish on a different host port, or bind to localhost only so the
     # dashboard is not reachable from the LAN (it has no authentication —
-    # see the exposure notes in the README).
-    ports:
+    # see docs/exposure.md).
+    #
+    # `!override` matters: without it Compose *adds* this entry next to the
+    # base file's "8501:8501" instead of replacing it, and the dashboard stays
+    # open on every interface while this file says localhost. Needs Compose
+    # 2.24.4 or newer. To stop publishing a port entirely, use `ports: !reset []`.
+    ports: !override
       - "127.0.0.1:8501:8501"
