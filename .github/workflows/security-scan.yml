@@ -8,12 +8,13 @@ name: Security scan
 # request, so a bump is checked before it merges.
 #
 # A failure here is a signal to refresh a pin — `make lock` for a package, a
-# Dependabot PR for the base image — not something to silence. The one thing
-# it deliberately does not report is an OS package with no fixed version in
-# Debian yet (util-linux has been that package on every slim image for months):
-# there is nothing a pin can do about those, and a check that is always red is
-# a check nobody reads. `ignore-unfixed` is that allowlist, and it is the only
-# one.
+# Dependabot PR for the base image — not something to silence. Two things it
+# deliberately does not report, because no pin can change them and a check
+# that is always red is a check nobody reads: an OS package with no fixed
+# version in Debian yet (`ignore-unfixed`; util-linux has been that package on
+# every slim image for months), and the entries in .trivyignore, each with its
+# reason written next to it (pip's own vendored copies, as of this writing).
+# Those two are the whole allowlist.
 
 on:
   schedule:

@@ -30,12 +30,16 @@ FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae
 # redirect to http:// is followed happily, and the download becomes tamperable
 # by anything on the path. The sha256sum check that follows would catch a
 # swapped binary, but only after it had been written to disk.
-ARG SUPERCRONIC_VERSION=v0.2.33
+# v0.2.49 (2026-08-14): v0.2.33 was built with Go 1.23.1, whose standard
+# library carries a dozen HIGH/CRITICAL advisories (crypto/tls, net/url, x509)
+# that the weekly Trivy scan reports against the binary. Checksums computed
+# from the release assets on 2026-09-09; sizes matched GitHub's asset list.
+ARG SUPERCRONIC_VERSION=v0.2.49
 ARG TARGETARCH
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) sha=feefa310da569c81b99e1027b86b27b51e6ee9ab647747b49099645120cfc671 ;; \
-      arm64) sha=f1f8585c66de020fef494dd636058f99949d108f569fef00016a1c8b9eb145b3 ;; \
+      amd64) sha=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1 ;; \
+      arm64) sha=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5 ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \
@@ -70,7 +74,9 @@ RUN apt-get update \
 # that the built image's `pip freeze` still equals the file.
 COPY app/requirements.txt /app/app/requirements.txt
 COPY app/constraints.txt /app/app/constraints.txt
-RUN pip install -c /app/app/constraints.txt -r /app/app/requirements.txt
+# `--only-binary :all:` — wheels only, so no package's setup.py runs at build
+# time; every pin in the lock has one.
+RUN pip install --only-binary :all: -c /app/app/constraints.txt -r /app/app/requirements.txt
 
 # Bring the rest of the app/ tree (engines, dashboard, services, MCP server),
 # the scheduler's crontab, and the SQL — the last one so an install that pulled
