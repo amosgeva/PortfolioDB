@@ -16,7 +16,21 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
-### Changed
+### Security
+
+- **The MCP server requires its read-only database role and receives only the
+  environment it needs.** The pool fell back to the application's read-write
+  credentials silently when `PORTFOLIODB_MCP_RO_USER` was unset, protected
+  only by `default_transaction_read_only=on` — a session setting any
+  statement can switch off. It now refuses to connect without the role and
+  says how to create it; the fallback survives as an explicit, logged opt-out
+  (`PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1`). In compose the `mcp` service no
+  longer inherits the whole `.env`: it gets the database settings and its own
+  keys, not the LLM keys or the vendor API key. **Upgrading: if you run the
+  MCP server and never ran `make ro-role`, run it now and add the two lines
+  it prints to `.env`, or set the fallback flag.** Installs that already set
+  the role see no change. A live test now proves the role refuses a write on
+  privilege even inside a `READ WRITE` transaction.
 
 - **Every number written to the ledger must be finite, in range, and the
   right sign — and the database now refuses NaN too.** The CSV importer and

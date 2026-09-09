@@ -485,14 +485,26 @@ The MCP server reuses the same `portfolio.compute_fifo_merged` engine as the das
 
 ### Setup
 
-Add two keys to `.env` (the MCP server reads them on startup):
+Create the read-only database role the server connects as, and add its two
+lines plus a token to `.env` (the MCP server reads them on startup):
+
+```bash
+make ro-role          # creates portfoliodb_ro and prints the two .env lines
+```
 
 ```env
+PORTFOLIODB_MCP_RO_USER=portfoliodb_ro       # required — printed by make ro-role
+PORTFOLIODB_MCP_RO_PASSWORD=<printed>        # required
 PORTFOLIODB_MCP_TOKEN=<long-random-string>   # required — clients send as Bearer
 PORTFOLIODB_MCP_PORT=8765                    # optional, default 8765
 PORTFOLIODB_MCP_HOST=0.0.0.0                 # optional, default 127.0.0.1 —
                                              # set this only to serve the LAN
 ```
+
+The role holds `SELECT` and nothing else, so "read-only" is a property of the
+database and not a promise of the code. Without it the server refuses to
+connect and says so ([exposure](docs/exposure.md#the-mcp-server) has the
+deliberate opt-out).
 
 Generate a strong token:
 
