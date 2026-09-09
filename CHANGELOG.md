@@ -16,6 +16,21 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Added
+
+- **A sale bigger than the position is warned about when it is entered.**
+  `sell-lot`, `add-lot --side SELL` and the CSV importer check the prepared
+  ledger for the account as of the trade date and print what is held versus
+  what is being sold, then still record the row: the usual cause is the wrong
+  account, a mistyped date or a missing BUY, and the row is the evidence. The
+  FIFO engine's read-time truncation warning stays; this is the same fact,
+  said to the person typing. The importer counts these as `oversells`.
+- **`get_data_quality` reports an instrument whose registered currency is
+  not the reporting currency** (`foreign_currency`, a correctness issue at
+  any position size): the ledger sums face values and nothing converts, so a
+  EUR position in a USD ledger makes every total wrong. Previously nothing
+  checked.
+
 ### Security
 
 - **Symbols reach the page as text and the disk only when they look like

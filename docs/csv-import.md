@@ -78,7 +78,12 @@ a way that only surfaces months later. Flip the sign and add `Side=SELL`.
 
 Sales are matched against your open lots by the FIFO engine at read time, so
 they need no lot reference — just the date, quantity and price. A sale of more
-than you hold is truncated with a warning, because shorts are not supported.
+than you hold is **warned about as it is imported** (`WARNING: selling 20 NVDA
+in IBKR on 2026-03-04, but the ledger holds 16 there…`) and still recorded: the
+usual cause is the wrong account, a mistyped date or a missing BUY, and the
+row is the evidence you need to fix it. Shorts are not supported, so the FIFO
+engine matches what it can and drops the rest, understating realized P&L
+until the ledger is corrected. The summary counts these under `oversells`.
 
 ## Mapping any broker's export
 

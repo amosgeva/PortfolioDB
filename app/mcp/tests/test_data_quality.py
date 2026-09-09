@@ -62,6 +62,7 @@ def stub(monkeypatch):
             "_impossible_values": lambda c: {},
             "_first_trade_dates": lambda c: {"BIG": date(2026, 1, 5), "TINY": date(2026, 1, 5)},
             "_suspected_splits": lambda c: {},
+            "_foreign_currency": lambda c: {},
         }
         defaults.update(overrides)
         for name, fn in defaults.items():
@@ -235,6 +236,21 @@ class TestCorrectnessIssues:
                     "count": 1, "first_seen": "2026-02-01"}
         })
         r = dq.portfolio_data_quality(cutoff=make_cutoff())
+        assert r["overall_status"] == "inconsistent"
+
+    def test_foreign_currency_position_is_inconsistent_whatever_its_size(
+        self, env_token, fake_db, stub
+    ):
+        """The ledger sums face values; a EUR position in a USD ledger makes
+        every total wrong, so it counts against the status even on TINY."""
+        stub(_foreign_currency=lambda c: {
+            "TINY": {"message": "Instrument currency is EUR, the ledger reports in USD.",
+                     "currency": "EUR", "reporting_currency": "USD"}
+        })
+        r = dq.portfolio_data_quality(cutoff=make_cutoff())
+        issue = next(i for i in r["material_issues"] if i["code"] == "foreign_currency")
+        assert issue["severity"] == "inconsistent"
+        assert issue["currency"] == "EUR"
         assert r["overall_status"] == "inconsistent"
 
 

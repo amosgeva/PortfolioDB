@@ -67,6 +67,10 @@ def db(monkeypatch):
         return 1
 
     monkeypatch.setattr(imp, "run", fake_run)
+    # The oversell check reads the ledger through a real connection; these
+    # tests have none. test_oversell_is_warned_about_and_still_written below
+    # exercises the importer's side of it.
+    monkeypatch.setattr(imp.oversell, "oversell_warning", lambda *a, **k: None)
     return log
 
 
@@ -152,6 +156,26 @@ def test_dry_run_validates_and_writes_nothing(tmp_path, db):
     assert db == []
     assert counts["rejected"] == 1 and counts["attempted"] == 2 and counts["sells"] == 1
     assert (conn.commits, conn.rollbacks) == (0, 0)
+
+
+# ── oversells ─────────────────────────────────────────────────────
+
+
+def test_oversell_is_warned_about_and_still_written(tmp_path, db, monkeypatch, capsys):
+    """A SELL beyond the position is a warning at import time, counted, and
+    recorded — the row is the evidence the operator needs to fix the ledger."""
+    def warn(conn, symbol, account, trade_date, quantity):
+        return f"WARNING: selling {quantity} {symbol} in {account}, but the ledger holds 0" if symbol == "BBB" else None
+
+    monkeypatch.setattr(imp.oversell, "oversell_warning", warn)
+    conn = FakeConn()
+    counts = imp._import_file(conn, _csv(tmp_path, GOOD_A, GOOD_B), _args(), [])
+    assert counts["inserted"] == 2
+    assert counts["oversells"] == 1
+    assert counts["rejected"] == 0
+    out = capsys.readouterr().out
+    assert "WARNING: selling 4 BBB in IBKR" in out
+    assert "oversells=1" in out
 
 
 # ── exit status ───────────────────────────────────────────────────
