@@ -48,7 +48,7 @@ from zoneinfo import ZoneInfo
 
 from dateutil import parser as dtparser
 
-from db import connect, execute, load_config
+from db import connect, load_config, run
 
 
 # zoneinfo, not pytz. A bare `pytz.timezone("America/New_York")` carries the
@@ -159,18 +159,22 @@ def to_float(val: str | None) -> float | None:
         return None
 
 
-def upsert_instrument(conn, symbol: str):
-    execute(
+# Every write below runs INSIDE the caller's transaction (db.run, never
+# db.execute): the file is the unit of work, and _import_file decides when it
+# commits. Each returns the row count, so an ON CONFLICT DO NOTHING that skipped
+# a duplicate reads as 0 and an inserted row as 1.
+
+
+def upsert_instrument(conn, symbol: str) -> int:
+    return run(
         conn,
         "INSERT INTO instruments(symbol) VALUES (%s) ON CONFLICT(symbol) DO NOTHING",
         (symbol,),
     )
 
 
-def insert_lot(conn, symbol: str, account: str | None, trade_date, qty: float, price: float, fees: float, notes: str | None, dry_run: bool, side: str = "BUY"):
-    if dry_run:
-        return
-    execute(
+def insert_lot(conn, symbol: str, account: str | None, trade_date, qty, price, fees, notes: str | None, side: str = "BUY") -> int:
+    return run(
         conn,
         """
         INSERT INTO lots(symbol, account, side, trade_date, quantity, price, fees, notes)
@@ -181,10 +185,8 @@ def insert_lot(conn, symbol: str, account: str | None, trade_date, qty: float, p
     )
 
 
-def insert_snapshot(conn, ts_utc: datetime, symbol: str, last_price: float, dry_run: bool):
-    if dry_run:
-        return
-    execute(
+def insert_snapshot(conn, ts_utc: datetime, symbol: str, last_price) -> int:
+    return run(
         conn,
         """
         INSERT INTO price_snapshots(ts, symbol, last_price, bid, ask, source)
@@ -261,81 +263,209 @@ def _snapshot_ts(rows: list[dict]) -> datetime | None:
     return None
 
 
-def _import_lot(conn, r: dict, sym: str, fp: str, args, tagged_accounts: list[str]) -> tuple[int, int, int]:
-    """Insert the lot one CSV row describes.
+# ─── Transaction policy ─────────────────────────────────────────────────────
+#
+# A file is the unit of work. Validation happens first, over every row, with
+# no database in sight; only a file that parsed clean is written, and it is
+# written in one transaction that commits at the end. So an import either
+# happened or it did not, and "Rows failed: 1" never again means "and the
+# other 213 are in, plus the instruments they referenced".
+#
+# --continue-on-error is the explicit partial-success mode: the parse-clean
+# rows are written, each under its own SAVEPOINT so a row PostgreSQL rejects
+# (a constraint) is rolled back to and the rest carry on. Without a savepoint
+# a failed statement leaves the whole transaction aborted, and every later
+# statement fails with "current transaction is aborted" — which is what this
+# script used to do while reporting the later rows as errors of their own and
+# having already committed the earlier ones (audit F08).
+#
+# Exit status says what happened, for the scheduler or the operator's shell:
+#   0  everything the files described is in the database (or was already)
+#   1  something was rejected and NOT written — a file rolled back, no files,
+#      a refused pattern
+#   2  partial success under --continue-on-error: the valid rows are in, the
+#      rejected ones are listed above
+# --dry-run validates and reports with the same codes and writes nothing.
 
-    Returns (lots, sells, errors) as 0/1 counts. A row without the three lot
-    columns is not a lot and counts as nothing; a row that fails to parse is
-    reported and counted as an error without stopping the file.
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_PARTIAL = 2
+
+COUNT_KEYS = ("attempted", "inserted", "duplicate", "rejected", "sells",
+              "snaps_inserted", "snaps_duplicate")
+
+
+def _empty_counts() -> dict[str, int]:
+    return {k: 0 for k in COUNT_KEYS}
+
+
+def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | None:
+    """Validate one CSV row into a lot dict, or None when the row is not a lot.
+
+    Raises ValueError with the reason when the row is a lot and is malformed.
+    Pure: no database.
     """
     trade_date_raw = (r.get('Trade Date') or '').strip()
     purchase_raw = (r.get('Purchase Price') or '').strip()
     qty_raw = (r.get('Quantity') or '').strip()
     if not (trade_date_raw and purchase_raw and qty_raw):
-        return 0, 0, 0
+        return None
     comm_raw = (r.get('Commission') or '').strip()
     comment = r.get('Comment')
+    return {
+        "symbol": sym,
+        "account": infer_account(comment, args.default_account, tagged_accounts),
+        "side": parse_side(r.get('Side')),
+        "trade_date": parse_trade_date(trade_date_raw),
+        "quantity": parse_quantity(qty_raw),
+        "price": float(purchase_raw),
+        "fees": float(comm_raw) if comm_raw else 0.0,
+        "notes": comment,
+    }
+
+
+def _validate_file(rows: list[dict], fp: str, args, tagged_accounts: list[str]) -> tuple[list[dict], list[tuple[str, float]], int]:
+    """Parse every row before anything is written.
+
+    Returns (lots, snapshots as (symbol, price), rejected count). Each
+    rejected row is printed with its line number and reason.
+    """
+    lots: list[dict] = []
+    snaps: list[tuple[str, float]] = []
+    rejected = 0
+    for line_no, r in enumerate(rows, start=2):   # line 1 is the header
+        sym = (r.get('Symbol') or '').strip().upper()
+        if not sym:
+            continue
+        try:
+            lot = _parse_lot(r, sym, args, tagged_accounts)
+        except Exception as e:
+            print(
+                f"ERROR {os.path.basename(fp)}:{line_no} | {sym} | "
+                f"trade_date={(r.get('Trade Date') or '').strip()!r} "
+                f"qty={(r.get('Quantity') or '').strip()!r} "
+                f"price={(r.get('Purchase Price') or '').strip()!r}: {e}"
+            )
+            rejected += 1
+            continue
+        if lot is not None:
+            lots.append(lot)
+        cp = to_float(r.get('Current Price'))
+        if cp is not None:
+            snaps.append((sym, cp))
+    return lots, snaps, rejected
+
+
+def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: datetime | None, fp: str, args) -> dict[str, int]:
+    """Write one validated file inside one transaction.
+
+    Atomic by default: any database error rolls the whole file back and is
+    re-raised. With --continue-on-error each row runs under a savepoint, a
+    rejected row is rolled back to its savepoint and counted, and the file
+    commits with whatever succeeded.
+    """
+    counts = _empty_counts()
+    base = os.path.basename(fp)
+
+    def _row(i: int, work) -> bool:
+        if not args.continue_on_error:
+            work()
+            return True
+        run(conn, f"SAVEPOINT row_{i}")
+        try:
+            work()
+        except Exception as e:
+            run(conn, f"ROLLBACK TO SAVEPOINT row_{i}")
+            print(f"ERROR {base} | row {i + 1} rejected by the database: {str(e).strip().splitlines()[0]}")
+            return False
+        run(conn, f"RELEASE SAVEPOINT row_{i}")
+        return True
+
     try:
-        td = parse_trade_date(trade_date_raw)
-        side = parse_side(r.get('Side'))
-        qty = parse_quantity(qty_raw)
-        price = float(purchase_raw)
-        fees = float(comm_raw) if comm_raw else 0.0
-        account = infer_account(comment, args.default_account, tagged_accounts)
-        insert_lot(conn, sym, account, td, qty, price, fees, comment,
-                   args.dry_run, side=side)
+        for i, lot in enumerate(lots):
+            counts["attempted"] += 1
+
+            def _insert(lot=lot):
+                upsert_instrument(conn, lot["symbol"])
+                n = insert_lot(conn, lot["symbol"], lot["account"], lot["trade_date"],
+                               lot["quantity"], lot["price"], lot["fees"], lot["notes"],
+                               side=lot["side"])
+                counts["inserted" if n else "duplicate"] += 1
+                if n and lot["side"] == "SELL":
+                    counts["sells"] += 1
+
+            if not _row(i, _insert):
+                counts["rejected"] += 1
+
+        if ts_utc is not None:
+            for j, (sym, cp) in enumerate(snaps):
+                def _snap(sym=sym, cp=cp):
+                    upsert_instrument(conn, sym)
+                    n = insert_snapshot(conn, ts_utc, sym, cp)
+                    counts["snaps_inserted" if n else "snaps_duplicate"] += 1
+
+                if not _row(len(lots) + j, _snap):
+                    counts["rejected"] += 1
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         print(
-            f"ERROR {os.path.basename(fp)} | {sym} | "
-            f"trade_date={trade_date_raw!r} qty={qty_raw!r} price={purchase_raw!r}: {e}"
+            f"ERROR {base} | the database rejected a row: {str(e).strip().splitlines()[0]}\n"
+            f"       The whole file was rolled back; nothing from it was written. "
+            f"Fix the row, or use --continue-on-error to import the rows that pass."
         )
-        return 0, 0, 1
-    return 1, (1 if side == "SELL" else 0), 0
+        rolled_back = _empty_counts()
+        rolled_back["attempted"] = counts["attempted"]
+        rolled_back["rejected"] = 1
+        return rolled_back
+    return counts
 
 
 def _import_file(conn, fp: str, args, tagged_accounts: list[str]) -> dict[str, int] | None:
     """Import one CSV file: its lots, and one price snapshot per priced row.
 
     Returns the file's counts, or None when the file had no rows and was
-    skipped without being counted.
+    skipped without being counted. See the transaction policy above.
     """
     with open(fp, newline='', encoding='utf-8-sig') as f:
         rows = list(csv.DictReader(f))
     if not rows:
         return None
+    base = os.path.basename(fp)
 
     ts_utc = _snapshot_ts(rows)
-    counts = {"lots": 0, "sells": 0, "snaps": 0, "errors": 0}
-    for r in rows:
-        sym = (r.get('Symbol') or '').strip().upper()
-        if not sym:
-            continue
+    lots, snaps, rejected = _validate_file(rows, fp, args, tagged_accounts)
+    counts = _empty_counts()
+    counts["rejected"] = rejected
 
-        # Must respect --dry-run too: this was the one write that
-        # used to slip through and mutate `instruments` on a dry run.
-        if not args.dry_run:
-            upsert_instrument(conn, sym)
+    if rejected and not args.continue_on_error:
+        print(
+            f"{base} | REJECTED: {rejected} row(s) failed to parse; nothing from this "
+            f"file was written. Fix them, or use --continue-on-error to import the rest."
+        )
+        return counts
 
-        lots, sells, errors = _import_lot(conn, r, sym, fp, args, tagged_accounts)
-        counts["lots"] += lots
-        counts["sells"] += sells
-        counts["errors"] += errors
+    if args.dry_run:
+        counts["attempted"] = len(lots)
+        counts["sells"] = sum(1 for lot in lots if lot["side"] == "SELL")
+        print(
+            f"{base} | DRY RUN: {len(lots)} lot(s) ({counts['sells']} SELL) and "
+            f"{len(snaps) if ts_utc else 0} snapshot(s) would be written; {rejected} row(s) rejected"
+        )
+        return counts
 
-        # Snapshots (last price)
-        if ts_utc is not None:
-            cp = to_float(r.get('Current Price'))
-            if cp is not None:
-                insert_snapshot(conn, ts_utc, sym, cp, args.dry_run)
-                counts["snaps"] += 1
-
+    written = _write_file(conn, lots, snaps, ts_utc, fp, args)
+    written["rejected"] += rejected
     print(
-        f"{os.path.basename(fp)} | lots={counts['lots']} (sells={counts['sells']}) snaps={counts['snaps']}"
-        f" errors={counts['errors']} ts_utc={ts_utc.isoformat() if ts_utc else 'N/A'}"
+        f"{base} | lots: {written['inserted']} inserted, {written['duplicate']} already present"
+        f" ({written['sells']} SELL) | snapshots: {written['snaps_inserted']} inserted,"
+        f" {written['snaps_duplicate']} already present | rejected={written['rejected']}"
+        f" ts_utc={ts_utc.isoformat() if ts_utc else 'N/A'}"
     )
-    return counts
+    return written
 
 
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True)
     ap.add_argument("--pattern", default="*.csv")
@@ -343,30 +473,38 @@ def main():
                     help="Account for lots whose Comment doesn't name a tagged account")
     ap.add_argument("--tagged-accounts", default="",
                     help="Comma-separated account names detected in the Comment column (e.g. IBKR,BrokerB)")
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Validate and report; write nothing")
+    ap.add_argument("--continue-on-error", action="store_true",
+                    help="Import the rows that pass and skip the ones that do not (exit 2 if any "
+                         "were skipped). Default: a file with a bad row is not written at all.")
     args = ap.parse_args()
     tagged_accounts = [t.strip() for t in args.tagged_accounts.split(",") if t.strip()]
 
     base_dir = Path(args.dir).resolve()
     if not base_dir.is_dir():
         print(f"--dir is not a directory: {base_dir}")
-        return
+        return EXIT_FAILED
 
     try:
         files, escaped = contained_matches(base_dir, args.pattern)
     except ValueError as exc:
         print(f"Refusing to run: {exc}")
-        return
+        return EXIT_FAILED
     if escaped:
         print(f"Ignored {escaped} match(es) resolving outside {base_dir}.")
     if not files:
         print("No files found")
-        return
+        return EXIT_FAILED
 
     cfg = load_config()
 
-    totals = {"files": 0, "lots": 0, "sells": 0, "snaps": 0, "errors": 0}
-    with connect(cfg) as conn:
+    totals = _empty_counts()
+    totals["files"] = 0
+    # A plain connection, committed per file by _write_file. Not `with connect()
+    # as conn`, whose exit would commit whatever a file left half-done.
+    conn = connect(cfg)
+    try:
         for fp in files:
             base = os.path.basename(fp).lower()
             # Skip the moving target file and any temp files
@@ -378,15 +516,22 @@ def main():
             totals["files"] += 1
             for k, v in counts.items():
                 totals[k] += v
+    finally:
+        conn.close()
 
     print("-")
     print(f"Files processed: {totals['files']}")
-    print(f"Lots inserted (attempted): {totals['lots']} — {totals['lots'] - totals['sells']} BUY, {totals['sells']} SELL")
-    print(f"Snapshots inserted (attempted): {totals['snaps']}")
-    print(f"Rows failed: {totals['errors']}")
+    print(f"Lots attempted: {totals['attempted']} — {totals['inserted']} inserted "
+          f"({totals['inserted'] - totals['sells']} BUY, {totals['sells']} SELL), "
+          f"{totals['duplicate']} already present")
+    print(f"Snapshots: {totals['snaps_inserted']} inserted, {totals['snaps_duplicate']} already present")
+    print(f"Rows rejected: {totals['rejected']}")
     if args.dry_run:
-        print("DRY RUN: no inserts were committed")
+        print("DRY RUN: nothing was written")
+    if totals["rejected"]:
+        return EXIT_PARTIAL if args.continue_on_error else EXIT_FAILED
+    return EXIT_OK
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
