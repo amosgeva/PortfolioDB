@@ -35,7 +35,7 @@ jobs:
     name: pip-audit against app/constraints.txt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
@@ -50,7 +50,7 @@ jobs:
     name: Trivy against the built image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Build the image
         run: docker build -f app/Dockerfile -t portfoliodb-scan:${{ github.sha }} .
