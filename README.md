@@ -343,7 +343,7 @@ safely.
 | [Scheduling](docs/scheduling.md) | The jobs, the collector window, upgrading |
 | [Operations](docs/operations.md) | Backups, restore, upgrades, health checks |
 | [Changelog](CHANGELOG.md) | What changed, and whether an upgrade moves a number |
-| [Exposure](docs/exposure.md) | LAN-only defaults, tailnet, reverse proxies |
+| [Exposure](docs/exposure.md) | Default bindings, localhost-only override, tailnet, reverse proxies |
 | [CSV import](docs/csv-import.md) | Bulk-loading history from a broker export |
 | [Methodology](docs/methodology.md) | How trade quality and fee attribution are computed |
 
