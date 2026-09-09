@@ -16,6 +16,16 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-09-09
+
+The review snapshot gains a per-account cash breakdown, and the period
+statistics stop holding back a finished week or month until the next one has a
+snapshot. No schema and no migration — see **Upgrading**.
+
+Minor rather than patch because a field was added to an MCP tool's output:
+backward compatible, but something new for a client to consume, which a patch
+should not carry.
+
 ### Added
 
 - **`summary.cash_by_account` in `get_portfolio_review_snapshot`.** The
@@ -969,7 +979,9 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.6.0
+[1.5.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.5.0
 [1.4.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.4.0
 [1.3.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.3.0
 [1.2.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.2.2
