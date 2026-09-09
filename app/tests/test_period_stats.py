@@ -210,6 +210,48 @@ class TestMonthlyTable:
         assert "Jan" in rows[0]["partial_months"]
 
 
+class TestRunningPeriods:
+    """`today` decides whether the last period is still running."""
+
+    def _curve(self):
+        # Jan (partial, first), Feb, Mar, Apr — the curve ends on 2026-04-02.
+        return TestRecords()._month_spanning()
+
+    def test_last_month_is_complete_once_today_has_moved_past_it(self):
+        m = ps.build(self._curve(), today=date(2026, 5, 3))["month"]
+        assert m["complete"] == 3
+        assert m["partial_excluded"] == 1
+
+    def test_last_month_is_still_partial_while_today_is_inside_it(self):
+        m = ps.build(self._curve(), today=date(2026, 4, 20))["month"]
+        assert m["complete"] == 2
+
+    def test_without_today_the_last_period_is_assumed_running(self):
+        m = ps.build(self._curve())["month"]
+        assert m["complete"] == 2
+
+    def test_first_period_stays_partial_regardless(self):
+        m = ps.build(self._curve(), today=date(2026, 5, 3))["month"]
+        assert "Jan 2026" not in {m["best"]["label"], m["worst"]["label"]}
+
+    def test_weeks_follow_the_same_rule(self):
+        # 2026-01-05 is a Monday. The curve ends on Tuesday 2026-01-27 (ISO
+        # week 5); the following Monday, 2026-02-02, is in week 6.
+        curve = [(date(2026, 1, 5), 1.0)]
+        g = 1.0
+        for day, r in [
+            (date(2026, 1, 13), 0.10),
+            (date(2026, 1, 20), 0.05),
+            (date(2026, 1, 27), 0.02),
+        ]:
+            g *= (1 + r)
+            curve.append((day, g))
+        still_running = ps.build(curve, today=date(2026, 1, 30))["week"]
+        finished = ps.build(curve, today=date(2026, 2, 2))["week"]
+        assert still_running["complete"] == 1
+        assert finished["complete"] == 2
+
+
 class TestBuildEnvelope:
     def test_insufficient_history(self):
         out = ps.build([(date(2026, 1, 1), 1.0)])

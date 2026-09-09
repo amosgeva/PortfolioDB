@@ -10,6 +10,9 @@ mid-week and mid-month, and the current week and month are still running. A
 half-month is not comparable to a full one, so the first and last groups are
 marked `partial` and kept out of best/worst — they still appear in the monthly
 table, because a gap there would be more confusing than a labelled part-month.
+A finished period is released as soon as `today` (passed by the caller) has
+moved past it, so a complete month is not held back until the next month has
+its first snapshot.
 
 Every figure carries its sample size. With coverage starting 2025-09-22 there
 are only about eleven months of history, and "best month" out of nine full ones
@@ -57,15 +60,22 @@ def _compound(returns: Iterable[float]) -> float:
 
 
 def _group(
-    dailies: Sequence[tuple[date, float]], keyfn
+    dailies: Sequence[tuple[date, float]], keyfn, today: date | None = None
 ) -> list[dict[str, Any]]:
-    """Compound daily returns into ordered groups, flagging the partial ends."""
+    """Compound daily returns into ordered groups, flagging the partial ends.
+
+    The last group is still running while `today` falls inside its period.
+    Without `today` it is assumed to be running, which is the conservative
+    reading: the curve normally ends at the latest snapshot.
+    """
     buckets: OrderedDict[Any, list[tuple[date, float]]] = OrderedDict()
     for day, r in dailies:
         buckets.setdefault(keyfn(day), []).append((day, r))
 
     groups: list[dict[str, Any]] = []
     keys = list(buckets)
+    last = len(keys) - 1
+    running = keyfn(today) if today is not None else None
     for idx, key in enumerate(keys):
         rows = buckets[key]
         groups.append({
@@ -74,9 +84,12 @@ def _group(
             "end": rows[-1][0],
             "observations": len(rows),
             "return_pct": _compound(r for _d, r in rows) * 100.0,
-            # The first group began before coverage did; the last is still
-            # running. Neither is comparable with a complete period.
-            "partial": idx == 0 or idx == len(keys) - 1,
+            # The first group began before coverage did; the last is excluded
+            # while its period is still running. Neither is comparable with a
+            # complete period.
+            "partial": idx == 0 or (
+                idx == last and (running is None or running <= key)
+            ),
         })
     return groups
 
@@ -221,7 +234,13 @@ def _monthly_table(groups: Sequence[dict[str, Any]]) -> dict[str, Any]:
 def build(
     curve: Sequence[tuple[date, float]], *, today: date | None = None
 ) -> dict[str, Any]:
-    """Full statistics payload from a TWR growth curve."""
+    """Full statistics payload from a TWR growth curve.
+
+    `today` decides whether the last week and month are still running. A
+    curve whose final observation is the last trading day of August is a
+    complete August once September has begun; without `today` the last
+    period is always treated as partial.
+    """
     dailies = daily_returns(curve)
     if not dailies:
         return {
@@ -230,8 +249,8 @@ def build(
             "observations": len(curve),
         }
 
-    weeks = _group(dailies, _week_key)
-    months = _group(dailies, _month_key)
+    weeks = _group(dailies, _week_key, today)
+    months = _group(dailies, _month_key, today)
     # Days have no partial concept — every observation is a whole day — so they
     # are grouped by themselves and never excluded.
     day_groups = [

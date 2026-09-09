@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from fastmcp.exceptions import PromptError
 
 
 # ────────────────────────── shared scaffolding ──────────────────────────
@@ -186,7 +187,7 @@ def test_morning_brief_detailed(render):
 
 
 def test_morning_brief_rejects_bad_style(render):
-    with pytest.raises(Exception):
+    with pytest.raises(PromptError, match="style must be"):
         render("morning_brief", {"style": "verbose"})
 
 
@@ -208,7 +209,7 @@ def test_review_recent_activity(render):
 
 
 def test_review_recent_activity_bad_window(render):
-    with pytest.raises(Exception):
+    with pytest.raises(PromptError, match="window must be"):
         render("review_recent_activity", {"window": "decade"})
 
 
@@ -236,12 +237,12 @@ def test_pre_trade_check_sell_exceeds_warns(render):
 
 
 def test_pre_trade_check_rejects_bad_side(render):
-    with pytest.raises(Exception):
+    with pytest.raises(PromptError, match="side must be"):
         render("pre_trade_check", {"symbol": "NVDA", "side": "SHORT", "qty": "1.0"})
 
 
 def test_pre_trade_check_rejects_zero_qty(render):
-    with pytest.raises(Exception):
+    with pytest.raises(PromptError, match="qty must be"):
         render("pre_trade_check", {"symbol": "NVDA", "side": "BUY", "qty": "0.0"})
 
 

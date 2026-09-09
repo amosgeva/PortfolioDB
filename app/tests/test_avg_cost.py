@@ -117,8 +117,9 @@ class TestSellExceedsBuys:
 
 class TestUnknownSide:
     def test_raises_value_error(self):
+        lots = [_lot(1, "HOLD", 5, 50.0)]
         with pytest.raises(ValueError, match="Unknown side"):
-            run_avg_cost([_lot(1, "HOLD", 5, 50.0)])
+            run_avg_cost(lots)
 
 
 class TestOrdering:

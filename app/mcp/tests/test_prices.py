@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -45,8 +45,9 @@ def test_price_history_rejects_bad_resample(env_token, fake_db, monkeypatch):
     """resample is validated before we ever hit the DB."""
     from app.mcp.deps import get_conn
     # Just ensure get_conn returns SOMETHING — we expect to error before using it.
+    start = date(2026, 1, 1)
     with pytest.raises(ValueError):
-        prices.price_history("NVDA", date(2026, 1, 1), resample="weekly")
+        prices.price_history("NVDA", start, resample="weekly")
 
 
 def test_price_change_invalid_window():

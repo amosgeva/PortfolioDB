@@ -161,17 +161,19 @@ def stub(review, monkeypatch):
 class TestValidation:
     def test_rejects_unknown_detail_level(self, review, stub):
         stub()
+        cutoff = make_cutoff()
         with pytest.raises(ValueError, match="detail_level"):
             review.portfolio_review_snapshot(
-                cutoff=make_cutoff(), detail_level="everything")
+                cutoff=cutoff, detail_level="everything")
 
     def test_rejects_non_usd_reporting_currency(self, review, stub):
         """Refused rather than ignored: there is no FX table, so any other
         value would produce numbers that look converted and are not."""
         stub()
+        cutoff = make_cutoff()
         with pytest.raises(ValueError, match="reporting_currency"):
             review.portfolio_review_snapshot(
-                cutoff=make_cutoff(), reporting_currency="EUR")
+                cutoff=cutoff, reporting_currency="EUR")
 
     def test_accepts_usd_case_insensitively(self, review, stub):
         stub()

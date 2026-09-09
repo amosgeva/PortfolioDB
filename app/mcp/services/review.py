@@ -105,7 +105,7 @@ def portfolio_review_snapshot(
         account=account, method=method, cutoff=cutoff
     )
 
-    summary = _summary(totals, cash, income, fees, positions)
+    summary = _summary(totals, cash, cash_by_account, income, fees, positions)
     review: dict[str, Any] = {
         "meta": cutoff_service.meta(
             cutoff,
@@ -135,6 +135,7 @@ def portfolio_review_snapshot(
 def _summary(
     totals: dict[str, Any],
     cash: float,
+    cash_by_account: list[dict[str, Any]],
     income: dict[str, Any],
     fees: dict[str, Any],
     positions: list[dict[str, Any]],
@@ -150,6 +151,9 @@ def _summary(
         "portfolio_value": portfolio_value,
         "invested_market_value": invested,
         "cash": cash,
+        # The figure above, per account: the latest balance each account had
+        # entered at the cutoff, so a reader can see which account holds it.
+        "cash_by_account": cash_by_account,
         "cash_weight_pct": (cash / portfolio_value * 100.0) if portfolio_value else None,
         "cost_basis": float(totals["cost_basis"]),
         "realized_pnl": realized,

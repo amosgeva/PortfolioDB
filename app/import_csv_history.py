@@ -246,6 +246,95 @@ def contained_matches(base_dir: Path, pattern: str) -> tuple[list[str], int]:
     return sorted(files), escaped
 
 
+def _snapshot_ts(rows: list[dict]) -> datetime | None:
+    """UTC timestamp of the file, taken from the first row carrying Date + Time.
+
+    None when no row has both or that pair does not parse: the file's lots are
+    still imported, only its price snapshot is skipped.
+    """
+    for r in rows:
+        if r.get('Date') and r.get('Time'):
+            try:
+                return parse_snapshot_ts(r['Date'], r['Time'])
+            except Exception:
+                return None
+    return None
+
+
+def _import_lot(conn, r: dict, sym: str, fp: str, args, tagged_accounts: list[str]) -> tuple[int, int, int]:
+    """Insert the lot one CSV row describes.
+
+    Returns (lots, sells, errors) as 0/1 counts. A row without the three lot
+    columns is not a lot and counts as nothing; a row that fails to parse is
+    reported and counted as an error without stopping the file.
+    """
+    trade_date_raw = (r.get('Trade Date') or '').strip()
+    purchase_raw = (r.get('Purchase Price') or '').strip()
+    qty_raw = (r.get('Quantity') or '').strip()
+    if not (trade_date_raw and purchase_raw and qty_raw):
+        return 0, 0, 0
+    comm_raw = (r.get('Commission') or '').strip()
+    comment = r.get('Comment')
+    try:
+        td = parse_trade_date(trade_date_raw)
+        side = parse_side(r.get('Side'))
+        qty = parse_quantity(qty_raw)
+        price = float(purchase_raw)
+        fees = float(comm_raw) if comm_raw else 0.0
+        account = infer_account(comment, args.default_account, tagged_accounts)
+        insert_lot(conn, sym, account, td, qty, price, fees, comment,
+                   args.dry_run, side=side)
+    except Exception as e:
+        print(
+            f"ERROR {os.path.basename(fp)} | {sym} | "
+            f"trade_date={trade_date_raw!r} qty={qty_raw!r} price={purchase_raw!r}: {e}"
+        )
+        return 0, 0, 1
+    return 1, (1 if side == "SELL" else 0), 0
+
+
+def _import_file(conn, fp: str, args, tagged_accounts: list[str]) -> dict[str, int] | None:
+    """Import one CSV file: its lots, and one price snapshot per priced row.
+
+    Returns the file's counts, or None when the file had no rows and was
+    skipped without being counted.
+    """
+    with open(fp, newline='', encoding='utf-8-sig') as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return None
+
+    ts_utc = _snapshot_ts(rows)
+    counts = {"lots": 0, "sells": 0, "snaps": 0, "errors": 0}
+    for r in rows:
+        sym = (r.get('Symbol') or '').strip().upper()
+        if not sym:
+            continue
+
+        # Must respect --dry-run too: this was the one write that
+        # used to slip through and mutate `instruments` on a dry run.
+        if not args.dry_run:
+            upsert_instrument(conn, sym)
+
+        lots, sells, errors = _import_lot(conn, r, sym, fp, args, tagged_accounts)
+        counts["lots"] += lots
+        counts["sells"] += sells
+        counts["errors"] += errors
+
+        # Snapshots (last price)
+        if ts_utc is not None:
+            cp = to_float(r.get('Current Price'))
+            if cp is not None:
+                insert_snapshot(conn, ts_utc, sym, cp, args.dry_run)
+                counts["snaps"] += 1
+
+    print(
+        f"{os.path.basename(fp)} | lots={counts['lots']} (sells={counts['sells']}) snaps={counts['snaps']}"
+        f" errors={counts['errors']} ts_utc={ts_utc.isoformat() if ts_utc else 'N/A'}"
+    )
+    return counts
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True)
@@ -276,109 +365,25 @@ def main():
 
     cfg = load_config()
 
-    total_files = 0
-    total_lots = 0
-    total_sells = 0
-    total_snaps = 0
-    total_errors = 0
-
+    totals = {"files": 0, "lots": 0, "sells": 0, "snaps": 0, "errors": 0}
     with connect(cfg) as conn:
         for fp in files:
             base = os.path.basename(fp).lower()
             # Skip the moving target file and any temp files
             if base == 'latest.csv' or base.endswith('_tmp.csv'):
                 continue
-
-            with open(fp, newline='', encoding='utf-8-sig') as f:
-                reader = csv.DictReader(f)
-                rows = list(reader)
-
-            if not rows:
+            counts = _import_file(conn, fp, args, tagged_accounts)
+            if counts is None:
                 continue
-
-            # Find first row that has Date+Time
-            date_str = None
-            time_str = None
-            for r in rows:
-                if r.get('Date') and r.get('Time'):
-                    date_str = r['Date']
-                    time_str = r['Time']
-                    break
-
-            if not date_str or not time_str:
-                # Can't create snapshot ts; skip snapshot import
-                ts_utc = None
-            else:
-                try:
-                    ts_utc = parse_snapshot_ts(date_str, time_str)
-                except Exception:
-                    ts_utc = None
-
-            file_lots = 0
-            file_sells = 0
-            file_snaps = 0
-            file_errors = 0
-
-            for r in rows:
-                sym = (r.get('Symbol') or '').strip().upper()
-                if not sym:
-                    continue
-
-                # Must respect --dry-run too: this was the one write that
-                # used to slip through and mutate `instruments` on a dry run.
-                if not args.dry_run:
-                    upsert_instrument(conn, sym)
-
-                # Lots
-                trade_date_raw = (r.get('Trade Date') or '').strip()
-                purchase_raw = (r.get('Purchase Price') or '').strip()
-                qty_raw = (r.get('Quantity') or '').strip()
-                comm_raw = (r.get('Commission') or '').strip()
-                comment = r.get('Comment')
-
-                if trade_date_raw and purchase_raw and qty_raw:
-                    try:
-                        td = parse_trade_date(trade_date_raw)
-                        side = parse_side(r.get('Side'))
-                        qty = parse_quantity(qty_raw)
-                        price = float(purchase_raw)
-                        fees = float(comm_raw) if comm_raw else 0.0
-                        account = infer_account(comment, args.default_account, tagged_accounts)
-                        insert_lot(conn, sym, account, td, qty, price, fees, comment,
-                                   args.dry_run, side=side)
-                        file_lots += 1
-                        if side == "SELL":
-                            file_sells += 1
-                    except Exception as e:
-                        file_errors += 1
-                        print(
-                            f"ERROR {os.path.basename(fp)} | {sym} | "
-                            f"trade_date={trade_date_raw!r} qty={qty_raw!r} price={purchase_raw!r}: {e}"
-                        )
-
-                # Snapshots (last price)
-                if ts_utc is not None:
-                    cp = to_float(r.get('Current Price'))
-                    if cp is not None:
-                        insert_snapshot(conn, ts_utc, sym, cp, args.dry_run)
-                        file_snaps += 1
-
-            total_files += 1
-            total_lots += file_lots
-            total_sells += file_sells
-            total_snaps += file_snaps
-            total_errors += file_errors
-
-            print(
-                f"{os.path.basename(fp)} | lots={file_lots} (sells={file_sells}) snaps={file_snaps}"
-                f" errors={file_errors} ts_utc={ts_utc.isoformat() if ts_utc else 'N/A'}"
-            )
+            totals["files"] += 1
+            for k, v in counts.items():
+                totals[k] += v
 
     print("-")
-    print(f"Files processed: {total_files}")
-    print(f"Lots inserted (attempted): {total_lots} — {total_lots - total_sells} BUY, {total_sells} SELL")
-    print(f"Snapshots inserted (attempted): {total_snaps}")
-    print(f"Rows failed: {total_errors}")
+    print(f"Files processed: {totals['files']}")
+    print(f"Lots inserted (attempted): {totals['lots']} — {totals['lots'] - totals['sells']} BUY, {totals['sells']} SELL")
+    print(f"Snapshots inserted (attempted): {totals['snaps']}")
+    print(f"Rows failed: {totals['errors']}")
     if args.dry_run:
         print("DRY RUN: no inserts were committed")
 
