@@ -238,10 +238,11 @@ jobs:
       # anything else is installed into the container, its `pip freeze` must be
       # exactly app/constraints.txt — so a requirements change without `make
       # lock` fails here, and so does a constraints edit made by hand from a
-      # different interpreter.
+      # different interpreter. `--all` so pip, setuptools and wheel are in the
+      # comparison too: setuptools is what Trivy flagged first.
       - name: The image matches app/constraints.txt
         run: |
-          docker run --rm portfoliodb-ci:${{ github.sha }} pip freeze --exclude-editable > image-freeze.txt
+          docker run --rm portfoliodb-ci:${{ github.sha }} pip freeze --all --exclude-editable > image-freeze.txt
           grep -v '^#' app/constraints.txt | sed '/^$/d' | sort > expected.txt
           sort image-freeze.txt > actual.txt
           if ! diff -u expected.txt actual.txt; then
