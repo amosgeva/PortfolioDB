@@ -9,7 +9,13 @@
 #   scheduler  /usr/local/bin/supercronic /app/docker/crontab  (absolute path!)
 #   CLIs       docker compose run --rm dashboard python app/add_lot.py ...
 
-FROM python:3.14-slim
+# Pinned by digest, not by tag. `python:3.14-slim` is a moving target — a
+# rebuild of the same commit a month later got a different Debian snapshot and
+# a different patch release, so "the image CI tested" and "the image a user
+# pulled" were only nominally the same. The digest below is the multi-arch
+# index; Dependabot (.github/dependabot.yml) proposes the bump when the tag
+# moves, and the weekly scan (security-scan.yml) says when a bump is overdue.
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
@@ -57,9 +63,14 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first for better layer caching.
+# Install Python deps first for better layer caching. requirements.txt is the
+# ranges the code needs; constraints.txt is what they resolved to on the day the
+# image was tested, generated inside this image (`make lock`). Installing with
+# both means two builds of one commit contain the same packages, and CI checks
+# that the built image's `pip freeze` still equals the file.
 COPY app/requirements.txt /app/app/requirements.txt
-RUN pip install -r /app/app/requirements.txt
+COPY app/constraints.txt /app/app/constraints.txt
+RUN pip install -c /app/app/constraints.txt -r /app/app/requirements.txt
 
 # Bring the rest of the app/ tree (engines, dashboard, services, MCP server),
 # the scheduler's crontab, and the SQL — the last one so an install that pulled

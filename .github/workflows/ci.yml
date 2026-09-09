@@ -234,6 +234,22 @@ jobs:
           fi
           echo "no canary in the image"
 
+      # The lock is only worth having if it is what the image contains. Before
+      # anything else is installed into the container, its `pip freeze` must be
+      # exactly app/constraints.txt — so a requirements change without `make
+      # lock` fails here, and so does a constraints edit made by hand from a
+      # different interpreter.
+      - name: The image matches app/constraints.txt
+        run: |
+          docker run --rm portfoliodb-ci:${{ github.sha }} pip freeze --exclude-editable > image-freeze.txt
+          grep -v '^#' app/constraints.txt | sed '/^$/d' | sort > expected.txt
+          sort image-freeze.txt > actual.txt
+          if ! diff -u expected.txt actual.txt; then
+            echo "::error::the image's pip freeze differs from app/constraints.txt — run \`make lock\` and commit the result"
+            exit 1
+          fi
+          echo "image matches the lock ($(wc -l < actual.txt) packages)"
+
       # The same two invocations `make test` uses, split for the same reason:
       # run both in one pytest process and four reconciliation tests fail on
       # cross-test state. The MCP suite runs from /app, never /app/app — there

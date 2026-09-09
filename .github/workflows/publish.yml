@@ -113,7 +113,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false            # keeps the manifest list simple to inspect
+          # Off, and deliberately so (revisited 2026-09-09). With provenance on,
+          # BuildKit adds attestation manifests to the index as `unknown/unknown`
+          # platform entries, which every `docker manifest inspect` reader then
+          # has to know to skip, and the arm64 check below would have to filter
+          # them too. Nothing consumes the attestations: there is no verifier in
+          # the install path, and the repository already answers the question
+          # they would — the image is built from a tagged commit by this
+          # workflow, base pinned by digest, packages pinned by
+          # app/constraints.txt, and CI proves the image matches the lock. Turn
+          # this on the day a consumer verifies attestations, and fix the check
+          # below in the same change.
+          provenance: false
 
       # This is the arm64 safety net. The arm64 leg cannot be tested on an
       # unprivileged LXC (registering a binfmt handler needs privileges the
