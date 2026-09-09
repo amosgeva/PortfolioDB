@@ -1,10 +1,21 @@
 # Don't ship the Postgres data directory or local caches into the image.
 data/
 .git/
-# Secrets and personal context: the Dockerfile only COPYs app/, but keeping
-# these out of the build context means they can never be baked in by accident.
-.env
+# Secrets and personal context. The Dockerfile COPYs the whole app/ tree, and
+# Git's ignore rules do not filter a Docker build context, so every secret
+# sidecar .gitignore knows about has to be named here too — recursively,
+# because the operator's host-Python launchers keep a populated app/.env next
+# to the code (the 2026-09-09 audit found the real one one COPY away from an
+# image). Only the committed template is let back in.
+**/.env
+**/.env.*
+!.env.template
 philosophy.md
+backups/
+docs/internal/
+*.local.md
+# Cached ticker logos enumerate the operator's holdings and watchlist.
+app/dashboard/static/logos/
 cache/
 .venv/
 __pycache__/

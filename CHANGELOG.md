@@ -16,6 +16,20 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Security
+
+- **A source build from a populated working tree no longer bakes `app/.env`
+  into the image.** `.dockerignore` excluded the root `.env` and nothing else,
+  while the Dockerfile copies the whole `app/` tree — so an operator who kept
+  the host-Python sidecar `app/.env` (database password, MCP token, vendor API
+  key) and ran `docker compose build` got an image with the file in it. Git's
+  ignore rules never applied to a Docker build context. Every `.env` sidecar
+  is now excluded recursively, along with the cached ticker logos, backups and
+  `docs/internal/`; CI plants fake secrets in those places and fails if any
+  reaches a layer. The published `ghcr.io` image was never affected: it is
+  built from a clean checkout. Only operators who built and *shared* a local
+  image need to consider that image compromised.
+
 ## [1.6.0] — 2026-09-09
 
 The review snapshot gains a per-account cash breakdown, and the period
