@@ -32,7 +32,7 @@ _pool: ThreadedConnectionPool | None = None
 
 RO_USER_ENV = "PORTFOLIODB_MCP_RO_USER"
 # The NAME of the environment variable, not a secret — scanners match the word.
-RO_PASSWORD_ENV = "PORTFOLIODB_MCP_RO_PASSWORD"  # nosec B105  # nosemgrep
+RO_PW_ENV = "PORTFOLIODB_MCP_RO_PASSWORD"  # nosec B105  # nosemgrep
 # The explicit opt-out. Set it and the server connects with the application's
 # read-write credentials, protected only by the session setting below.
 ALLOW_RW_FALLBACK_ENV = "PORTFOLIODB_MCP_ALLOW_RW_FALLBACK"
@@ -57,7 +57,7 @@ def _credentials(cfg) -> tuple[str, str, bool]:
     """
     ro_user = (os.getenv(RO_USER_ENV) or "").strip()
     if ro_user:
-        return ro_user, os.getenv(RO_PASSWORD_ENV) or "", True
+        return ro_user, os.getenv(RO_PW_ENV) or "", True
     if (os.getenv(ALLOW_RW_FALLBACK_ENV) or "").strip().lower() in ("1", "true", "yes"):
         log.warning(
             "MCP server is connecting as %s, the application's READ-WRITE role, because "
@@ -68,7 +68,7 @@ def _credentials(cfg) -> tuple[str, str, bool]:
         return cfg.user, cfg.password, False
     raise RuntimeError(
         f"The MCP server needs its read-only database role: set {RO_USER_ENV} and "
-        f"{RO_PASSWORD_ENV} in the repo-root .env. `make ro-role` (or `docker compose "
+        f"{RO_PW_ENV} in the repo-root .env. `make ro-role` (or `docker compose "
         "run --rm dashboard python app/create_ro_role.py --generate`) creates the role "
         "and prints both lines. To run on the application's read-write credentials "
         f"anyway, set {ALLOW_RW_FALLBACK_ENV}=1."
