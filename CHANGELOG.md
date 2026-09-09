@@ -108,6 +108,23 @@ needs a schema step says so under **Upgrading**.
 
 ### Changed
 
+- **Portfolio drawdown is measured on the time-weighted growth curve, not on
+  market value.** `get_drawdown_stats` for the whole portfolio ran on the
+  market-value series, which falls when securities are sold and rises when
+  money is added — a withdrawal read as a drawdown and a deposit could hide
+  one. It now runs on the same daily flow-adjusted curve as the period
+  returns, says so in a new `basis` field (`twr_growth_curve`; the review
+  snapshot carries it as `risk.drawdown_basis`), and its `peak`/`trough` are
+  index levels with 1.0 at the first observation rather than dollars. A single
+  symbol's drawdown is unchanged (`basis: "price"`), and
+  `holdings_basis="current_constant"` keeps the old market-value definition
+  for comparison. **The portfolio's max and current drawdown figures change
+  for any ledger with sales or purchases in its history.**
+- **The dashboard names a section it could not load instead of rendering it
+  empty.** The market strip and the news feed swallowed a failed query into an
+  empty list; the payload now carries a `degraded` list and the page shows a
+  banner naming the section and the error type.
+
 - **Every number written to the ledger must be finite, in range, and the
   right sign — and the database now refuses NaN too.** The CSV importer and
   the write CLIs (`add-lot`, `sell-lot`, `set-cash`, `add_income`) parsed

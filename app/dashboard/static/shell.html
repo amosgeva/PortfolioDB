@@ -50,6 +50,11 @@ try{var _t=localStorage.getItem('pdb_theme')||
   <div class="scrim"></div>
 
   <main class="main">
+    <!-- Shown only when a section of the payload could not be loaded and was
+         left empty: an empty strip that says nothing looks like "no data",
+         and a page that looks complete while a query died is the failure
+         this names. Filled by app.js from DATA.degraded. -->
+    <div class="degraded" id="degraded" role="status" hidden></div>
     <header class="topbar">
       <button class="iconbtn menu-btn" aria-label="Menu">__SVG_MENU__</button>
       <div class="topbar__title"><h1 data-title>Portfolio</h1><p data-subtitle>Real-time overview of your holdings</p></div>
