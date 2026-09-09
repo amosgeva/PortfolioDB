@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 _pool: ThreadedConnectionPool | None = None
 
 RO_USER_ENV = "PORTFOLIODB_MCP_RO_USER"
-RO_PASSWORD_ENV = "PORTFOLIODB_MCP_RO_PASSWORD"
+# The NAME of the environment variable, not a secret — scanners match the word.
+RO_PASSWORD_ENV = "PORTFOLIODB_MCP_RO_PASSWORD"  # nosec B105  # nosemgrep
 # The explicit opt-out. Set it and the server connects with the application's
 # read-write credentials, protected only by the session setting below.
 ALLOW_RW_FALLBACK_ENV = "PORTFOLIODB_MCP_ALLOW_RW_FALLBACK"
