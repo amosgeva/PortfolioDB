@@ -190,6 +190,7 @@ a{color:inherit;text-decoration:none}
 .mkt-pill{flex:0 0 auto}
 .snap-pill svg{width:13px;height:13px;opacity:.75}
 .snap-pill.warn{color:var(--warn)}.snap-pill.error{color:var(--down)}
+.degraded{margin:0 0 12px;padding:8px 12px;border:1px solid var(--warn);border-radius:var(--r-sm,8px);color:var(--warn);font-size:var(--fs-meta);background:color-mix(in srgb,var(--warn) 10%,transparent)}
 .snap-pill.none{display:none}
 @media (max-width:860px){.snap-pill{display:none}}
 /* flex:0 0 auto matters: these live in the topbar's flex row, which was

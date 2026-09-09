@@ -9,7 +9,7 @@ diagnostic is the get_health tool, behind the token.
 
 Run modes:
     1. uvicorn app.mcp.server:asgi --host 0.0.0.0 --port 8765
-       (used by run_mcp.ps1 — preferred for dev)
+       (what `make mcp` / the compose service run — preferred for dev)
     2. python -m app.mcp.server
        (FastMCP runs its own uvicorn under the hood)
 """

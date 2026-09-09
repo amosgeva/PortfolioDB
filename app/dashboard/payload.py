@@ -22,6 +22,7 @@ import ledger_inputs
 import market_overview
 import market_window
 import period_stats
+import symbol_paths
 import twr
 from portfolio import compute_fifo_merged
 
@@ -44,8 +45,11 @@ def _logo_data_uris(symbols) -> dict[str, str]:
     to the CDN."""
     out: dict[str, str] = {}
     for sym in symbols:
-        p = _LOGO_DIR / f"{sym}.png"
-        if p.is_file():
+        # None for anything that does not look like a symbol: a path separator
+        # in an operator-entered symbol must not read a file from outside the
+        # cache into the page.
+        p = symbol_paths.logo_path(_LOGO_DIR, sym)
+        if p is not None and p.is_file():
             out[sym] = "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode("ascii")
     return out
 
@@ -483,26 +487,35 @@ def _symbol_lists(holdings, watch_rows, stocks, qty_map) -> tuple[list, list, li
     return held_syms, watch_syms, tape_syms, rail_watch
 
 
-def _market_overview(conn) -> list:
-    """Benchmark strip.
+def _market_overview(conn) -> tuple[list, str | None]:
+    """Benchmark strip, and the reason it is missing when it is.
 
     Read through its own module and its own query, deliberately isolated from
     `stocks`/`holdings`: benchmarks must not be able to reach allocation,
     movers, risk or the news universe. They have no lots either, so the P&L
     engines cannot see them at all.
+
+    A context strip is never worth failing the whole dashboard for — but an
+    empty strip that says nothing is the failure the audit called out: the
+    page looked complete while a query had died. The second value is what the
+    payload's `degraded` list carries to the banner.
     """
     try:
-        return market_overview.overview(conn)
-    except Exception:
-        # A context strip is never worth failing the whole dashboard for.
+        return market_overview.overview(conn), None
+    except Exception as e:
         log.exception("market overview unavailable")
-        return []
+        return [], f"market overview: {type(e).__name__}"
 
 
-def _news_feed(conn, held_syms, watch_syms, stocks) -> list[dict]:
-    """News rows for the held + watchlist universe, shaped for the feed."""
+def _news_feed(conn, held_syms, watch_syms, stocks) -> tuple[list[dict], str | None]:
+    """News rows for the held + watchlist universe, shaped for the feed, and
+    the reason they are missing when they are (see _market_overview)."""
     news_universe = list(dict.fromkeys(held_syms + watch_syms)) or list(stocks.keys())
-    news_rows = fd_store.recent_news(conn, news_universe, limit=24) if news_universe else []
+    try:
+        news_rows = fd_store.recent_news(conn, news_universe, limit=24) if news_universe else []
+    except Exception as e:
+        log.exception("news feed unavailable")
+        return [], f"news: {type(e).__name__}"
     news = []
     for r in news_rows:
         body = r.get("summary") or r.get("description") or ""
@@ -831,8 +844,11 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     )
 
     held_syms, watch_syms, tape_syms, rail_watch = _symbol_lists(holdings, watch_rows, stocks, qty_map)
-    markets = _market_overview(conn)
-    news = _news_feed(conn, held_syms, watch_syms, stocks)
+    # Sections that may fail without failing the page return their reason
+    # alongside; the `degraded` list below is what the banner shows.
+    markets, markets_problem = _market_overview(conn)
+    news, news_problem = _news_feed(conn, held_syms, watch_syms, stocks)
+    degraded = [p for p in (markets_problem, news_problem) if p]
     kpi = _kpi_block(
         fifo, qty_map, avgcost_map, stocks, second_rows, lot_rows, income_rows,
         cash_rows, cash, holdings, watch_rows, today_jer,
@@ -876,6 +892,8 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "risk": risk,
         "markets": markets,
         "news": news,
+        # Sections that failed and were left empty, named for the banner.
+        "degraded": degraded,
         "tapeSyms": tape_syms,
         "watchSyms": rail_watch,
         # The engine every number on the shell was computed with. Labelled in

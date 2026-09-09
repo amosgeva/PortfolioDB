@@ -269,6 +269,7 @@ def _risk(corr: dict[str, Any], cutoff: Cutoff) -> dict[str, Any]:
         "drawdown_trough_ts": drawdown.get("trough_ts"),
         "recovered": drawdown.get("recovered"),
         "holdings_basis": drawdown.get("holdings_basis"),
+        "drawdown_basis": drawdown.get("basis"),
         "volatility": vol,
         "correlation_summary": {
             "window": corr["window"],

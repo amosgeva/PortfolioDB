@@ -56,6 +56,9 @@ CORRECTNESS_CODES = frozenset({
     "missing_cost_basis",
     "suspected_split",
     "impossible_value",
+    # A position in another currency is summed at face value: every total
+    # that includes it is wrong at any position size.
+    "foreign_currency",
 })
 
 # A position at or above this share of market value is material.
@@ -106,6 +109,7 @@ def portfolio_data_quality(
     impossible = _impossible_values(cutoff)
     first_trade = _first_trade_dates(cutoff)
     splits = _suspected_splits(cutoff)
+    foreign = _foreign_currency(cutoff)
 
     issues_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -195,6 +199,12 @@ def portfolio_data_quality(
             f"returns and drawdown across that date are wrong. Confirm against "
             f"a real source, then record it — see app/check_splits.py.",
             **detail,
+        ))
+
+    for sym, detail in foreign.items():
+        detail = dict(detail)
+        issues_by_symbol[sym].append(_issue(
+            "foreign_currency", "inconsistent", detail.pop("message"), **detail,
         ))
 
     symbols_out, material, minor = _assemble(
@@ -639,6 +649,45 @@ def _impossible_values(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                     ),
                     "count": int(r[1]),
                     "first_seen": r[2].isoformat(),
+                }
+                for r in cur.fetchall()
+            }
+
+
+def _foreign_currency(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
+    """Instruments whose registered currency is not the reporting currency.
+
+    The ledger is single-currency and every total sums face values, so a
+    position quoted in another currency is added at the wrong scale — wrong,
+    not approximate. Nothing converts; this names the rows so the operator
+    sees the aggregation is unsafe instead of discovering it in a total.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT i.symbol, i.currency
+                FROM instruments i
+                WHERE i.currency IS NOT NULL
+                  AND upper(i.currency) <> %s
+                  AND EXISTS (
+                        SELECT 1 FROM lots l
+                        WHERE l.symbol = i.symbol AND l.trade_date <= %s
+                  )
+                ORDER BY i.symbol
+                """,
+                (cutoff_service.REPORTING_CURRENCY, cutoff.trade_date),
+            )
+            return {
+                r[0]: {
+                    "message": (
+                        f"Instrument currency is {r[1]}, the ledger reports in "
+                        f"{cutoff_service.REPORTING_CURRENCY}, and nothing converts: "
+                        "every total that includes this position adds it at face "
+                        "value in the wrong currency."
+                    ),
+                    "currency": r[1],
+                    "reporting_currency": cutoff_service.REPORTING_CURRENCY,
                 }
                 for r in cur.fetchall()
             }

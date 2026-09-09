@@ -10,8 +10,11 @@ This will upsert the instrument row and insert the lot (deduped by unique index)
 from __future__ import annotations
 
 import argparse
+import sys
+from datetime import date
 
 import ledger_numbers
+import oversell
 from db import fetch_all, load_config, run, transaction
 
 
@@ -35,6 +38,15 @@ def main():
     # transaction(): instrument upsert + lot insert commit together (and the
     # connection is actually closed — `with connect()` does neither).
     with transaction(cfg) as conn:
+        if args.side == "SELL":
+            # A sale bigger than the position is usually the wrong account or
+            # date; say so now, and still record it (see app/oversell.py).
+            warning = oversell.oversell_warning(
+                conn, symbol, args.account, date.fromisoformat(args.trade_date), args.qty
+            )
+            if warning:
+                print(warning, file=sys.stderr)
+
         run(
             conn,
             """

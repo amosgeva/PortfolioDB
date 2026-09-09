@@ -21,6 +21,8 @@ from urllib.request import Request, urlopen
 
 from db import connect, fetch_all, load_config
 
+import symbol_paths
+
 LOGO_DIR = Path(__file__).resolve().parent / "dashboard" / "static" / "logos"
 LOGO_URL = "https://assets.parqet.com/logos/symbol/{sym}?format=png&size=64"
 
@@ -77,7 +79,13 @@ def main() -> None:
 
     fetched = skipped = failed = 0
     for sym in symbols:
-        path = LOGO_DIR / f"{sym}.png"
+        # The symbol becomes a file name; only something that looks like a
+        # symbol may. `--symbols ../x` used to write beside the cache.
+        path = symbol_paths.logo_path(LOGO_DIR, sym)
+        if path is None:
+            failed += 1
+            print(f"skipping {sym!r}: not a symbol, will not become a file name")
+            continue
         if path.exists() and now - path.stat().st_mtime < max_age_s:
             skipped += 1
             continue

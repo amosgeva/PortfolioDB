@@ -16,7 +16,52 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-09-09
+
+The release that acts on the 2026-09-09 codebase audit: every High and Medium
+finding, and the routine items behind them. Read **Upgrading** before pulling —
+this one has a migration, a new requirement for the MCP server, and several
+figures that change on purpose.
+
+Three things move numbers. Recorded splits now reach the dashboard, the CLI and
+the reports, not only the MCP tools. Time-weighted return values a sale at its
+own price, so closing a position no longer reads as 0% or −100%. Portfolio
+drawdown is measured on the flow-adjusted growth curve, so a withdrawal is no
+longer a drawdown. Each has its own entry below with the before and after.
+
+Minor rather than major because every upgrade step has a documented path the
+operator can take (`make schema`; `make ro-role` or the explicit fallback
+flag; two lines moved to `.env`), and nothing about the ledger's data has to be
+rewritten. It is the largest minor this project has shipped, and the entries
+are long because you are entitled to know what changes before you run it
+against your own records.
+
+### Added
+
+- **A sale bigger than the position is warned about when it is entered.**
+  `sell-lot`, `add-lot --side SELL` and the CSV importer check the prepared
+  ledger for the account as of the trade date and print what is held versus
+  what is being sold, then still record the row: the usual cause is the wrong
+  account, a mistyped date or a missing BUY, and the row is the evidence. The
+  FIFO engine's read-time truncation warning stays; this is the same fact,
+  said to the person typing. The importer counts these as `oversells`.
+- **`get_data_quality` reports an instrument whose registered currency is
+  not the reporting currency** (`foreign_currency`, a correctness issue at
+  any position size): the ledger sums face values and nothing converts, so a
+  EUR position in a USD ledger makes every total wrong. Previously nothing
+  checked.
+
 ### Security
+
+- **Symbols reach the page as text and the disk only when they look like
+  symbols.** The dashboard's two symbol `<select>`s interpolated symbols into
+  `innerHTML` unescaped; they are built with the DOM `Option` constructor
+  now. The logo cache turned any symbol into `<symbol>.png` under
+  `app/dashboard/static/logos/`, writing (the fetcher) and reading back into
+  the page as a data URI (the dashboard); both go through one allowlist that
+  admits what real symbols look like (`BRK.B`, `^GSPC`, `ES=F`, `0700.HK`) and
+  nothing with a path separator. A symbol is operator-entered text — the
+  importer and `add-lot` accept any string — so it is treated as such.
 
 - **The published image is reproducible and scanned.** `app/requirements.txt`
   is ranges; the image resolved them afresh on every build, so a passing test
@@ -44,6 +89,76 @@ needs a schema step says so under **Upgrading**.
   it prints to `.env`, or set the fallback flag.** Installs that already set
   the role see no change. A live test now proves the role refuses a write on
   privilege even inside a `READ WRITE` transaction.
+
+- **The advisor's base URL is read from `LLM_BASE_URL` in `.env` only; the
+  Settings-page field is gone.** The page has no login, and the base URL is
+  where the OpenAI-compatible client sends the API key: anyone who could open
+  the dashboard could point `openai` at a server they controlled, trigger a
+  brief, and receive `OPENAI_API_KEY` as a Bearer header. A URL from an
+  unauthenticated form must never decide where a secret goes. In addition a
+  vendor's named key (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) now only travels
+  to that vendor's own origin — an `LLM_BASE_URL` that points the provider
+  elsewhere sends the generic `LLM_API_KEY`, or fails with a message naming
+  the two variables. **Upgrading:** if you had set a base URL on the Settings
+  page (Ollama on the Docker host is the common case), put the same value in
+  `.env` as `LLM_BASE_URL=…` and restart. The old row is ignored, logged once,
+  and deleted the next time Settings is saved.
+
+- **The MCP server's unauthenticated `/healthz` now answers only `ok`, `db`
+  and `last_snapshot_age_s`.** It used to return the full `get_health`
+  payload: the last collector run's `error` text verbatim — which names the
+  symbols that failed and carries a traceback when yfinance raised — plus
+  per-table enrichment counts and the database's own failure reason (role
+  and container IP). Anyone who could reach the port learned part of the
+  portfolio universe without a token. The full diagnostic is unchanged behind
+  the bearer token as the `get_health` tool. Monitors that parsed the old
+  body need the new three keys; the status code contract (200 up, 503 down)
+  is the same, so the compose healthcheck is unaffected.
+
+- **The "localhost only" and "stop publishing Postgres" overrides in
+  `docs/exposure.md` now actually do that.** Both examples were plain lists,
+  and Compose merges an override's `ports` into the base file's list rather
+  than replacing it, keying entries on host IP as well as port — so the
+  loopback mapping landed *beside* the inherited `0.0.0.0:8501`, and
+  `ports: []` removed nothing. An operator who followed the guide had a
+  dashboard that was still open to the network while their override said
+  otherwise. The examples and `docker-compose.override.yml.example` now use
+  `ports: !override` and `ports: !reset []` (Compose 2.24.4+), and a test
+  renders every documented override and fails if a wildcard mapping survives.
+  **If you copied the old example, re-copy it** and check with
+  `docker compose config` that no `0.0.0.0` entry remains. Nothing about the
+  base file's defaults changed.
+
+- **A source build from a populated working tree no longer bakes `app/.env`
+  into the image.** `.dockerignore` excluded the root `.env` and nothing else,
+  while the Dockerfile copies the whole `app/` tree — so an operator who kept
+  the host-Python sidecar `app/.env` (database password, MCP token, vendor API
+  key) and ran `docker compose build` got an image with the file in it. Git's
+  ignore rules never applied to a Docker build context. Every `.env` sidecar
+  is now excluded recursively, along with the cached ticker logos, backups and
+  `docs/internal/`; CI plants fake secrets in those places and fails if any
+  reaches a layer. The published `ghcr.io` image was never affected: it is
+  built from a clean checkout. Only operators who built and *shared* a local
+  image need to consider that image compromised.
+
+### Changed
+
+- **Portfolio drawdown is measured on the time-weighted growth curve, not on
+  market value.** `get_drawdown_stats` for the whole portfolio ran on the
+  market-value series, which falls when securities are sold and rises when
+  money is added — a withdrawal read as a drawdown and a deposit could hide
+  one. It now runs on the same daily flow-adjusted curve as the period
+  returns, says so in a new `basis` field (`twr_growth_curve`; the review
+  snapshot carries it as `risk.drawdown_basis`), and its `peak`/`trough` are
+  index levels with 1.0 at the first observation rather than dollars. A single
+  symbol's drawdown is unchanged (`basis: "price"`), and
+  `holdings_basis="current_constant"` keeps the old market-value definition
+  for comparison. **The portfolio's max and current drawdown figures change
+  for any ledger with sales or purchases in its history.**
+- **The dashboard names a section it could not load instead of rendering it
+  empty.** The market strip and the news feed swallowed a failed query into an
+  empty list; the payload now carries a `degraded` list and the page shows a
+  banner naming the section and the error type.
 
 - **Every number written to the ledger must be finite, in range, and the
   right sign — and the database now refuses NaN too.** The CSV importer and
@@ -91,6 +206,7 @@ needs a schema step says so under **Upgrading**.
   goes through it. **If you have a row in `corporate_actions`, the dashboard's
   share counts, average cost, sparklines, value history and returns change to
   agree with the MCP tools.** Installs without one see no change.
+
 - **The dashboard's portfolio-value chart is now actual history.** It
   multiplied *today's* share counts by past prices, so a position bought last
   month appeared to have been held all year, a sold one vanished from the
@@ -101,6 +217,7 @@ needs a schema step says so under **Upgrading**.
   The risk block keeps its price-risk view of the *current* basket over
   historical closes and now says so in its payload (`risk.basis`) as well as
   in its caption.
+
 - **Dividend backfill counts entitlement in split-adjusted shares.**
   `add_income.py --backfill` summed raw BUY−SELL quantities, so ten pre-split
   shares were ten for a dividend paid after a 2:1 and half the entitlement
@@ -111,6 +228,7 @@ needs a schema step says so under **Upgrading**.
   `--per-account` flag writes one row per account instead of a merged row
   with a NULL account. The merged default is unchanged so existing backfilled
   rows keep deduplicating.
+
 - **A failure to read `corporate_actions` is now an error, not "no
   actions".** Only a missing table (a database that never had the migration)
   still degrades to no adjustment; any other failure propagates instead of
@@ -136,33 +254,6 @@ needs a schema step says so under **Upgrading**.
   and `outflow`; `flow` (the net) is still there. `docs/methodology.md` §4
   states the convention.
 
-### Security
-
-- **The advisor's base URL is read from `LLM_BASE_URL` in `.env` only; the
-  Settings-page field is gone.** The page has no login, and the base URL is
-  where the OpenAI-compatible client sends the API key: anyone who could open
-  the dashboard could point `openai` at a server they controlled, trigger a
-  brief, and receive `OPENAI_API_KEY` as a Bearer header. A URL from an
-  unauthenticated form must never decide where a secret goes. In addition a
-  vendor's named key (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`) now only travels
-  to that vendor's own origin — an `LLM_BASE_URL` that points the provider
-  elsewhere sends the generic `LLM_API_KEY`, or fails with a message naming
-  the two variables. **Upgrading:** if you had set a base URL on the Settings
-  page (Ollama on the Docker host is the common case), put the same value in
-  `.env` as `LLM_BASE_URL=…` and restart. The old row is ignored, logged once,
-  and deleted the next time Settings is saved.
-
-- **The MCP server's unauthenticated `/healthz` now answers only `ok`, `db`
-  and `last_snapshot_age_s`.** It used to return the full `get_health`
-  payload: the last collector run's `error` text verbatim — which names the
-  symbols that failed and carries a traceback when yfinance raised — plus
-  per-table enrichment counts and the database's own failure reason (role
-  and container IP). Anyone who could reach the port learned part of the
-  portfolio universe without a token. The full diagnostic is unchanged behind
-  the bearer token as the `get_health` tool. Monitors that parsed the old
-  body need the new three keys; the status code contract (200 up, 503 down)
-  is the same, so the compose healthcheck is unaffected.
-
 ### Fixed
 
 - **`backup` and `restore` can no longer report success after failing.** Both
@@ -186,33 +277,33 @@ needs a schema step says so under **Upgrading**.
   `gunzip -c <file> | grep -c 'PostgreSQL database dump complete'`; an archive
   that passes the first and fails the second is empty.
 
-### Security
+### Upgrading
 
-- **The "localhost only" and "stop publishing Postgres" overrides in
-  `docs/exposure.md` now actually do that.** Both examples were plain lists,
-  and Compose merges an override's `ports` into the base file's list rather
-  than replacing it, keying entries on host IP as well as port — so the
-  loopback mapping landed *beside* the inherited `0.0.0.0:8501`, and
-  `ports: []` removed nothing. An operator who followed the guide had a
-  dashboard that was still open to the network while their override said
-  otherwise. The examples and `docker-compose.override.yml.example` now use
-  `ports: !override` and `ports: !reset []` (Compose 2.24.4+), and a test
-  renders every documented override and fails if a wildcard mapping survives.
-  **If you copied the old example, re-copy it** and check with
-  `docker compose config` that no `0.0.0.0` entry remains. Nothing about the
-  base file's defaults changed.
-
-- **A source build from a populated working tree no longer bakes `app/.env`
-  into the image.** `.dockerignore` excluded the root `.env` and nothing else,
-  while the Dockerfile copies the whole `app/` tree — so an operator who kept
-  the host-Python sidecar `app/.env` (database password, MCP token, vendor API
-  key) and ran `docker compose build` got an image with the file in it. Git's
-  ignore rules never applied to a Docker build context. Every `.env` sidecar
-  is now excluded recursively, along with the cached ticker logos, backups and
-  `docs/internal/`; CI plants fake secrets in those places and fails if any
-  reaches a layer. The published `ghcr.io` image was never affected: it is
-  built from a clean checkout. Only operators who built and *shared* a local
-  image need to consider that image compromised.
+1. **Back up first.** The runners now verify what they write; the copy you
+   already have may not have been verified — check it with `gzip -t` and
+   `gunzip -c <file> | grep -c 'PostgreSQL database dump complete'`.
+2. `docker compose pull && docker compose up -d`, then **`make schema`** (or
+   `docker compose run --rm dashboard python app/apply_schema.py`). Migration
+   `003_finite_numeric_checks.sql` adds the not-NaN constraints; schema version
+   is 0.4. It fails on purpose if a NaN is already stored.
+3. **If you run the MCP server:** it now requires the read-only role. Run
+   `make ro-role` and paste the two lines it prints into `.env`, or set
+   `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` to keep the old behaviour with a
+   warning. Monitors that parsed the old `/healthz` body need its three new
+   keys.
+4. **If you set an advisor base URL on the Settings page** (Ollama on the
+   Docker host is the usual case), put the same value in `.env` as
+   `LLM_BASE_URL=…`; the page no longer has the field.
+5. **If you copied the old `docker-compose.override.yml.example`** to bind to
+   localhost, re-copy it: the old plain-list form left the wildcard binding in
+   place. `docker compose config` should show no `0.0.0.0` entry.
+6. **If you build the image yourself from a working tree that holds an
+   `app/.env`,** rebuild: the old `.dockerignore` let it into the image.
+7. Expect changed figures where the entries above say so: split-adjusted
+   share counts and history on the dashboard, TWR on any day that had a sale,
+   portfolio drawdown on any ledger with trades, and the value chart showing
+   what was actually held. Scripts that wrapped the CSV importer now see a
+   nonzero exit status when a row was rejected.
 
 ## [1.6.0] — 2026-09-09
 
@@ -1177,7 +1268,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.0
 [1.6.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.6.0
 [1.5.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.5.0
 [1.4.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.4.0

@@ -96,18 +96,24 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Max + current drawdown. Prices are split-adjusted.
 
+        For the whole portfolio the drawdown is measured on the time-weighted
+        growth curve (basis 'twr_growth_curve'): flow-adjusted, so selling
+        securities is not a drawdown and adding money does not hide one.
+        peak/trough are then index levels (1.0 at the first observation). For
+        a single symbol it is the price series (basis 'price').
+
         Args:
             symbol: ticker to analyze. None = whole portfolio.
-            since: only consider snapshots at or after this date.
+            since: only consider observations at or after this date.
             holdings_basis: for the portfolio series only. 'historical'
-                (default) values each point at the holdings actually held
-                then. 'current_constant' is the previous behaviour — today's
-                quantities held across all of history — kept for comparison
-                only, since it back-projects current positions onto a past
-                that did not hold them.
+                (default) is the TWR curve above. 'current_constant' is the
+                old market-value series with today's quantities held across
+                all of history — kept for comparison only, since it
+                back-projects current positions onto a past that did not
+                hold them and reads withdrawals as losses.
 
-        Returns: {max_drawdown_pct, current_drawdown_pct, peak, peak_ts,
-        trough, trough_ts, recovered, observations, holdings_basis}.
+        Returns: {basis, max_drawdown_pct, current_drawdown_pct, peak,
+        peak_ts, trough, trough_ts, recovered, observations, holdings_basis}.
         """
         return analytics_service.drawdown_stats(
             symbol, since=since, holdings_basis=holdings_basis

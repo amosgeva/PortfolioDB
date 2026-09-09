@@ -9,7 +9,7 @@ import pytest
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from fifo import Lot, OpenBuy, MatchLine, FifoResult, run_fifo
+from fifo import Lot, run_fifo
 
 
 def _lot(id: int, side: str, qty: float, price: float, fees: float = 0.0, trade_date: date | None = None) -> Lot:

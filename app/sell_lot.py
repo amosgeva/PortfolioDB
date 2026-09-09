@@ -10,8 +10,11 @@ It inserts the SELL lot and prints updated FIFO position for that symbol.
 from __future__ import annotations
 
 import argparse
+import sys
+from datetime import date
 
 import ledger_numbers
+import oversell
 from db import load_config, run, transaction
 
 
@@ -31,6 +34,14 @@ def main():
 
     cfg = load_config()
     with transaction(cfg) as conn:
+        # Said now, at the keyboard, rather than as a log line the FIFO engine
+        # writes at read time: a sale bigger than the position is usually the
+        # wrong account or date, and the row still goes in (see app/oversell.py).
+        warning = oversell.oversell_warning(
+            conn, sym, args.account, date.fromisoformat(args.trade_date), args.qty
+        )
+        if warning:
+            print(warning, file=sys.stderr)
         run(conn, "INSERT INTO instruments(symbol) VALUES (%s) ON CONFLICT(symbol) DO NOTHING", (sym,))
         run(
             conn,
