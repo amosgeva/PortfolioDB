@@ -17,6 +17,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import fd_store
+import holdings as holdings_module
+import ledger_inputs
 import market_overview
 import market_window
 import period_stats
@@ -28,6 +30,11 @@ from . import queries
 log = logging.getLogger(__name__)
 
 _LOGO_DIR = Path(__file__).resolve().parent / "static" / "logos"
+
+# What the risk block's series is, stated in the payload (and in the UI
+# caption): today's positions over historical closes. A price-risk view of the
+# current basket, deliberately not the actual history the value chart shows.
+RISK_BASIS = "current positions over historical closes (price-risk view, not a backtest)"
 
 
 def _logo_data_uris(symbols) -> dict[str, str]:
@@ -383,14 +390,22 @@ def _ts_prices(hist_rows) -> "OrderedDict[object, dict[str, float]]":
     return ts_prices
 
 
-def _full_series(ts_prices, qty_map: dict) -> list[tuple]:
-    """(ts, portfolio value) at every snapshot: current qty × the price then."""
-    full_series = []
-    for ts, prices in ts_prices.items():
-        val = sum(qty_map.get(s, 0.0) * p for s, p in prices.items())
-        if val > 0:
-            full_series.append((ts, val))
-    return full_series
+def _historical_series(ts_prices, lot_rows) -> list[tuple]:
+    """(ts, portfolio value) at every snapshot, valuing the holdings actually
+    held at that instant at the prices known then.
+
+    This used to be today's share counts times the price at each snapshot,
+    which is a hypothetical, not a history: a position bought last month
+    appeared to have been held all year, one sold at a loss vanished from the
+    record, and buying more rewrote every earlier point (audit F07). The
+    reconstruction is the one ``twr`` and the MCP value-history tool already
+    use, with a symbol's last known price carried across a snapshot it was
+    missing from, so a single failed quote is not a cliff in the chart.
+    """
+    valued = holdings_module.value_series(
+        lot_rows, list(ts_prices.items()), carry_forward=True
+    )
+    return [(ts, val) for ts, val in valued if val > 0]
 
 
 def _series_since(full_series, jer, today_jer, now_utc, cutoff_days=None, today_only=False) -> list:
@@ -766,16 +781,23 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     the fundamentals dict — the Streamlit shell passes its cached
     load_fundamentals so the 900s TTL is preserved.
     """
-    latest_rows = queries.latest_prices(conn)
-    prev_rows = queries.prev_close(conn)
-    lot_rows = queries.all_lots(conn)
-    hist_rows = queries.price_history(conn)
+    # Lots and every price series come through the prepared ledger: restated
+    # into post-split units with the recorded corporate actions, the same rows
+    # the MCP tools and the reports compute from. Before this, the dashboard
+    # ran the shared FIFO engine over raw rows and disagreed with the MCP side
+    # the day a split was recorded (audit F03). recent_lots stays raw: it is
+    # the Manage page's trade-history table and shows what was entered.
+    ledger = ledger_inputs.load(conn)
+    lot_rows = ledger.lots
+    latest_rows = ledger.price_rows(queries.latest_prices(conn))
+    prev_rows = ledger.price_rows(queries.prev_close(conn))
+    hist_rows = ledger.price_rows(queries.price_history(conn))
     fact_rows = queries.company_facts(conn)
     watch_rows = queries.watchlist_symbols(conn)
     cash_rows = queries.latest_cash_per_account(conn)
     income_rows = queries.income_rows(conn)
     instr_attr_rows = queries.instrument_attrs(conn)
-    second_rows = queries.second_latest_prices(conn)
+    second_rows = ledger.price_rows(queries.second_latest_prices(conn))
     hist_lot_rows = queries.recent_lots(conn)
     snaplog_rows = queries.snapshot_log(conn)
     snaprun_rows = queries.last_snapshot_run(conn)
@@ -801,10 +823,11 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     today_jer = datetime.now(jer).date()
     now_utc = datetime.now(timezone.utc)
 
-    # portfolio-value series per range (current qty × hist price)
+    # portfolio-value series per range: the holdings actually held at each
+    # snapshot, at the prices known then (see _historical_series).
     ts_prices = _ts_prices(hist_rows)
     pv, pv_gaps, gaps_all = _value_ranges(
-        conn, _full_series(ts_prices, qty_map), jer, today_jer, now_utc
+        conn, _historical_series(ts_prices, lot_rows), jer, today_jer, now_utc
     )
 
     held_syms, watch_syms, tape_syms, rail_watch = _symbol_lists(holdings, watch_rows, stocks, qty_map)
@@ -818,8 +841,12 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     price_by_day = _price_by_day(ts_prices, jer)
     returns_strip, stats_block = _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer)
     alloc = _allocations(qty_map, stocks, instr_attr_rows, fact_rows, facts)
-    # risk & analytics (beta / vol / Sharpe / drawdown / correlation)
+    # risk & analytics (beta / vol / Sharpe / drawdown / correlation). Unlike
+    # the value chart above, this applies the CURRENT basket to historical
+    # closes — a price-risk view, not a backtest — and the payload says so, as
+    # the caption in the UI does, so a reader never mistakes it for history.
     risk = _build_risk(price_by_day, qty_map, stocks, held_syms)
+    risk["basis"] = RISK_BASIS
     latest_prices = _latest_prices_table(latest_rows, jer)
 
     chart_syms = set(qty_map) | set(watch_syms) | {"SPY"}

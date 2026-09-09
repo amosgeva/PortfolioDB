@@ -14,6 +14,8 @@ from typing import Any
 
 from fifo import Lot as FifoLot, run_fifo
 from avg_cost import Lot as AvgLot
+import corporate_actions
+import ledger_inputs
 from psycopg2 import sql
 
 from app.mcp.deps import get_conn
@@ -129,6 +131,12 @@ def _all_realized_matches(
             cur.execute(query, params)
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        # Restate into post-split units before the replay, like every other
+        # reader. Realized money is invariant under the adjustment, but the
+        # matching is not: a buy of 10 before a 2:1 and a sale of 20 after it
+        # would otherwise match 10 against 10, warn of an oversell, and report
+        # half the realized P&L at the wrong per-share figures.
+        rows = ledger_inputs.prepare(rows, corporate_actions.fetch_actions(conn)).lots
 
     # Group by (symbol, account) and run the engine.
     grouped: dict[tuple[str, str | None], list[Any]] = defaultdict(list)

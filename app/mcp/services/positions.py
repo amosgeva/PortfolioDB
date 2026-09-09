@@ -22,6 +22,7 @@ from psycopg2 import sql
 # Reuse the engines unchanged.
 from portfolio import compute_avg_cost_merged, compute_fifo_merged
 import corporate_actions
+import ledger_inputs
 
 from app.mcp.deps import get_conn
 from app.mcp.services import common
@@ -64,12 +65,11 @@ def _fetch_lots(
         cols = [d[0] for d in cur.description]
     lot_rows = [dict(zip(cols, r)) for r in rows]
 
-    # Restate into post-split units before the engines see them. Quantity and
-    # price move inversely, so cost basis and realized P&L are unchanged — only
-    # share count and per-share cost are corrected.
-    return corporate_actions.adjust_lot_rows(
-        lot_rows, corporate_actions.fetch_actions(conn)
-    )
+    # Restate into post-split units before the engines see them, through the
+    # same preparation step every other surface uses (app/ledger_inputs.py).
+    # Quantity and price move inversely, so cost basis and realized P&L are
+    # unchanged — only share count and per-share cost are corrected.
+    return ledger_inputs.prepare(lot_rows, corporate_actions.fetch_actions(conn)).lots
 
 
 def _engine(method: str):

@@ -17,6 +17,7 @@ from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import fd_store
+import ledger_inputs
 from db import connect, fetch_all, load_config
 from portfolio import compute_fifo_merged
 from reporting_utils import IL_TZ, money, pct, utf8_stdout
@@ -105,22 +106,17 @@ def positions_as_of(conn, asof_date) -> dict[tuple[str, str], Decimal]:
 
     Quantities are engine-independent (net BUY−SELL == FIFO open qty), so this
     intentionally does NOT go through the FIFO engine — only cost attribution
-    differs between engines, and cost comes from current_cost_by_symbol.
+    differs between engines, and cost comes from current_cost_by_symbol. It does
+    go through the prepared ledger, so the quantities are in the units the
+    prices they are multiplied by are quoted in: a raw pre-split share count
+    against a post-split quote halved (or quartered) the position's value.
     """
-    rows = fetch_all(
-        conn,
-        """
-        SELECT account, symbol,
-               SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) AS qty
-        FROM lots
-        WHERE trade_date <= %s
-        GROUP BY account, symbol
-        HAVING ABS(SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END)) > 0.0000001
-        ORDER BY account, symbol
-        """,
-        (asof_date,),
-    )
-    return {(r["account"], r["symbol"]): D(r["qty"]) for r in rows}
+    lots = ledger_inputs.load(conn, as_of=asof_date).lots
+    out: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    for lot in lots:
+        qty = D(lot["quantity"])
+        out[(lot["account"], lot["symbol"])] += qty if lot["side"] == "BUY" else -qty
+    return {k: q for k, q in sorted(out.items()) if abs(q) > Decimal("0.0000001")}
 
 
 def value_positions(positions: dict[tuple[str, str], Decimal], prices: dict[str, Decimal]):
@@ -146,15 +142,7 @@ def current_cost_by_symbol(conn) -> dict[str, Decimal]:
     approximation, which folded realized P&L into 'cost' and drifted from
     every other surface after any partial sell.
     """
-    rows = fetch_all(
-        conn,
-        """
-        SELECT id, symbol, account, side, trade_date, quantity, price, fees
-        FROM lots
-        ORDER BY symbol, COALESCE(account,''), trade_date, id
-        """,
-    )
-    df = compute_fifo_merged(rows)
+    df = compute_fifo_merged(ledger_inputs.load(conn).lots)
     out: dict[str, Decimal] = {}
     if not df.empty:
         for _, r in df.iterrows():

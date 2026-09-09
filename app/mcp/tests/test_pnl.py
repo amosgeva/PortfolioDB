@@ -42,6 +42,13 @@ def patched(monkeypatch, env_token, fake_db):
         for r in LOTS
     ]
     fake_db(responses=[(cols, rows)], cycle=True)
+    # The replay now restates lots through the prepared ledger, which reads
+    # corporate_actions on the same connection; with a cycling lots response
+    # that query would be answered with lot rows. These tests are about match
+    # math, so: no actions. The adjustment itself is covered in
+    # app/tests/test_ledger_inputs.py.
+    from app.mcp.services import pnl as pnl_service
+    monkeypatch.setattr(pnl_service.corporate_actions, "fetch_actions", lambda conn: [])
 
     # Prices for unrealized calls — not exercised by tests below, but the
     # service imports it transitively.

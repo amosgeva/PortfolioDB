@@ -17,7 +17,8 @@ import logging
 from collections import defaultdict
 from decimal import Decimal
 
-from db import connect, fetch_all, load_config
+import ledger_inputs
+from db import connect, load_config
 from fifo import Lot, run_fifo
 from portfolio import compute_fifo_merged
 
@@ -39,16 +40,9 @@ def print_positions(symbol: str | None = None) -> None:
     cfg = load_config()
 
     with connect(cfg) as conn:
-        rows = fetch_all(
-            conn,
-            """
-            SELECT id, symbol, account, side, trade_date, quantity, price, fees
-            FROM lots
-            WHERE (%s IS NULL OR symbol = %s)
-            ORDER BY symbol, COALESCE(account,''), trade_date, id
-            """,
-            (sym, sym),
-        )
+        # The prepared ledger, not a raw SELECT: lots restated into post-split
+        # units, the same rows the dashboard and the MCP tools compute from.
+        rows = ledger_inputs.load(conn, symbol=sym).lots
 
     # Per-account view using raw FIFO
     grouped: dict[tuple[str, str | None], list[Lot]] = defaultdict(list)

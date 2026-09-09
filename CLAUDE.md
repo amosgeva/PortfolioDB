@@ -131,8 +131,14 @@ Shared invariants across both:
 - BUY fees inflate cost basis, SELL fees reduce proceeds.
 - Shorts are not supported — SELL exceeding open BUYs logs a warning and is truncated.
 
-### Portfolio aggregation (`app/portfolio.py`)
-`compute_fifo_merged` / `compute_avg_cost_merged` group raw lot rows by `(symbol, account)`, run the respective engine, then merge per symbol into a `DataFrame` with `symbol, qty, open_cost, avg_cost, realized_pnl`. **This is the single entry point used by `streamlit_app.py`, `positions.py`, and `report_portfolio_db.py`** — keep its output contract stable.
+### Prepared ledger (`app/ledger_inputs.py`) and aggregation (`app/portfolio.py`)
+Readers get their lots from `ledger_inputs.load(conn)`. It reads them in FIFO processing order together with the recorded `corporate_actions` and restates them into post-split units. The `PreparedLedger` it returns also carries `price_by_day` / `price_points` / `price_rows`, which restate that reader's price series with the same actions. **This is the parity contract.** The dashboard payload, the positions CLI, both reports, the income backfill and the MCP positions service all go through it. A reader that queries `lots` or adjusts prices on its own disagrees with the others the day a split is recorded. That is what happened before the loader existed: a shared engine over differently prepared inputs is not parity. Apply each factor once. Never adjust lots and leave prices raw, or the reverse.
+
+**Exception:** a reader that needs its own filter composes on `ledger_inputs.LOTS_SQL` and passes the rows to `ledger_inputs.prepare()`, as the MCP positions service does. The Manage page's trade-history table and the CSV importer read and write raw rows on purpose: they show and record what was entered. The source scan in `app/tests/test_ledger_inputs.py` keeps the list of such readers, with the reason next to each.
+
+`compute_fifo_merged` / `compute_avg_cost_merged` then group the prepared rows by `(symbol, account)`, run the respective engine, and merge per symbol into a `DataFrame` with `symbol, qty, open_cost, avg_cost, realized_pnl`. Keep that output contract stable.
+
+**Exception:** `corporate_actions.fetch_actions` returns an empty list only when the table does not exist (a database that never had the migration). Any other failure propagates: a transient error that read as "no actions" silently restated every figure into pre-split units, and a wrong cost basis is worse than an error.
 
 ### Layers
 - `app/db.py` — psycopg2 connection + `fetch_all` / `execute` helpers. Everything in `app/` goes through this; the ad-hoc scripts at the repo root often open their own psycopg2 connections.
