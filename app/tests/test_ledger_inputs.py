@@ -205,11 +205,24 @@ class TestDashboardPayload:
             latest[r["symbol"]] = {"symbol": r["symbol"], "ts": r["ts"], "last_price": r["last_price"],
                                    "bid": None, "ask": None, "source": "test"}
         monkeypatch.setattr(queries, "latest_prices", lambda conn: list(latest.values()))
-        monkeypatch.setattr(payload, "_market_overview", lambda conn: [])
-        monkeypatch.setattr(payload, "_news_feed", lambda conn, *a: [])
+        monkeypatch.setattr(payload, "_market_overview", lambda conn: ([], None))
+        monkeypatch.setattr(payload, "_news_feed", lambda conn, *a: ([], None))
         monkeypatch.setattr(payload, "_logo_data_uris", lambda syms: {})
         _patch_ledger(monkeypatch, payload)
         return payload
+
+    def test_a_failed_section_is_named_not_silently_empty(self, payload_module, monkeypatch):
+        """A dead query behind the market strip used to render as an empty
+        strip; the payload now says which section it lost."""
+        monkeypatch.setattr(payload_module, "_market_overview",
+                            lambda conn: ([], "market overview: OperationalError"))
+        data = payload_module.build_payload_data(object(), lambda syms: {})
+        assert data["markets"] == []
+        assert data["degraded"] == ["market overview: OperationalError"]
+
+    def test_a_healthy_payload_reports_nothing_degraded(self, payload_module):
+        data = payload_module.build_payload_data(object(), lambda syms: {})
+        assert data["degraded"] == []
 
     def test_holdings_are_in_post_split_units(self, payload_module):
         data = payload_module.build_payload_data(object(), lambda syms: {})

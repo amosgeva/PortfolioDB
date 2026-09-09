@@ -159,8 +159,18 @@ Series that value the past — `get_drawdown_stats`, `get_portfolio_value_histor
   point from the lot ledger.
 - **`current_constant`** holds today's quantities across all of history. Kept
   for comparison only; it back-projects current positions onto a past that did
-  not hold them. On the live ledger it reported a −88.35% max drawdown where the
-  true figure is −24.05%.
+  not hold them, and on a real ledger it can report a drawdown several times
+  the true one.
+
+**Drawdown is measured on the time-weighted growth curve**, not on market
+value. A market-value series falls when securities are sold and rises when
+money is added, so a withdrawal read as a drawdown and a deposit could hide
+one. `get_drawdown_stats` for the whole portfolio therefore runs on the same
+daily flow-adjusted curve as §4 (`basis: "twr_growth_curve"`; `peak` and
+`trough` are index levels with 1.0 at the first observation). A single symbol's
+drawdown is on its split-adjusted price (`basis: "price"`); the
+`current_constant` comparison keeps the old market-value definition
+(`basis: "market_value_current_constant"`).
 
 ---
 

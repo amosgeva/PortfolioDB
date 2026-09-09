@@ -111,9 +111,12 @@ class TestSeriesUsesHistoricalHoldings:
 def test_drawdown_reports_which_basis_it_used(env_token, fake_db, monkeypatch):
     from app.mcp.services import analytics
 
-    monkeypatch.setattr(analytics, "_portfolio_value_series", lambda *a, **kw: [])
+    # The historical basis now runs on the TWR growth curve, not the
+    # market-value series (see test_drawdown_basis.py).
+    monkeypatch.setattr(analytics, "_portfolio_growth_series", lambda *a, **kw: [])
     out = analytics.drawdown_stats()
     assert out["holdings_basis"] == "historical"
+    assert out["basis"] == "twr_growth_curve"
 
 
 def test_single_symbol_drawdown_has_no_holdings_basis(env_token, fake_db, monkeypatch):

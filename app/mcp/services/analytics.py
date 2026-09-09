@@ -24,6 +24,7 @@ from app.mcp.services.cutoff import Cutoff, REPORTING_TZ
 # resolve however the tests are invoked.
 import corporate_actions
 import holdings as holdings_module
+import twr
 
 
 # ────────────────────────── concentration ──────────────────────────
@@ -435,19 +436,37 @@ def drawdown_stats(
     retained for comparison only, since it back-projects current positions
     onto a past that did not hold them.
 
-    Returns: {max_drawdown_pct, current_drawdown_pct, peak, peak_ts,
+    What "drawdown" is measured on, stated in the ``basis`` field:
+
+    * portfolio, ``historical`` (default): the **time-weighted growth curve**
+      from ``twr`` — daily, flow-adjusted, split-adjusted. A drawdown is a
+      loss of investment value. The market-value series this used to run on
+      falls when securities are sold and rises when money is added, so a
+      withdrawal read as a drawdown and a deposit hid one (audit note on
+      "historical risk definitions"). ``peak`` / ``trough`` are index levels
+      on that curve (1.0 at the first observation), not dollars.
+    * portfolio, ``current_constant``: the old market-value series with
+      today's quantities held constant — comparison only, dollars.
+    * a single symbol: its split-adjusted price series, dollars.
+
+    Returns: {basis, max_drawdown_pct, current_drawdown_pct, peak, peak_ts,
               trough, trough_ts, recovered (bool), holdings_basis}.
     """
     if holdings_basis not in ("historical", "current_constant"):
         raise ValueError("holdings_basis must be 'historical' or 'current_constant'")
 
-    if symbol is None:
+    if symbol is None and holdings_basis == "historical":
+        basis = "twr_growth_curve"
+        series = _portfolio_growth_series(since, cutoff=cutoff)
+    elif symbol is None:
+        basis = "market_value_current_constant"
         series = _portfolio_value_series(since, holdings_basis=holdings_basis, cutoff=cutoff)
     else:
+        basis = "price"
         series = _symbol_price_series(symbol.upper(), since, cutoff=cutoff)
 
     if not series:
-        return _empty_drawdown(symbol, holdings_basis)
+        return _empty_drawdown(symbol, holdings_basis, basis)
 
     df = pd.DataFrame(series, columns=["ts", "value"]).set_index("ts")
     df["running_peak"] = df["value"].cummax()
@@ -469,6 +488,7 @@ def drawdown_stats(
     return {
         "symbol": symbol.upper() if symbol else None,
         "since": since.isoformat() if since else None,
+        "basis": basis,
         "holdings_basis": holdings_basis if symbol is None else None,
         "observations": int(len(df)),
         "max_drawdown_pct": max_dd * 100.0,
@@ -551,9 +571,40 @@ def _portfolio_value_series(
     return holdings_module.value_series(lot_rows, ordered, carry_forward=True)
 
 
-def _empty_drawdown(symbol: str | None, holdings_basis: str = "historical") -> dict[str, Any]:
+def _portfolio_growth_series(
+    since: date | None, *, cutoff: Cutoff | None = None
+) -> list[tuple[Any, float]]:
+    """The portfolio's time-weighted growth curve, one point per reporting day.
+
+    Built from the same lots, split-adjusted daily prices and income the
+    period returns use (returns service), through ``twr``: flows are removed,
+    so the curve moves only when the investment does. ``since`` trims the
+    curve rather than restarting it — drawdown is a ratio, so the level is
+    immaterial.
+    """
+    # Imported here rather than at module level: returns imports nothing from
+    # analytics today, but the two modules are siblings that grow together.
+    from app.mcp.services import returns as returns_service
+
+    records = twr.build_daily_records(
+        returns_service._fetch_lots(cutoff),
+        returns_service._price_by_day(cutoff),
+        returns_service._fetch_dividends(cutoff),
+    )
+    curve = twr.growth_curve(records)
+    if since is not None:
+        curve = [(d, g) for d, g in curve if d >= since]
+    return curve
+
+
+def _empty_drawdown(
+    symbol: str | None, holdings_basis: str = "historical", basis: str | None = None
+) -> dict[str, Any]:
+    if basis is None:
+        basis = "price" if symbol else ("twr_growth_curve" if holdings_basis == "historical" else "market_value_current_constant")
     return {
         "symbol": symbol.upper() if symbol else None,
+        "basis": basis,
         "holdings_basis": holdings_basis if symbol is None else None,
         "observations": 0,
         "max_drawdown_pct": 0.0,

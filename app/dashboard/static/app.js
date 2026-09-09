@@ -372,6 +372,17 @@
     snapEl.classList.remove('warn', 'error', 'none');
     if (snap.level === 'warn' || snap.level === 'error' || snap.level === 'none') snapEl.classList.add(snap.level);
   }
+  // Sections the payload could not load are named here instead of rendering
+  // as silently empty. textContent: the reasons are exception class names
+  // from the server, but they are text, not markup, all the same.
+  var degEl = $('#degraded');
+  if (degEl) {
+    var degraded = DATA.degraded || [];
+    degEl.hidden = !degraded.length;
+    degEl.textContent = degraded.length
+      ? 'Some sections could not be loaded and are shown empty — ' + degraded.join(' · ') + '. Check the dashboard log.'
+      : '';
+  }
 
   var rail = $('.rail'), scrim = $('.scrim'), menuBtn = $('.menu-btn');
   function openRail(v) { if (!rail) return; rail.classList.toggle('open', v); if (scrim) scrim.classList.toggle('show', v); }
