@@ -16,6 +16,26 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-09-09
+
+The release that acts on the 2026-09-09 codebase audit: every High and Medium
+finding, and the routine items behind them. Read **Upgrading** before pulling —
+this one has a migration, a new requirement for the MCP server, and several
+figures that change on purpose.
+
+Three things move numbers. Recorded splits now reach the dashboard, the CLI and
+the reports, not only the MCP tools. Time-weighted return values a sale at its
+own price, so closing a position no longer reads as 0% or −100%. Portfolio
+drawdown is measured on the flow-adjusted growth curve, so a withdrawal is no
+longer a drawdown. Each has its own entry below with the before and after.
+
+Minor rather than major because every upgrade step has a documented path the
+operator can take (`make schema`; `make ro-role` or the explicit fallback
+flag; two lines moved to `.env`), and nothing about the ledger's data has to be
+rewritten. It is the largest minor this project has shipped, and the entries
+are long because you are entitled to know what changes before you run it
+against your own records.
+
 ### Added
 
 - **A sale bigger than the position is warned about when it is entered.**
@@ -256,6 +276,34 @@ needs a schema step says so under **Upgrading**.
   the backups you already have** with `gzip -t` *and*
   `gunzip -c <file> | grep -c 'PostgreSQL database dump complete'`; an archive
   that passes the first and fails the second is empty.
+
+### Upgrading
+
+1. **Back up first.** The runners now verify what they write; the copy you
+   already have may not have been verified — check it with `gzip -t` and
+   `gunzip -c <file> | grep -c 'PostgreSQL database dump complete'`.
+2. `docker compose pull && docker compose up -d`, then **`make schema`** (or
+   `docker compose run --rm dashboard python app/apply_schema.py`). Migration
+   `003_finite_numeric_checks.sql` adds the not-NaN constraints; schema version
+   is 0.4. It fails on purpose if a NaN is already stored.
+3. **If you run the MCP server:** it now requires the read-only role. Run
+   `make ro-role` and paste the two lines it prints into `.env`, or set
+   `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` to keep the old behaviour with a
+   warning. Monitors that parsed the old `/healthz` body need its three new
+   keys.
+4. **If you set an advisor base URL on the Settings page** (Ollama on the
+   Docker host is the usual case), put the same value in `.env` as
+   `LLM_BASE_URL=…`; the page no longer has the field.
+5. **If you copied the old `docker-compose.override.yml.example`** to bind to
+   localhost, re-copy it: the old plain-list form left the wildcard binding in
+   place. `docker compose config` should show no `0.0.0.0` entry.
+6. **If you build the image yourself from a working tree that holds an
+   `app/.env`,** rebuild: the old `.dockerignore` let it into the image.
+7. Expect changed figures where the entries above say so: split-adjusted
+   share counts and history on the dashboard, TWR on any day that had a sale,
+   portfolio drawdown on any ledger with trades, and the value chart showing
+   what was actually held. Scripts that wrapped the CSV importer now see a
+   nonzero exit status when a row was rejected.
 
 ## [1.6.0] — 2026-09-09
 
@@ -1220,7 +1268,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.0
 [1.6.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.6.0
 [1.5.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.5.0
 [1.4.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.4.0
