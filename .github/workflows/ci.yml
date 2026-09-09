@@ -26,7 +26,7 @@ jobs:
     name: Test suites (no database)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -129,7 +129,7 @@ jobs:
       PORTFOLIODB_TZ: UTC
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -198,7 +198,7 @@ jobs:
     name: Application image (build and self-test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # A clean checkout has no secrets in it, which is exactly why this job
       # could never notice the gap it is now guarding: `.dockerignore` named the
@@ -311,7 +311,7 @@ jobs:
     name: Windows runner (init, both PowerShell hosts)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Pester 5 is not a given: the runner images have carried 3.4.0, whose
       # syntax is incompatible, and this box did too. Install explicitly rather
@@ -372,7 +372,7 @@ jobs:
     name: Windows runner (backup/restore round trip)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Also the first real test of init: everything after it needs the .env it
       # writes, because compose declares `env_file: .env` and hard-errors
