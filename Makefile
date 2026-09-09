@@ -23,7 +23,7 @@ BACKUP_DIR ?= backups
 .DEFAULT_GOAL := help
 .PHONY: help init up down restart build pull dev-up ps logs schema psql shell test \
         positions add-lot sell-lot set-cash watchlist snapshot brief ask \
-        report demo-seed mcp tools backup restore ro-role
+        report demo-seed mcp tools backup restore ro-role lock
 
 help: ## Show this list
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -103,6 +103,17 @@ build: ## Build the application image from source (contributors)
 
 dev-up: ## Start the stack from a locally built image
 	$(COMPOSE_DEV) up -d
+
+# Regenerated INSIDE the image, never from a host interpreter: the lock has to
+# be the resolution the image's Python and platform produce, or CI's
+# "image matches the lock" check rejects it. Builds first so the freeze reflects
+# the current requirements.txt rather than the last image on disk.
+lock: ## Refresh app/constraints.txt from a fresh image build (after editing requirements.txt)
+	$(COMPOSE_DEV) build dashboard
+	@{ sed -n '/^#/p' app/constraints.txt; \
+	   $(COMPOSE_DEV) run --rm --no-deps dashboard pip freeze --all --exclude-editable; } > app/constraints.txt.new \
+	&& mv app/constraints.txt.new app/constraints.txt \
+	&& echo "app/constraints.txt refreshed: $$(grep -vc '^#' app/constraints.txt) pins — review the diff and commit"
 
 ps: ## Show service status
 	$(COMPOSE) ps

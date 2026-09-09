@@ -9,7 +9,13 @@
 #   scheduler  /usr/local/bin/supercronic /app/docker/crontab  (absolute path!)
 #   CLIs       docker compose run --rm dashboard python app/add_lot.py ...
 
-FROM python:3.14-slim
+# Pinned by digest, not by tag. `python:3.14-slim` is a moving target — a
+# rebuild of the same commit a month later got a different Debian snapshot and
+# a different patch release, so "the image CI tested" and "the image a user
+# pulled" were only nominally the same. The digest below is the multi-arch
+# index; Dependabot (.github/dependabot.yml) proposes the bump when the tag
+# moves, and the weekly scan (security-scan.yml) says when a bump is overdue.
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
@@ -24,12 +30,16 @@ FROM python:3.14-slim
 # redirect to http:// is followed happily, and the download becomes tamperable
 # by anything on the path. The sha256sum check that follows would catch a
 # swapped binary, but only after it had been written to disk.
-ARG SUPERCRONIC_VERSION=v0.2.33
+# v0.2.49 (2026-08-14): v0.2.33 was built with Go 1.23.1, whose standard
+# library carries a dozen HIGH/CRITICAL advisories (crypto/tls, net/url, x509)
+# that the weekly Trivy scan reports against the binary. Checksums computed
+# from the release assets on 2026-09-09; sizes matched GitHub's asset list.
+ARG SUPERCRONIC_VERSION=v0.2.49
 ARG TARGETARCH
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) sha=feefa310da569c81b99e1027b86b27b51e6ee9ab647747b49099645120cfc671 ;; \
-      arm64) sha=f1f8585c66de020fef494dd636058f99949d108f569fef00016a1c8b9eb145b3 ;; \
+      amd64) sha=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1 ;; \
+      arm64) sha=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5 ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \
@@ -57,9 +67,16 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first for better layer caching.
+# Install Python deps first for better layer caching. requirements.txt is the
+# ranges the code needs; constraints.txt is what they resolved to on the day the
+# image was tested, generated inside this image (`make lock`). Installing with
+# both means two builds of one commit contain the same packages, and CI checks
+# that the built image's `pip freeze` still equals the file.
 COPY app/requirements.txt /app/app/requirements.txt
-RUN pip install -r /app/app/requirements.txt
+COPY app/constraints.txt /app/app/constraints.txt
+# `--only-binary :all:` — wheels only, so no package's setup.py runs at build
+# time; every pin in the lock has one.
+RUN pip install --only-binary :all: -c /app/app/constraints.txt -r /app/app/requirements.txt
 
 # Bring the rest of the app/ tree (engines, dashboard, services, MCP server),
 # the scheduler's crontab, and the SQL — the last one so an install that pulled

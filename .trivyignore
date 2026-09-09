@@ -1,0 +1,13 @@
+# Findings the weekly image scan (.github/workflows/security-scan.yml) may skip.
+# Each entry says why, and each reason is one that a pin cannot change. Remove
+# an entry the day it stops being true.
+#
+# pip's vendored copies. Trivy reads src/pip/_vendor/vendor.txt and reports
+# the packages pip bundles for its own use as if they were installed. pip
+# 26.2.1 — the newest release, and the one the base image ships — still
+# vendors msgpack 1.1.2 and setuptools 70.3.0 (pkg_resources). Nothing in this
+# application imports either: pip uses msgpack for its own HTTP cache and
+# pkg_resources for its own metadata handling, at build time, on input pip
+# itself fetched over TLS. Upgrading pip changes nothing until pypa re-vendors.
+GHSA-6v7p-g79w-8964
+CVE-2025-47273

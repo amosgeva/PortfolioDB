@@ -1,0 +1,64 @@
+name: Security scan
+
+# The pins are what make the image reproducible, and pins are what go stale.
+# This runs on a schedule so a vulnerability disclosed after the last release
+# is seen without anyone touching the repository: pip-audit against the exact
+# package set in app/constraints.txt, and Trivy against the image built from
+# the digest-pinned base. It also runs when either input changes in a pull
+# request, so a bump is checked before it merges.
+#
+# A failure here is a signal to refresh a pin — `make lock` for a package, a
+# Dependabot PR for the base image — not something to silence. Two things it
+# deliberately does not report, because no pin can change them and a check
+# that is always red is a check nobody reads: an OS package with no fixed
+# version in Debian yet (`ignore-unfixed`; util-linux has been that package on
+# every slim image for months), and the entries in .trivyignore, each with its
+# reason written next to it (pip's own vendored copies, as of this writing).
+# Those two are the whole allowlist.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'        # Mondays 06:17 UTC
+  pull_request:
+    paths:
+      - app/requirements.txt
+      - app/constraints.txt
+      - app/Dockerfile
+      - .github/workflows/security-scan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-packages:
+    name: pip-audit against app/constraints.txt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      # The lock, not the ranges: auditing requirements.txt would resolve the
+      # ranges to whatever is newest today and audit a set nobody ships.
+      - uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266  # v1.1.0
+        with:
+          inputs: app/constraints.txt
+          no-deps: true
+
+  image:
+    name: Trivy against the built image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the image
+        run: docker build -f app/Dockerfile -t portfoliodb-scan:${{ github.sha }} .
+
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: portfoliodb-scan:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'

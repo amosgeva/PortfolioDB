@@ -18,6 +18,19 @@ needs a schema step says so under **Upgrading**.
 
 ### Security
 
+- **The published image is reproducible and scanned.** `app/requirements.txt`
+  is ranges; the image resolved them afresh on every build, so a passing test
+  run said nothing about the image a user pulled a week later, and the base
+  `python:3.14-slim` tag moved underneath it. Now `app/constraints.txt` holds
+  the exact set the image was tested with (generated inside the image with
+  `make lock`), the Dockerfile installs with it, CI fails if the image's
+  `pip freeze` differs from the file, the base image is pinned by digest with
+  Dependabot proposing bumps for it and for the pinned actions, and a weekly
+  workflow runs `pip-audit` against the lock and Trivy against the built
+  image (fixable HIGH/CRITICAL findings fail it). Provenance attestations stay
+  off, with the reason recorded next to the setting. No runtime change: the
+  pins are what the last green build already contained.
+
 - **The MCP server requires its read-only database role and receives only the
   environment it needs.** The pool fell back to the application's read-write
   credentials silently when `PORTFOLIODB_MCP_RO_USER` was unset, protected
