@@ -187,10 +187,39 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # A clean checkout has no secrets in it, which is exactly why this job
+      # could never notice the gap it is now guarding: `.dockerignore` named the
+      # root `.env` and nothing else, while the Dockerfile COPYs all of app/.
+      # An operator building from a populated working tree had app/.env — the
+      # database password, the MCP token, a vendor API key — one build away
+      # from an image. Plant obvious fakes where the real sidecars live, then
+      # prove below that none of them reached a layer.
+      - name: Plant secret canaries where an operator's sidecars would be
+        run: |
+          echo 'CANARY_SECRET_ROOT=not-a-real-secret' > .env
+          echo 'CANARY_SECRET_ROOT_BAK=not-a-real-secret' > .env.bak-20260909
+          echo 'CANARY_SECRET_APP=not-a-real-secret' > app/.env
+          echo 'CANARY_SECRET_APP_BAK=not-a-real-secret' > app/.env.bak
+          mkdir -p app/dashboard/static/logos docs/internal backups
+          echo 'CANARY_SECRET_LOGO' > app/dashboard/static/logos/CANARY.png
+          echo 'CANARY_SECRET_INTERNAL' > docs/internal/CANARY.local.md
+          echo 'CANARY_SECRET_BACKUP' > backups/CANARY.sql.gz
+
       # Plain `docker build`, deliberately: the runner already has BuildKit, and
       # this way one build needs no third-party action pinned and audited.
       - name: Build the image
         run: docker build -f app/Dockerfile -t portfoliodb-ci:${{ github.sha }} .
+
+      # grep the *filesystem* of the built image, not the build log: a file that
+      # is in the context but never COPYd is harmless, one that landed in a
+      # layer is the leak. `-r /app` covers every COPY destination.
+      - name: No canary reached an image layer
+        run: |
+          if docker run --rm portfoliodb-ci:${{ github.sha }} grep -rl CANARY_SECRET /app; then
+            echo "::error::a gitignored secret sidecar was baked into the image — fix .dockerignore"
+            exit 1
+          fi
+          echo "no canary in the image"
 
       # The same two invocations `make test` uses, split for the same reason:
       # run both in one pytest process and four reconciliation tests fail on
