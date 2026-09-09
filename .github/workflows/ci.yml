@@ -417,6 +417,142 @@ jobs:
           if ($n -ne '7') { throw "expected 7 lots after restore, got '$n'" }
           Write-Host "round trip clean: $n lots restored"
 
+      # ---- Failure injection -------------------------------------------------
+      # Everything above is the happy path, and the happy path is what hid the
+      # defect: a pipeline's exit status is its last command's, so a pg_dump that
+      # died still produced a valid, non-empty gzip of nothing, and `psql` kept
+      # going after a SQL error and exited 0. Each step below makes one stage
+      # fail and asserts the runner says so — no file, no "restored", nonzero.
+      #
+      # The fake pg_dump goes in /usr/local/bin, which precedes /usr/bin on the
+      # image's PATH, and `exec` runs as root there. Removed again after each use.
+      #
+      # The runner is started as a child `pwsh -File`, not dot-invoked: it
+      # reports these failures with `throw`, and an uncaught throw from an
+      # invoked script terminates the *calling* step too — which would fail the
+      # step for the very failure it is asserting. A child process turns the
+      # throw into exit code 1, which is also how a scheduled task sees it.
+
+      - name: Backup must fail, and keep nothing, when pg_dump fails
+        shell: pwsh
+        run: |
+          docker compose exec -T postgres sh -c "printf '#!/bin/sh\nexit 7\n' > /usr/local/bin/pg_dump && chmod +x /usr/local/bin/pg_dump"
+          $before = (Get-ChildItem backups -Filter '*.sql.gz*').Count
+          pwsh -NoProfile -File ./pdb.ps1 backup
+          $code = $LASTEXITCODE
+          docker compose exec -T postgres rm -f /usr/local/bin/pg_dump
+          if ($code -eq 0) { throw 'backup reported success although pg_dump exited 7' }
+          $after = (Get-ChildItem backups -Filter '*.sql.gz*').Count
+          if ($after -ne $before) { throw "a failed backup left a file behind ($before -> $after)" }
+          Write-Host "backup correctly failed (exit $code) and kept nothing"
+          exit 0
+
+      - name: Backup must fail on a dump that never finished
+        shell: pwsh
+        run: |
+          # A producer that exits 0 with partial output: valid gzip, no completion
+          # marker. This is what a pg_dump killed mid-way looks like.
+          docker compose exec -T postgres sh -c "printf '#!/bin/sh\necho -- partial dump\n' > /usr/local/bin/pg_dump && chmod +x /usr/local/bin/pg_dump"
+          $before = (Get-ChildItem backups -Filter '*.sql.gz*').Count
+          pwsh -NoProfile -File ./pdb.ps1 backup
+          $code = $LASTEXITCODE
+          docker compose exec -T postgres rm -f /usr/local/bin/pg_dump
+          if ($code -eq 0) { throw 'backup accepted a dump with no completion marker' }
+          $after = (Get-ChildItem backups -Filter '*.sql.gz*').Count
+          if ($after -ne $before) { throw "an incomplete backup left a file behind ($before -> $after)" }
+          Write-Host "incomplete dump correctly rejected (exit $code)"
+          exit 0
+
+      - name: Restore must reject a truncated archive before touching the database
+        shell: pwsh
+        run: |
+          docker compose exec -T postgres psql -q -U portfoliouser -d portfoliodb -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+          $good = (Get-ChildItem backups -Filter 'portfoliodb-*.sql.gz')[0].FullName
+          $bytes = [System.IO.File]::ReadAllBytes($good)
+          [System.IO.File]::WriteAllBytes('truncated.sql.gz', $bytes[0..199])
+          pwsh -NoProfile -File ./pdb.ps1 restore truncated.sql.gz
+          if ($LASTEXITCODE -eq 0) { throw 'restore accepted a truncated gzip' }
+          $n = (docker compose exec -T postgres psql -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" -U portfoliouser -d portfoliodb | Out-String).Trim()
+          if ($n -ne '0') { throw "truncated restore left $n table(s) behind" }
+          Write-Host 'truncated archive correctly rejected, database untouched'
+          exit 0
+
+      - name: Restore must stop at a SQL error and leave the database empty
+        shell: pwsh
+        run: |
+          # A valid archive whose SQL fails after the lots table exists — the
+          # case the old runner reported as "restored" with a lots count.
+          $sql = "CREATE TABLE lots (id int);`nINSERT INTO lots VALUES (1), (2);`nSELECT 1/0;`nCREATE TABLE after_the_error (id int);`n"
+          [System.IO.File]::WriteAllText('bad.sql', $sql)
+          docker compose cp bad.sql postgres:/tmp/bad.sql
+          docker compose exec -T postgres sh -c 'gzip -c /tmp/bad.sql > /tmp/bad.sql.gz'
+          docker compose cp postgres:/tmp/bad.sql.gz bad.sql.gz
+          pwsh -NoProfile -File ./pdb.ps1 restore bad.sql.gz
+          if ($LASTEXITCODE -eq 0) { throw 'restore reported success although the SQL failed halfway' }
+          $n = (docker compose exec -T postgres psql -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" -U portfoliouser -d portfoliodb | Out-String).Trim()
+          if ($n -ne '0') { throw "a failed restore left $n table(s) behind instead of rolling back" }
+          Write-Host 'SQL error correctly stopped the restore and rolled back'
+          exit 0
+
+      # ---- The Makefile is the other runner, and it had the same two defects.
+      # Ubuntu has make and gzip, so the same scenarios run against it here. The
+      # database is empty at this point (the failed restores above rolled back).
+
+      - name: make restore must stop at a SQL error and leave the database empty
+        run: |
+          if make restore ARGS=bad.sql.gz; then
+            echo "::error::make restore reported success although the SQL failed halfway"; exit 1
+          fi
+          n=$(docker compose exec -T postgres psql -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" -U portfoliouser -d portfoliodb | tr -d '[:space:]')
+          test "$n" = "0" || { echo "::error::a failed make restore left $n table(s) behind"; exit 1; }
+          if make restore ARGS=truncated.sql.gz; then
+            echo "::error::make restore accepted a truncated gzip"; exit 1
+          fi
+          echo "make restore correctly failed on both bad archives"
+
+      - name: make restore round trip
+        run: |
+          dump=$(ls backups/portfoliodb-*.sql.gz | head -1)
+          make restore ARGS="$dump"
+          n=$(docker compose exec -T postgres psql -tAc 'SELECT count(*) FROM lots' -U portfoliouser -d portfoliodb | tr -d '[:space:]')
+          test "$n" = "7" || { echo "::error::expected 7 lots after make restore, got '$n'"; exit 1; }
+          echo "make round trip clean: $n lots restored"
+
+      - name: make backup produces a verified archive
+        run: |
+          make backup
+          dump=$(ls -t backups/portfoliodb-*.sql.gz | head -1)
+          gzip -t "$dump"
+          gunzip -c "$dump" | grep -q 'CREATE TABLE public.lots' || { echo "::error::make backup dump has no lots table"; exit 1; }
+          test -z "$(ls backups/*.part 2>/dev/null)" || { echo "::error::a .part file survived a successful backup"; exit 1; }
+          echo "make backup ok: $dump"
+
+      - name: make backup must fail, and keep nothing, when pg_dump fails
+        run: |
+          docker compose exec -T postgres sh -c 'printf "#!/bin/sh\nexit 7\n" > /usr/local/bin/pg_dump && chmod +x /usr/local/bin/pg_dump'
+          before=$(ls backups | wc -l)
+          if make backup; then
+            docker compose exec -T postgres rm -f /usr/local/bin/pg_dump
+            echo "::error::make backup succeeded although pg_dump exited 7"; exit 1
+          fi
+          docker compose exec -T postgres rm -f /usr/local/bin/pg_dump
+          after=$(ls backups | wc -l)
+          test "$before" = "$after" || { echo "::error::a failed make backup left a file behind"; exit 1; }
+          echo "make backup correctly failed and kept nothing"
+
+      - name: make backup must fail on a dump that never finished
+        run: |
+          docker compose exec -T postgres sh -c 'printf "#!/bin/sh\necho -- partial dump\n" > /usr/local/bin/pg_dump && chmod +x /usr/local/bin/pg_dump'
+          before=$(ls backups | wc -l)
+          if make backup; then
+            docker compose exec -T postgres rm -f /usr/local/bin/pg_dump
+            echo "::error::make backup accepted a dump with no completion marker"; exit 1
+          fi
+          docker compose exec -T postgres rm -f /usr/local/bin/pg_dump
+          after=$(ls backups | wc -l)
+          test "$before" = "$after" || { echo "::error::an incomplete make backup left a file behind"; exit 1; }
+          echo "incomplete dump correctly rejected by make backup"
+
       - name: Stop the stack
         if: always()
         run: docker compose down -v

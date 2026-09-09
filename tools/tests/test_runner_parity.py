@@ -122,6 +122,48 @@ def test_wrapper_avoids_powershell_7_only_syntax(pattern, what):
     )
 
 
+def test_wrapper_passes_no_double_quotes_to_native_commands():
+    """Windows PowerShell 5.1 hands a native command an argument's embedded
+    double quotes *unescaped*, so a `bash -c` string containing `"` reaches
+    bash mangled and dies with a syntax error (exit 2) -- while the same line
+    works on PowerShell 7. Found the day backup verification landed: the
+    `test "$(...)"` idiom passed every check on 7 and broke every backup on
+    the host that ships with Windows. The command strings stay quote-free;
+    `grep -c` output is one word and needs none.
+    """
+    script = WRAPPER.read_text(encoding="utf-8")
+    assert '`"' not in script, (
+        "pdb.ps1 embeds a double quote in a string that reaches a native command; "
+        "5.1 will not escape it"
+    )
+
+
+def test_backup_verifies_before_it_keeps_anything():
+    """A pipeline's exit status is its last command's, so a dead pg_dump still
+    fed gzip a valid archive of nothing. The wrapper must run the dump under
+    pipefail, prove the archive decompresses, look for pg_dump's completion
+    marker, and only then rename the .part file.
+    """
+    script = WRAPPER.read_text(encoding="utf-8")
+    assert "'bash', '-o', 'pipefail'" in script, "backup must run the dump under pipefail"
+    assert "gzip -t $tmp" in script, "backup must test-decompress the archive in the container"
+    assert "PostgreSQL database dump complete" in script, "backup must look for pg_dump's completion marker"
+    assert '"$outFile.part"' in script and "Move-Item -LiteralPath $partFile" in script, (
+        "backup must write to a .part name and rename only after verification"
+    )
+
+
+def test_restore_stops_on_the_first_error_and_rolls_back():
+    """psql's defaults skip a failed statement and exit 0, so a half-loaded
+    database used to print "restored". The first error must abort, the whole
+    load must roll back, and a corrupt archive must fail before psql sees it.
+    """
+    script = WRAPPER.read_text(encoding="utf-8")
+    assert "-v ON_ERROR_STOP=1" in script, "restore must stop psql on the first error"
+    assert "--single-transaction" in script, "restore must roll back a failed load"
+    assert re.search(r"'gzip',\s*'-t',\s*\$tmp", script), "restore must gzip -t the archive first"
+
+
 def test_backup_compresses_inside_the_container():
     """The one bug in this area that data loss depends on.
 
