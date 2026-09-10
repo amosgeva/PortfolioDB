@@ -205,8 +205,15 @@ class TestDashboardPayload:
             latest[r["symbol"]] = {"symbol": r["symbol"], "ts": r["ts"], "last_price": r["last_price"],
                                    "bid": None, "ask": None, "source": "test"}
         monkeypatch.setattr(queries, "latest_prices", lambda conn: list(latest.values()))
-        monkeypatch.setattr(payload, "_market_overview", lambda conn: ([], None))
-        monkeypatch.setattr(payload, "_news_feed", lambda conn, *a: ([], None))
+        # Stub the *stores* these two sections read, not the section functions:
+        # stubbing the functions hid a `return news` that had stopped matching
+        # the (rows, problem) contract and broke the live dashboard (1.7.0).
+        monkeypatch.setattr(payload.market_overview, "overview", lambda conn: [])
+        monkeypatch.setattr(payload.fd_store, "recent_news",
+                            lambda conn, universe, limit=24: [
+                                {"symbol": universe[0], "title": "t", "summary": "s",
+                                 "source": "src", "published_at": None, "url": "https://x.example/a"}
+                            ] if universe else [])
         monkeypatch.setattr(payload, "_logo_data_uris", lambda syms: {})
         _patch_ledger(monkeypatch, payload)
         return payload

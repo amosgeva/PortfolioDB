@@ -16,6 +16,15 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **1.7.0's dashboard failed to load with "too many values to unpack
+  (expected 2)".** The news feed's normal path still returned a bare list
+  after its contract changed to `(rows, problem)` in 1.7.0; the payload test
+  had stubbed the whole function and so never ran that line. The test now
+  stubs only the news store, so the section's real code runs. Anyone on 1.7.0
+  sees the error banner on every page; 1.7.1 is the fix.
+
 ## [1.7.0] — 2026-09-09
 
 The release that acts on the 2026-09-09 codebase audit: every High and Medium
