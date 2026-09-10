@@ -16,6 +16,23 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Historical MCP positions and the daily/EOD report state splits in the
+  right units.** `get_positions` with an `as_of` before a recorded split
+  applied the split anyway, so "the day before a 2:1" reported twenty shares
+  against the pre-split quote — twice the value that existed; a stale quote
+  observed before an ex-date the cutoff was past was joined to restated
+  shares the same way. The daily/EOD report restated its lots but compared
+  raw previous, day-start and current quotes, so a split between two quotes
+  printed a loss of the whole ratio (`Delta: $-1,000.00` on a pure 2:1 with
+  nothing else moving). Actions now apply only when dated on or before the
+  observation date (`ledger_inputs.prepare(as_of=…)`, shared by every
+  date-filtered reader), stale quotes are restated into the cutoff's units,
+  and the report's three comparison quotes go through the prepared ledger
+  with their own timestamps. Installs without a `corporate_actions` row see
+  no change.
+
 ## [1.7.1] — 2026-09-10
 
 A one-line fix for a 1.7.0 regression that broke every dashboard page. No

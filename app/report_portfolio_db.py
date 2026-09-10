@@ -165,8 +165,14 @@ def get_snapshot(conn, *, mode: str) -> Snapshot:
     return Snapshot(ts=ts, prices=prices)
 
 
-def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, float]:
-    """Previous snapshot per symbol (2nd newest at/before ts)."""
+def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, tuple[datetime, float]]:
+    """Previous snapshot per symbol (2nd newest at/before ts), with its own ts.
+
+    The timestamp travels with the price so main() can restate the quote into
+    today's split units before comparing it with the current one — without
+    that, a split between the two quotes read as a price move of the whole
+    ratio (re-audit F03, case B).
+    """
     rows = fetch_all(
         conn,
         """
@@ -176,13 +182,13 @@ def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, float]:
           FROM price_snapshots
           WHERE ts <= %s
         )
-        SELECT symbol, last_price
+        SELECT symbol, ts, last_price
         FROM ranked
         WHERE rn = 2;
         """,
         (ts,),
     )
-    return {r["symbol"]: float(r["last_price"]) for r in rows if r.get("last_price") is not None}
+    return {r["symbol"]: (r["ts"], float(r["last_price"])) for r in rows if r.get("last_price") is not None}
 
 
 def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int] = (16, 15)) -> tuple[datetime | None, dict[str, float]]:
@@ -248,12 +254,30 @@ def main():
             collect_fresh_prices()
             snap = get_snapshot(conn, mode=args.mode)
 
-        prev_map = get_prev_snapshot_map(conn, snap.ts)
-        day_start_ts, day_start_map = get_day_start_snapshot_map(conn, ts=snap.ts)
+        prev_raw = get_prev_snapshot_map(conn, snap.ts)
+        day_start_ts, day_start_raw = get_day_start_snapshot_map(conn, ts=snap.ts)
 
         # Restated through the prepared ledger, like every other reader, so a
-        # recorded split shows up here as a share count and not as a loss.
-        lot_rows = ledger_inputs.load(conn).lots
+        # recorded split shows up here as a share count and not as a loss —
+        # and the comparison quotes are restated with the same actions, so a
+        # split between the previous quote and the current one is not a
+        # delta of the whole ratio (re-audit F03, case B). Each quote keeps
+        # its own timestamp for that; the ledger decides which actions apply.
+        ledger = ledger_inputs.load(conn)
+        lot_rows = ledger.lots
+        snap = Snapshot(ts=snap.ts, prices={
+            r["symbol"]: r for r in ledger.price_rows(list(snap.prices.values()))
+        })
+        prev_map = {
+            sym: price for _ts, sym, price in ledger.price_points(
+                [(ts, sym, price) for sym, (ts, price) in prev_raw.items()]
+            )
+        }
+        day_start_map = {
+            sym: price for _ts, sym, price in ledger.price_points(
+                [(day_start_ts, sym, price) for sym, price in day_start_raw.items()]
+            )
+        } if day_start_ts is not None else {}
 
         fifo_all = _compute_fifo_merged(lot_rows)
         avg_all = _compute_avg_cost_merged(lot_rows)

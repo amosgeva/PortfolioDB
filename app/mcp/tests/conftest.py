@@ -186,6 +186,12 @@ def fake_db(monkeypatch):
         reports_resource, meta_tools,
     ):
         monkeypatch.setattr(mod, "get_conn", fake_get_conn)
+    # No corporate actions unless a test says otherwise. Every reader now asks
+    # for them on the connection it holds, and with a cycling fake response the
+    # actions query would be answered with whatever rows the test queued for
+    # lots. Tests about split handling patch this themselves.
+    import corporate_actions
+    monkeypatch.setattr(corporate_actions, "fetch_actions", lambda conn: [])
     # ping_db inside health.py uses deps.ping_db -> deps.get_conn, but
     # ping_db is also imported by name; patch that direct reference too.
     monkeypatch.setattr(

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -65,11 +65,16 @@ def _fetch_lots(
         cols = [d[0] for d in cur.description]
     lot_rows = [dict(zip(cols, r)) for r in rows]
 
-    # Restate into post-split units before the engines see them, through the
-    # same preparation step every other surface uses (app/ledger_inputs.py).
+    # Restate into the units of the observation date, through the same
+    # preparation step every other surface uses (app/ledger_inputs.py). With
+    # `as_of` only actions on or before that date apply: this used to apply
+    # every recorded split to a historical cutoff, so "the day before a 2:1"
+    # reported twenty shares against a pre-split quote (re-audit F03, case A).
     # Quantity and price move inversely, so cost basis and realized P&L are
     # unchanged — only share count and per-share cost are corrected.
-    return ledger_inputs.prepare(lot_rows, corporate_actions.fetch_actions(conn)).lots
+    return ledger_inputs.prepare(
+        lot_rows, corporate_actions.fetch_actions(conn), as_of=as_of
+    ).lots
 
 
 def _engine(method: str):
@@ -147,6 +152,12 @@ def positions_dataframe(
     effective_as_of = as_of if as_of is not None else (cutoff.trade_date if cutoff else None)
     with get_conn() as conn:
         lot_rows = _fetch_lots(conn, account=account, as_of=effective_as_of)
+        # The actions that had happened by the observation date — the same set
+        # _fetch_lots restated the lots with — so the quotes below can be put in
+        # the same units.
+        actions = ledger_inputs.prepare(
+            [], corporate_actions.fetch_actions(conn), as_of=effective_as_of
+        ).actions
     merged = engine(lot_rows)
 
     # Bring the cutoff's price into the frame so callers can compute market
@@ -154,6 +165,19 @@ def positions_dataframe(
     latest = prices_service.latest_price_map_with_ts(
         as_of_ts=cutoff.ts if cutoff else None
     )
+    # A quote is in the units of the moment it was observed. The latest quote
+    # at or before the cutoff is normally after every applicable action and
+    # needs nothing; a *stale* one — last observed before an ex-date that the
+    # cutoff is past — is in the old units and would be joined to restated
+    # shares. Restate it with the actions that lie between it and the cutoff.
+    if actions:
+        stamped = [
+            (v["ts"], sym, float(v["last_price"]))
+            for sym, v in latest.items()
+            if v.get("last_price") is not None and isinstance(v.get("ts"), datetime)
+        ]
+        for _ts, sym, price in corporate_actions.adjust_price_points(stamped, actions):
+            latest[sym] = {**latest[sym], "last_price": price}
     merged["last_price"] = merged["symbol"].map(
         lambda s: latest.get(s, {}).get("last_price")
     )
