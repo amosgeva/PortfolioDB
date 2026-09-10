@@ -391,6 +391,32 @@ class TestExecutiveReport:
         assert seen["eod"][D1]["AAA"] == pytest.approx(50.0)
         assert seen["eod"][D1]["BBB"] == pytest.approx(40.0)
 
+    def test_a_latest_quote_that_predates_the_split_is_restated(self, monkeypatch):
+        """AAA's newest snapshot is the D2 pre-split $100; BBB's is a
+        pre-reverse-split $10 (1.7.2 re-audit, F03 case B). The lots are in
+        post-action units, so the quotes must be too: AAA is worth 20 × $50,
+        not 20 × $100, and its unrealized P&L is zero."""
+        import exec_report
+
+        _patch_ledger(monkeypatch, exec_report)
+        monkeypatch.setattr(exec_report, "_fetch_latest_prices",
+                            lambda conn: {"AAA": {"last_price": 100.0, "ts": _ts(D2)}, "BBB": {"last_price": 10.0, "ts": _ts(D2)}})
+        monkeypatch.setattr(exec_report, "_fetch_cash", lambda conn: {})
+        monkeypatch.setattr(exec_report, "_fetch_eod_by_day", lambda conn: {D1: {"AAA": 100.0, "BBB": 10.0}})
+        monkeypatch.setattr(exec_report, "_fetch_latest_brief", lambda conn: None)
+        monkeypatch.setattr(exec_report, "_fetch_fd_metrics", lambda conn: {})
+        monkeypatch.setattr(exec_report, "_fetch_earnings_window", lambda conn, syms, **kw: ([], []))
+        data = exec_report.gather(object())
+        pos = data.positions.set_index("symbol")
+        assert pos.loc["AAA", "last_price"] == pytest.approx(50.0)
+        assert pos.loc["AAA", "market_value"] == pytest.approx(EXPECTED_AAA_QTY * 50.0)
+        assert pos.loc["AAA", "unrealized_pnl"] == pytest.approx(0.0)
+        assert pos.loc["BBB", "last_price"] == pytest.approx(40.0)
+        assert pos.loc["BBB", "market_value"] == pytest.approx(EXPECTED_BBB_QTY * 40.0)
+        # The quote's own timestamp is what the report dates itself by; restating
+        # the price must not touch it.
+        assert data.as_of.date() == D2
+
 
 class TestPositionsCli:
     def test_print_positions_reports_post_split_units(self, monkeypatch, caplog):
@@ -568,3 +594,19 @@ def test_no_reader_queries_lots_behind_the_loaders_back():
         if re.search(r"FROM\s+lots\b", text) and rel not in allowed:
             offenders.append(rel)
     assert offenders == [], f"these read lots without the prepared ledger: {offenders}"
+
+
+def test_report_quotes_are_not_consumed_raw():
+    """The two report price readers that the 1.7.2 re-audit found joined raw
+    to restated lots (F03 cases A and B). Their results must go through the
+    prepared ledger at every call site."""
+    import re
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1]
+    weekly = (app_dir / "report_weekly_db.py").read_text(encoding="utf-8")
+    calls = re.findall(r"price_map\(conn, \w+(?:, (\w+))?\)", weekly)
+    assert calls and all(arg == "ledger" for arg in calls), f"price_map called without the ledger: {calls}"
+    execr = (app_dir / "exec_report.py").read_text(encoding="utf-8")
+    uses = re.findall(r"^(?!def ).*_fetch_latest_prices\(conn\).*$", execr, re.M)
+    assert uses and all("_restate_latest(" in u for u in uses), f"latest quotes consumed raw: {uses}"

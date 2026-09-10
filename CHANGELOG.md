@@ -16,6 +16,21 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The weekly and executive reports state splits in one unit basis.** The
+  weekly report valued its start and end positions in each date's units but
+  multiplied them by raw snapshot quotes, and fed raw trade rows into its
+  contribution arithmetic, so a pure 2:1 split inside the week printed the
+  holding as a 50% loser with a `qty Δ +10`. The executive report restated
+  its lots and its EOD series but joined the raw latest quotes, so a symbol
+  whose newest snapshot predated a recorded split was worth twice its value
+  with the whole excess as unrealized profit. Both reports now prepare one
+  ledger and pass every quote and every week trade through it; the weekly
+  report lists the week's corporate actions in their own block, and the
+  trades block still shows what was entered. A pure split contributes $0
+  and changes neither value nor P&L (1.7.2 re-audit, F03 remaining cases).
+
 ## [1.7.2] — 2026-09-10
 
 The second pass over the 1.7.x audit: six findings the re-audit of 1.7.1
