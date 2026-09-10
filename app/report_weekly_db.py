@@ -5,6 +5,8 @@ Purpose: provide the numeric source of truth for the Saturday weekly deep dive.
 - No hardcoded dates.
 - No legacy SQLite fallback.
 - Handles trades during the week by valuing start/end holdings as-of each snapshot date.
+- States every quantity and price of the week in one unit basis (the end
+  snapshot's), so a split inside the week is a share count, not a move.
 
 Usage:
   python C:\\Install\\PortfolioDB\\app\\report_weekly_db.py
@@ -82,9 +84,21 @@ def latest_snapshot(conn):
     return rows[0]["ts"] if rows and rows[0]["ts"] else None
 
 
-def price_map(conn, ts: datetime) -> dict[str, Decimal]:
+def price_map(conn, ts: datetime, ledger: ledger_inputs.PreparedLedger | None = None) -> dict[str, Decimal]:
+    """Quotes stamped at one snapshot, restated into ``ledger``'s units.
+
+    The positions these are multiplied by come out of the prepared ledger in
+    the end-of-week units, so a quote observed before a split that the ledger
+    has applied must be restated too — otherwise the start-of-week quote is
+    twice the end-of-week one for the same holding and the report prints a
+    pure split as a 50% loss (1.7.2 re-audit, F03 case A). Without a ledger the
+    raw quotes are returned.
+    """
     rows = fetch_all(conn, "SELECT symbol, last_price FROM price_snapshots WHERE ts=%s", (ts,))
-    return {r["symbol"]: D(r["last_price"]) for r in rows if r.get("last_price") is not None}
+    points = [(ts, r["symbol"], float(r["last_price"])) for r in rows if r.get("last_price") is not None]
+    if ledger is not None:
+        points = ledger.price_points(points)
+    return {sym: D(px) for _, sym, px in points}
 
 
 def cash_as_of(conn, ts: datetime) -> dict[str, Decimal]:
@@ -111,9 +125,20 @@ def positions_as_of(conn, asof_date) -> dict[tuple[str, str], Decimal]:
     prices they are multiplied by are quoted in: a raw pre-split share count
     against a post-split quote halved (or quartered) the position's value.
     """
-    lots = ledger_inputs.load(conn, as_of=asof_date).lots
+    return positions_from(ledger_inputs.load(conn, as_of=asof_date).lots, asof_date)
+
+
+def positions_from(lots, asof_date) -> dict[tuple[str, str], Decimal]:
+    """positions_as_of for lots already prepared — the caller picks the units.
+
+    main() prepares one ledger for the whole week and derives both the start
+    and the end positions from it, so the two share counts it subtracts and
+    the quotes it multiplies them by are all in the same units.
+    """
     out: dict[tuple[str | None, str], Decimal] = defaultdict(Decimal)
     for lot in lots:
+        if lot["trade_date"] > asof_date:
+            continue
         qty = D(lot["quantity"])
         out[(lot["account"], lot["symbol"])] += qty if lot["side"] == "BUY" else -qty
     # The account may be NULL (the schema allows it, the CLIs allow omitting
@@ -196,10 +221,16 @@ def main():
         start_date = start_ts.astimezone(IL_TZ).date()
         end_date = end_ts.astimezone(IL_TZ).date()
 
-        start_prices = price_map(conn, start_ts)
-        end_prices = price_map(conn, end_ts)
-        start_pos = positions_as_of(conn, start_date)
-        end_pos = positions_as_of(conn, end_date)
+        # One prepared ledger for the week, in the end snapshot's units. Both
+        # position snapshots, both quote maps and the week's trades are read
+        # through it, so a split inside the week changes no value and
+        # contributes nothing — it used to enter as a raw pre-split share
+        # count against a post-split quote (F03 case A).
+        ledger = ledger_inputs.load(conn, as_of=end_date)
+        start_prices = price_map(conn, start_ts, ledger)
+        end_prices = price_map(conn, end_ts, ledger)
+        start_pos = positions_from(ledger.lots, start_date)
+        end_pos = positions_from(ledger.lots, end_date)
         start_sym_val, start_acct_val, start_missing = value_positions(start_pos, start_prices)
         end_sym_val, end_acct_val, end_missing = value_positions(end_pos, end_prices)
         start_qty = qty_by_symbol(start_pos)
@@ -224,14 +255,22 @@ def main():
             pnl_pct = (pnl / c * Decimal("100")) if c else Decimal("0")
             current_rows.append((sym, val, c, pnl, pnl_pct))
 
+        # What was entered, for the listing; the P&L arithmetic below uses the
+        # prepared rows of the same trades, in the week's units.
         trades = trades_between(conn, week_start_date, end_date)
+        week_lots = [lot for lot in ledger.lots if week_start_date <= lot["trade_date"] <= end_date]
+        in_week = set(start_qty) | set(end_qty) | {lot["symbol"] for lot in week_lots}
+        week_actions = [
+            a for a in ledger.actions
+            if a.symbol in in_week and start_date < a.ex_date <= end_date and a.ratio != 1
+        ]
 
         # Contribution should measure market P&L, not capital added/removed by trades.
         # For existing shares: start_qty * (end_price - start_price).
         # For buys during the week: current value minus trade cost/fees.
         # This avoids making a new buy look like a huge "winner" just because capital moved from cash to securities.
         trade_pnl_by_symbol = defaultdict(Decimal)
-        for t in trades:
+        for t in week_lots:
             sym = t["symbol"]
             end_px = end_prices.get(sym)
             if end_px is None:
@@ -294,6 +333,11 @@ def main():
         for sym, val, c, pnl, pnl_pct in current_rows:
             print(f"{sym}: value {money(val)} | cost {money(c)} | P&L {money(pnl)} ({pct(pnl_pct)})")
         print()
+        if week_actions:
+            print("🔀 CORPORATE ACTIONS THIS WEEK (every figure above is in post-action units)")
+            for a in week_actions:
+                print(f"{a.symbol}: {a.kind} ×{a.ratio.normalize():f} on {a.ex_date}")
+            print()
         print("🧾 TRADES THIS WEEK")
         if trades:
             for t in trades:

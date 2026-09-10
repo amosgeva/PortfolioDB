@@ -73,6 +73,20 @@ def _fetch_latest_prices(conn) -> dict[str, dict]:
     }
 
 
+def _restate_latest(ledger: ledger_inputs.PreparedLedger, latest: dict[str, dict]) -> dict[str, dict]:
+    """Latest quotes in the ledger's units.
+
+    The lots come restated, so a quote must be too: a symbol whose newest
+    snapshot predates a recorded split was valued at the pre-split price
+    against post-split shares — twice its worth (1.7.2 re-audit, F03 case B).
+    Each entry carries its own timestamp, which is what decides.
+    """
+    rows = ledger.price_rows(
+        [{"symbol": s, "ts": v.get("ts"), "last_price": v.get("last_price")} for s, v in latest.items()]
+    )
+    return {r["symbol"]: {"ts": r["ts"], "last_price": r["last_price"]} for r in rows}
+
+
 def _fetch_eod_by_day(conn) -> dict[date, dict[str, float]]:
     rows = fetch_all(
         conn,
@@ -327,7 +341,7 @@ def gather(conn) -> ReportData:
     ledger = ledger_inputs.load(conn)
     lot_rows = ledger.lots
     fifo_pos = compute_fifo_merged(lot_rows)
-    latest = _fetch_latest_prices(conn)
+    latest = _restate_latest(ledger, _fetch_latest_prices(conn))
     cash_by_account = _fetch_cash(conn)
     eod_by_day = ledger.price_by_day(_fetch_eod_by_day(conn))
 
