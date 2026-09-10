@@ -135,6 +135,18 @@ class TestPrepare:
         assert {lot["id"]: lot["quantity"] for lot in on_ex.lots}[1] == Decimal("20")
         assert ledger_inputs.prepare(LOTS, ACTIONS).actions == tuple(ACTIONS)
 
+    def test_load_units_current_applies_later_actions_to_an_earlier_selection(self, monkeypatch):
+        """Select the lots held on D2, state them in today's units: the D3
+        split applies. What a per-share figure quoted in today's units needs."""
+        monkeypatch.setattr(ledger_inputs, "fetch_all", lambda conn, q, p: [dict(r) for r in LOTS if r["trade_date"] <= D2])
+        monkeypatch.setattr(corporate_actions, "fetch_actions", lambda conn: list(ACTIONS))
+        current = ledger_inputs.load(object(), as_of=D2, units="current")
+        assert {lot["id"]: lot["quantity"] for lot in current.lots}[1] == Decimal("20")
+        as_of = ledger_inputs.load(object(), as_of=D2)
+        assert {lot["id"]: lot["quantity"] for lot in as_of.lots}[1] == Decimal("10")
+        with pytest.raises(ValueError, match="units"):
+            ledger_inputs.load(object(), units="tomorrow")
+
     def test_load_filters_actions_after_as_of(self, monkeypatch):
         """As of D2 the splits have not happened: the position is ten shares."""
         monkeypatch.setattr(ledger_inputs, "fetch_all", lambda conn, q, p: [dict(r) for r in LOTS if r["trade_date"] <= D2])
@@ -187,8 +199,25 @@ class TestFetchActionsFailureModes:
 # ── the surfaces ──────────────────────────────────────────────────
 
 
-def _patch_ledger(monkeypatch, module):
-    monkeypatch.setattr(module.ledger_inputs, "load", lambda conn, **kw: ledger_inputs.prepare(LOTS, ACTIONS))
+def _fake_load(lots=None, actions=None):
+    """A stand-in for ledger_inputs.load that honours its keyword filters —
+    symbol, account, as_of and units — over the fixture, so a caller's choice
+    of observation date and unit basis is exercised rather than ignored."""
+    lots = LOTS if lots is None else lots
+    actions = ACTIONS if actions is None else actions
+
+    def load(conn, *, symbol=None, account=None, as_of=None, units="as_of"):
+        rows = [r for r in lots
+                if (symbol is None or r["symbol"] == symbol.upper())
+                and (account is None or r["account"] == account)
+                and (as_of is None or r["trade_date"] <= as_of)]
+        return ledger_inputs.prepare(rows, actions, as_of=None if units == "current" else as_of)
+
+    return load
+
+
+def _patch_ledger(monkeypatch, module, lots=None, actions=None):
+    monkeypatch.setattr(module.ledger_inputs, "load", _fake_load(lots, actions))
 
 
 EXPECTED_AAA_QTY = 20.0 + 4.0 - 4.0     # two accounts restated, four sold post-split
@@ -424,6 +453,53 @@ class TestIncomeBackfill:
         assert all(r["pay_date"] == r["ex_date"] for r in inserted_rows)
         # Re-running inserts nothing and says so.
         assert add_income._backfill(object(), "AAA", since=None) == (0, 2)
+
+    def test_a_dividend_before_a_later_split_is_counted_in_todays_units(self, monkeypatch):
+        """Re-audit F10. Twelve shares held on D2; the 2:1 is ex D3. yfinance
+        reports the D2 dividend of $1 as $0.50 in today's units. The cash was
+        $12; counting twelve shares × $0.50 recorded $6. Twenty-four restated
+        shares × $0.50 is $12."""
+        import add_income
+
+        _patch_ledger(monkeypatch, add_income)
+        assert add_income._shares_held_on(object(), "AAA", D2) == {None: pytest.approx(24.0)}
+        per_acct = add_income._shares_held_on(object(), "AAA", D2, per_account=True)
+        assert per_acct == {"IBKR": pytest.approx(20.0), "SCHW": pytest.approx(4.0)}
+
+    def test_replace_estimates_deletes_the_symbols_yfinance_rows_first(self, monkeypatch, capsys):
+        import types
+        import add_income
+
+        _patch_ledger(monkeypatch, add_income)
+        dividends = {_Pandasish(D2): 0.5}
+        fake_yf = types.SimpleNamespace(Ticker=lambda sym: types.SimpleNamespace(dividends=dividends))
+        monkeypatch.setitem(sys.modules, "yfinance", fake_yf)
+        calls: list[tuple[str, tuple]] = []
+
+        def fake_run(conn, sql_text, params):
+            calls.append((" ".join(sql_text.split()), tuple(params)))
+            return 3 if sql_text.lstrip().startswith("DELETE") else 1
+
+        monkeypatch.setattr(add_income, "run", fake_run)
+        inserted, dupes = add_income._backfill(object(), "AAA", since=None, replace_estimates=True)
+        assert (inserted, dupes) == (1, 0)
+        assert calls[0][0].startswith("DELETE FROM income WHERE symbol = %s AND source = 'yfinance'")
+        assert calls[0][1] == ("AAA",)
+        assert calls[1][0].startswith("INSERT INTO income")
+        assert calls[1][1][5] == pytest.approx(12.0)          # amount: 24 shares × $0.50
+        assert "replaced 3 earlier estimate(s)" in capsys.readouterr().out
+
+    def test_without_replace_estimates_nothing_is_deleted(self, monkeypatch):
+        import types
+        import add_income
+
+        _patch_ledger(monkeypatch, add_income)
+        monkeypatch.setitem(sys.modules, "yfinance",
+                            types.SimpleNamespace(Ticker=lambda sym: types.SimpleNamespace(dividends={_Pandasish(D2): 0.5})))
+        calls = []
+        monkeypatch.setattr(add_income, "run", lambda conn, q, p: (calls.append(q.split()[0]), 1)[1])
+        add_income._backfill(object(), "AAA", since=None)
+        assert "DELETE" not in calls
 
 
 class _Pandasish:
