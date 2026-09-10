@@ -16,6 +16,16 @@ from your lots; merged across accounts, account left NULL):
 
 Both insert with ON CONFLICT DO NOTHING (dedupe on symbol, account, kind,
 pay_date, amount), so re-running is safe.
+
+Correcting earlier estimates:
+  python add_income.py --backfill --symbol NVDA --replace-estimates [--since ...]
+
+--replace-estimates deletes the symbol's earlier backfilled rows and rebuilds
+them, and the two halves share one scope: with --since, only estimates dated
+on or after it are deleted, and only those dates are rebuilt; without it, all
+of them. Nothing is deleted unless there is something to rebuild, and the
+command is one transaction, so a failed insert restores the deleted rows.
+Manual rows are never touched.
 """
 
 from __future__ import annotations
@@ -84,18 +94,31 @@ def _insert_income(conn, **f) -> int:
     )
 
 
-def _replace_estimates(conn, symbol: str) -> int:
+def _replace_estimates(conn, symbol: str, since=None) -> int:
     """Delete the symbol's earlier backfilled estimates; returns how many.
 
     Only rows the backfill itself wrote (``source = 'yfinance'``). Manual
     entries are never touched. Needed because the dedupe key includes the
     amount: a corrected estimate would otherwise be inserted *beside* the old
     one rather than replace it.
+
+    ``since`` bounds the deletion to the same range the backfill rebuilds. The
+    1.7.2 version deleted every estimate for the symbol and then let the
+    insert loop skip the dates before ``--since``, so a bounded rerun removed
+    older history and did not put it back (1.7.2 re-audit, N04). Backfilled
+    rows carry ``ex_date`` = ``pay_date``; the bound reads whichever is set.
     """
+    if since is None:
+        return run(
+            conn,
+            "DELETE FROM income WHERE symbol = %s AND source = 'yfinance'",
+            (symbol,),
+        )
     return run(
         conn,
-        "DELETE FROM income WHERE symbol = %s AND source = 'yfinance'",
-        (symbol,),
+        "DELETE FROM income WHERE symbol = %s AND source = 'yfinance' "
+        "AND COALESCE(ex_date, pay_date) >= %s",
+        (symbol, since),
     )
 
 
@@ -111,6 +134,9 @@ def _backfill(
     every row backfilled before 1.7.0 has, so reruns keep deduplicating.
     ``replace_estimates`` deletes the symbol's earlier yfinance rows first —
     the way to correct amounts written by a version that counted them wrong.
+    The deletion and the rebuild share one scope (``since``), the deletion
+    happens only once the vendor series shows there is something to rebuild,
+    and the caller's transaction makes the two halves atomic.
     """
     import yfinance as yf
 
@@ -122,15 +148,19 @@ def _backfill(
         print(f"No dividend history for {symbol}")
         return 0, 0
 
+    to_rebuild = [(ts.date(), per_share) for ts, per_share in divs.items()
+                  if since is None or ts.date() >= since]
+    if not to_rebuild:
+        print(f"No dividends for {symbol} on or after {since}; nothing rebuilt and no estimate removed")
+        return 0, 0
+
     if replace_estimates:
-        removed = _replace_estimates(conn, symbol)
-        print(f"replaced {removed} earlier estimate(s) for {symbol}")
+        removed = _replace_estimates(conn, symbol, since)
+        scope = f"dated on or after {since}" if since else "for all dates"
+        print(f"replaced {removed} earlier estimate(s) for {symbol} {scope}")
 
     inserted = duplicates = 0
-    for ts, per_share in divs.items():
-        ex_d = ts.date()
-        if since and ex_d < since:
-            continue
+    for ex_d, per_share in to_rebuild:
         for account, shares in _shares_held_on(conn, symbol, ex_d, per_account=per_account).items():
             if shares <= 0:
                 continue
@@ -161,7 +191,9 @@ def main():
     ap.add_argument("--replace-estimates", action="store_true",
                     help="Delete this symbol's earlier backfilled (source=yfinance) rows before "
                          "inserting, so corrected amounts replace old estimates instead of "
-                         "landing beside them. Manual rows are never touched.")
+                         "landing beside them. With --since, only estimates dated on or after "
+                         "it are deleted — the same dates that are rebuilt. Manual rows are "
+                         "never touched.")
     ap.add_argument("--account", default=None)
     ap.add_argument("--kind", choices=KINDS, default="DIVIDEND")
     ap.add_argument("--ex-date", default=None, help="YYYY-MM-DD")
