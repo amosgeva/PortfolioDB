@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Environment & credentials
 
 - Postgres runs in Docker (`docker-compose.yml`): host `127.0.0.1`, port `54320`, db `portfoliodb`, user `portfoliouser`.
-- All Python entry points require `PORTFOLIODB_PASSWORD` in the environment. `app/db.py::load_config` raises if it is missing. Other `PORTFOLIODB_*` env vars override the docker-compose defaults.
+- All Python entry points require `PORTFOLIODB_PASSWORD` in the environment. `app/db.py::load_config` raises if it is missing. Other `PORTFOLIODB_*` env vars override the docker-compose defaults. **Exception:** a process that brings its own role reads only where the database is, through `db.load_target()` (host, port, dbname; no credentials) — the MCP server does this on its read-only role, which is why the `mcp` compose service is not given the write password.
 - `.env` at the repo root holds real secrets and is read by compose and by `app/db.py` alike. Runtime *settings* (display name, timezone, collector window, LLM provider) live in the `settings` table and are edited on the dashboard's Manage → Settings page; `.env` only bootstraps them and holds the secrets.
 - The MCP server runs read-only: its pool forces `default_transaction_read_only=on`, and it uses the SELECT-only `portfoliodb_ro` role when `PORTFOLIODB_MCP_RO_USER`/`_PASSWORD` are set in `.env` (create the role with `sql/create_ro_role.sql`).
 - The database lives in the `pgdata` **named volume** by default. A host directory (`./data`) is opt-in through `docker-compose.override.yml` — which is what the operator's own box does. Wherever it lives, Postgres owns it: never edit, move, or delete files inside it.
@@ -153,4 +153,4 @@ Readers get their lots from `ledger_inputs.load(conn)`. It reads them in FIFO pr
 
 - Monetary math uses `Decimal` end-to-end inside the engines; conversion to `float` happens only when writing to a DataFrame for display.
 - Symbols are stored and compared uppercase; CLIs uppercase user input before querying.
-- Throwaway/incident scripts live under `archive/`; none hardcode the DB password (verified 2026-07-18). Keep it that way — always use `db.load_config` for credentials in new code.
+- Throwaway/incident scripts live under `archive/`; none hardcode the DB password (verified 2026-07-18). Keep it that way — always use `db.load_config` for credentials in new code, or `db.load_target()` plus the process's own role when it must not hold the application's login (as the MCP pool does).

@@ -18,6 +18,16 @@ needs a schema step says so under **Upgrading**.
 
 ### Fixed
 
+- **`add_income.py --backfill --replace-estimates --since …` no longer
+  deletes estimates before the cutoff.** The deletion covered every
+  backfilled row for the symbol while the rebuild honoured `--since`, so a
+  bounded correction removed the older estimates and did not put them back.
+  The two halves now share one scope: with `--since`, only estimates dated on
+  or after it are deleted; nothing is deleted when the vendor series has
+  nothing to rebuild in that range; and the command was already one
+  transaction, so a failed insert restores the deleted rows. Manual rows are
+  never touched (1.7.2 re-audit, N04).
+
 - **The weekly report completes with unnamed accounts present.** 1.7.2 fixed
   the account sort inside the positions helper, but the account-totals loop
   in the report itself sorted the same union of accounts (plus the cash
@@ -56,7 +66,9 @@ one container built not to have it. No schema change and no migration.
   split *after* one of its dividends, the estimates for the earlier dividends
   are undercounted. Rerun with `--backfill --replace-estimates` for that
   symbol; it deletes the `source='yfinance'` rows first and says how many it
-  replaced. Manual income rows are never touched.
+  replaced. Manual income rows are never touched. *On 1.7.2 itself, run it
+  without `--since`: combined with `--since` it also deleted the estimates
+  before the cutoff without rebuilding them (fixed in the next release).*
 - Compose deployments that run the MCP server on
   `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` must now add `PORTFOLIODB_PASSWORD`
   to the `mcp` service in `docker-compose.override.yml`
