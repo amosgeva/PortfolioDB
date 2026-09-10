@@ -16,6 +16,25 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.3] — 2026-09-10
+
+The third pass over the audit: the three findings the re-audit of 1.7.2 left
+open. Two are the remaining branches of cases 1.7.2 fixed at the reported
+sites only — the weekly and executive reports still mixed split units in
+other calculations, and the weekly report still crashed on an unnamed account
+one section after the fixed helper — and one is a scope bug in the
+`--replace-estimates` flag 1.7.2 added. The tests for the reports now run the
+whole command rather than its helpers. No schema change and no migration.
+
+**Upgrading**
+
+- If you ran `add_income.py --backfill --replace-estimates --since …` on
+  1.7.2, the estimates dated before the cutoff were deleted and not rebuilt.
+  Rerun the same command **without** `--since` once on 1.7.3 to restore them;
+  manual rows are never touched.
+- Nothing else. The 1.7.2 **Upgrading** steps still apply if you have not
+  done them.
+
 ### Fixed
 
 - **`add_income.py --backfill --replace-estimates --since …` no longer
@@ -1418,7 +1437,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.3
 [1.7.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.2
 [1.7.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.1
 [1.7.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.0
