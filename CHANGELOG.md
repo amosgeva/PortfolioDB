@@ -16,6 +16,24 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Weekly contributor P&L no longer double-counts sales or baseline-day
+  trades.** The contribution gave every opening share its full start-to-end
+  move and then added `quantity × (sale − start)` for the shares sold during
+  the week, so a sale earned the same move twice: selling 5 of 10 at $110
+  with quotes $100 → $120 printed $250 for a $150 gain, and a full
+  liquidation or a round trip were off by the same amount. A trade dated on
+  the start snapshot's day was also counted as both part of the opening
+  position and a new trade. The sale term now compares against the closing
+  quote, contributions count only trades dated after the baseline day (the
+  trades listing still shows the calendar week and says so), and with cash
+  mirroring the trades the symbol contributions sum to the change in
+  securities plus cash. The report's week boundaries are now taken from
+  snapshots that quote a held symbol, so a futures-only market-overview run
+  can no longer become the start or end of the week and value every holding
+  as missing (1.7.3 re-audit, N05; boundary defect found in round 3).
+
 ## [1.7.3] — 2026-09-10
 
 The third pass over the audit: the three findings the re-audit of 1.7.2 left

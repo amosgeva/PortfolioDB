@@ -75,20 +75,31 @@ class _Conn:
         return False
 
 
-def _run(monkeypatch, capsys, lots, cash=()):
-    """Run main() over ``lots`` (raw rows) and ``cash`` ({account, cash, ts} rows)."""
+def _run(monkeypatch, capsys, lots, cash=(), prices=None):
+    """Run main() over ``lots`` (raw rows), ``cash`` ({account, cash, ts} rows)
+    and ``prices`` ({ts: {symbol: raw quote}}, default PRICES). The snapshot
+    boundary queries honour their `symbol = ANY(%s)` filter like Postgres."""
+    prices = prices or PRICES
+
     def fake_load(conn, *, symbol=None, account=None, as_of=None, units="as_of"):
         rows = [r for r in lots if as_of is None or r["trade_date"] <= as_of]
         return ledger_inputs.prepare(rows, ACTIONS, as_of=None if units == "current" else as_of)
 
+    def _boundary(sql_one, params):
+        syms = None
+        if "symbol = ANY(%s)" in sql_one:
+            syms = set(params[-1])
+        cands = [ts for ts, quotes in prices.items() if syms is None or set(quotes) & syms]
+        if "ts >= %s" in sql_one:
+            cands = [ts for ts in cands if ts >= params[0]]
+        return [{"ts": (min if "MIN(ts)" in sql_one else max)(cands) if cands else None}]
+
     def fake_fetch_all(conn, sql, params=None):
         sql_one = " ".join(sql.split())
-        if "MIN(ts)" in sql_one:
-            return [{"ts": START_TS}]
-        if "MAX(ts)" in sql_one:
-            return [{"ts": END_TS}]
+        if "MIN(ts)" in sql_one or "MAX(ts)" in sql_one:
+            return _boundary(sql_one, params)
         if "FROM price_snapshots WHERE ts=%s" in sql_one:
-            return [{"symbol": s, "last_price": p} for s, p in PRICES[params[0]].items()]
+            return [{"symbol": s, "last_price": p} for s, p in prices[params[0]].items()]
         if "FROM cash_snapshots" in sql_one:
             latest: dict = {}
             for r in sorted(cash, key=lambda r: r["ts"]):
@@ -183,3 +194,133 @@ def test_price_map_restates_through_the_ledger(monkeypatch, ts, expected):
     assert weekly.price_map(object(), ts, ledger) == {"AAA": expected}
     # Without a ledger the raw quote comes back, as before.
     assert weekly.price_map(object(), ts) == {"AAA": PRICES[ts]["AAA"]}
+
+
+# ── contribution arithmetic (1.7.3 re-audit, N05) ─────────────────────────────
+#
+# One symbol, DDD, no corporate action, a real 20% move: the flat-price split
+# fixtures above cannot tell a right sale reference price from a wrong one.
+
+import re  # noqa: E402
+
+MOVE = {START_TS: {"DDD": Decimal("100")}, END_TS: {"DDD": Decimal("120")}}
+_MONEY = r"\$(-?[\d,]+\.\d\d)"
+
+
+def _money(s: str) -> Decimal:
+    return Decimal(s.replace(",", ""))
+
+
+def _weekly_change(out: str) -> Decimal:
+    return _money(re.search(r"Weekly change:\s+" + _MONEY, out).group(1))
+
+
+def _contributions(out: str) -> dict[str, Decimal]:
+    return {m.group(1): _money(m.group(2))
+            for ln in _section(out, "TOP CONTRIBUTORS")
+            for m in [re.match(r"^(\w+): " + _MONEY, ln)] if m}
+
+
+def _cash(*points):
+    """Cash rows for one account, ``(ts, amount)`` points."""
+    return [{"account": "IBKR", "cash": Decimal(a), "ts": ts} for ts, a in points]
+
+
+TUE_TS, THU_TS = (datetime.combine(d, time(18, 0)).replace(tzinfo=weekly.IL_TZ) for d in (TUE, THU))
+
+
+class TestContributionIdentity:
+    """Σ contributions == Δ(securities + cash) whenever cash mirrors the trades."""
+
+    def _check(self, monkeypatch, capsys, lots, cash, prices=MOVE):
+        out = _run(monkeypatch, capsys, lots, cash=cash, prices=prices)
+        contribs = _contributions(out)
+        assert sum(contribs.values(), Decimal("0")) == _weekly_change(out), out
+        return out, contribs
+
+    def test_partial_sale_counts_the_sold_shares_move_once(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE), _lot(2, "DDD", "SELL", "5", "110", TUE)]
+        out, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "550")))
+        assert c["DDD"] == Decimal("150")                      # 5 × 20 kept + 5 × 10 sold; not 250
+        assert _line(out, "DDD:").startswith("DDD: $150.00 (+15.00%) | $1,000.00 → $600.00 | trade P&L $-50.00 | qty Δ -5.0000")
+
+    def test_full_liquidation(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE), _lot(2, "DDD", "SELL", "10", "110", TUE)]
+        _, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "1100")))
+        assert c["DDD"] == Decimal("100")                      # not 300
+
+    def test_round_trip_from_cash(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "5", "105", TUE), _lot(2, "DDD", "SELL", "5", "110", THU)]
+        out, c = self._check(monkeypatch, capsys, lots,
+                             _cash((START_TS - timedelta(days=1), "1000"), (TUE_TS, "475"), (THU_TS, "1025")))
+        assert c["DDD"] == Decimal("25")                       # 5 × (120 − 105) + 5 × (110 − 120); not 125
+        assert "qty Δ" not in _line(out, "DDD:")
+
+    def test_a_trade_dated_on_the_baseline_day_is_part_of_the_opening_position(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "90", MON)]
+        out, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "100")))
+        assert c["DDD"] == Decimal("200")                      # 10 × (120 − 100) between the snapshots; not 500
+        assert "trade P&L" not in _line(out, "DDD:")
+        assert "contributions count trades after 2026-03-02" in out
+        assert "2026-03-02 IBKR BUY DDD 10.0000 @ $90.00" in out, "the listing still shows the calendar week"
+
+    def test_fees_are_counted_once(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE),
+                dict(_lot(2, "DDD", "SELL", "5", "110", TUE), fees=Decimal("2"))]
+        _, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "548")))
+        assert c["DDD"] == Decimal("148")
+
+    def test_falling_prices(self, monkeypatch, capsys):
+        down = {START_TS: {"DDD": Decimal("100")}, END_TS: {"DDD": Decimal("80")}}
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE), _lot(2, "DDD", "SELL", "5", "90", TUE)]
+        _, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "450")), prices=down)
+        assert c["DDD"] == Decimal("-150")                     # 5 × −20 kept + 5 × −10 sold
+
+    def test_trades_around_a_split_with_a_real_move(self, monkeypatch, capsys):
+        """AAA 2:1 on Wednesday and +20% in adjusted terms (raw 100 → 60);
+        CCC 1:4 the same day and +10% (raw 10 → 44). Same trades as the
+        flat-price case: sell 2 pre-split at $104, buy 2 post-split at $52."""
+        prices = {START_TS: {"AAA": Decimal("100"), "CCC": Decimal("10")},
+                  END_TS: {"AAA": Decimal("60"), "CCC": Decimal("44")}}
+        lots = [_lot(1, "AAA", "BUY", "10", "100", BEFORE), _lot(3, "CCC", "BUY", "8", "10", BEFORE)] + WEEK_TRADES
+        _, c = self._check(monkeypatch, capsys, lots,
+                           _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "208"), (THU_TS, "104")), prices=prices)
+        # 20 × (60 − 50) + 4 × (52 − 60) + 2 × (60 − 52) = 200 − 32 + 16
+        assert c["AAA"] == Decimal("184")
+        assert c["CCC"] == Decimal("8")                        # 2 × (44 − 40)
+
+
+class TestWeekBoundaries:
+    """Found in round 3: the market-overview collector writes futures rows at
+    other times of day, and the first snapshot at or after Monday 16:15 was
+    often one of those — quoting nothing the ledger holds."""
+
+    def test_futures_only_snapshots_are_not_week_boundaries(self, monkeypatch, capsys):
+        mon_futures = datetime.combine(MON, time(18, 0)).replace(tzinfo=weekly.IL_TZ)
+        tue_close = datetime.combine(TUE, time(23, 0)).replace(tzinfo=weekly.IL_TZ)
+        sat_futures = datetime.combine(SAT, time(9, 0)).replace(tzinfo=weekly.IL_TZ)
+        prices = {
+            mon_futures: {"ES=F": Decimal("5000")},
+            tue_close: {"DDD": Decimal("100"), "ES=F": Decimal("5100")},
+            END_TS: {"DDD": Decimal("120")},
+            sat_futures: {"ES=F": Decimal("5200")},
+        }
+        # Bought Monday and again on Tuesday (the baseline day, so part of the
+        # opening position): 15 shares valued 100 → 120.
+        lots = [_lot(1, "DDD", "BUY", "10", "90", MON), _lot(2, "DDD", "BUY", "5", "101", TUE)]
+        out = _run(monkeypatch, capsys, lots, prices=prices)
+        assert "Start snapshot: 2026-03-03 23:00 IL" in out
+        assert "End snapshot:   2026-03-06 23:00 IL" in out
+        assert "Missing price data" not in out
+        assert _line(out, "DDD:").startswith("DDD: $300.00 (+20.00%) | $1,500.00 → $1,800.00")
+
+    def test_boundary_queries_filter_on_the_held_symbols(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(weekly, "fetch_all", lambda conn, sql, params=None: (seen.append((" ".join(sql.split()), params)), [{"ts": START_TS}])[1])
+        assert weekly.snapshot_at_or_after(object(), START_TS, {"BBB", "AAA"}) == START_TS
+        assert weekly.latest_snapshot(object(), {"AAA"}) == START_TS
+        assert "symbol = ANY(%s)" in seen[0][0] and seen[0][1] == (START_TS, ["AAA", "BBB"])
+        assert "symbol = ANY(%s)" in seen[1][0] and seen[1][1] == (["AAA"],)
+        # Without symbols the old unfiltered queries remain.
+        weekly.snapshot_at_or_after(object(), START_TS)
+        assert "ANY" not in seen[2][0]

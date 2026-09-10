@@ -95,13 +95,34 @@ def fd_ratio(x, digits: int = 2) -> str:
         return "—"
 
 
-def snapshot_at_or_after(conn, dt_utc: datetime):
-    rows = fetch_all(conn, "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s", (dt_utc,))
+def snapshot_at_or_after(conn, dt_utc: datetime, symbols=None):
+    """First snapshot timestamp at or after ``dt_utc``.
+
+    ``symbols`` restricts the search to rows quoting one of them. The market
+    overview writes futures and index rows to price_snapshots at other times
+    of day than the holdings collector, and a boundary that lands on one of
+    those runs quotes nothing the ledger holds — the report then printed
+    "Start securities: $0.00" and listed every holding as missing a price.
+    """
+    if symbols:
+        rows = fetch_all(
+            conn,
+            "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s AND symbol = ANY(%s)",
+            (dt_utc, sorted(symbols)),
+        )
+    else:
+        rows = fetch_all(conn, "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s", (dt_utc,))
     return rows[0]["ts"] if rows and rows[0]["ts"] else None
 
 
-def latest_snapshot(conn):
-    rows = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots")
+def latest_snapshot(conn, symbols=None):
+    """Newest snapshot timestamp, restricted like snapshot_at_or_after."""
+    if symbols:
+        rows = fetch_all(
+            conn, "SELECT MAX(ts) AS ts FROM price_snapshots WHERE symbol = ANY(%s)", (sorted(symbols),)
+        )
+    else:
+        rows = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots")
     return rows[0]["ts"] if rows and rows[0]["ts"] else None
 
 
@@ -183,15 +204,16 @@ def value_positions(positions: dict[tuple[str, str], Decimal], prices: dict[str,
     return by_symbol, by_account, sorted(set(missing))
 
 
-def current_cost_by_symbol(conn) -> dict[str, Decimal]:
+def current_cost_by_symbol(conn, ledger: ledger_inputs.PreparedLedger | None = None) -> dict[str, Decimal]:
     """FIFO open cost per symbol with an open position.
 
     Routed through portfolio.compute_fifo_merged — the same engine the daily
     report and dashboard use — replacing the old buys-minus-sell-PROCEEDS
     approximation, which folded realized P&L into 'cost' and drifted from
-    every other surface after any partial sell.
+    every other surface after any partial sell. Pass the full prepared ledger
+    when the caller already holds one.
     """
-    df = compute_fifo_merged(ledger_inputs.load(conn).lots)
+    df = compute_fifo_merged((ledger or ledger_inputs.load(conn)).lots)
     out: dict[str, Decimal] = {}
     if not df.empty:
         for _, r in df.iterrows():
@@ -230,8 +252,13 @@ def main():
 
     cfg = load_config()
     with connect(cfg) as conn:
-        start_ts = snapshot_at_or_after(conn, start_utc)
-        end_ts = latest_snapshot(conn)
+        # The week's boundaries are snapshots that quote something the ledger
+        # has ever held, so a futures-only market-overview run cannot become
+        # the start or the end of the week.
+        ledger_all = ledger_inputs.load(conn)
+        universe = {lot["symbol"] for lot in ledger_all.lots}
+        start_ts = snapshot_at_or_after(conn, start_utc, universe)
+        end_ts = latest_snapshot(conn, universe)
         if not start_ts or not end_ts:
             raise RuntimeError("Missing start or end price snapshot")
 
@@ -264,7 +291,7 @@ def main():
         delta = end_total - start_total
         delta_pct = (delta / start_total * Decimal("100")) if start_total else Decimal("0")
 
-        cost = current_cost_by_symbol(conn)
+        cost = current_cost_by_symbol(conn, ledger_all)
         current_rows = []
         for sym, val in sorted(end_sym_val.items(), key=lambda x: x[1], reverse=True):
             c = cost.get(sym, Decimal("0"))
@@ -272,20 +299,37 @@ def main():
             pnl_pct = (pnl / c * Decimal("100")) if c else Decimal("0")
             current_rows.append((sym, val, c, pnl, pnl_pct))
 
-        # What was entered, for the listing; the P&L arithmetic below uses the
-        # prepared rows of the same trades, in the week's units.
+        # What was entered, for the listing: the calendar week. The P&L
+        # arithmetic below uses the prepared rows (the week's units) of the
+        # trades dated AFTER the start snapshot's day: a lot dated on that day
+        # is already inside the opening position (positions_from keeps
+        # trade_date <= start_date), so counting it again as a new trade added
+        # its whole gain a second time (1.7.3 re-audit, N05 case B). The
+        # ledger holds dates, not execution times, so the baseline day is the
+        # cut and the header says so.
         trades = trades_between(conn, week_start_date, end_date)
-        week_lots = [lot for lot in ledger.lots if week_start_date <= lot["trade_date"] <= end_date]
+        week_lots = [lot for lot in ledger.lots if start_date < lot["trade_date"] <= end_date]
         in_week = set(start_qty) | set(end_qty) | {lot["symbol"] for lot in week_lots}
         week_actions = [
             a for a in ledger.actions
             if a.symbol in in_week and start_date < a.ex_date <= end_date and a.ratio != 1
         ]
 
-        # Contribution should measure market P&L, not capital added/removed by trades.
-        # For existing shares: start_qty * (end_price - start_price).
-        # For buys during the week: current value minus trade cost/fees.
-        # This avoids making a new buy look like a huge "winner" just because capital moved from cash to securities.
+        # Contribution is market P&L, not capital moved between cash and
+        # securities. It is one identity per symbol:
+        #
+        #   end value − start value + sale proceeds − purchase outlays
+        #
+        # with fees counted once, everything in the week's units, and only the
+        # trades after the baseline day. Printed as two parts that sum to it:
+        # the move on the opening shares, start_qty × (end − start), which
+        # marks every opening share — including the ones sold during the week
+        # — to the closing quote; and the trade P&L, which for a buy is
+        # qty × (end − buy) − fees and for a sale qty × (sale − END) − fees.
+        # The sale term used to compare against the START quote, so shares
+        # sold during the week earned their start-to-end move twice: selling 5
+        # of 10 at $110 with quotes $100 → $120 printed $250 for a $150 gain
+        # (1.7.3 re-audit, N05 case A).
         trade_pnl_by_symbol = defaultdict(Decimal)
         for t in week_lots:
             sym = t["symbol"]
@@ -298,9 +342,7 @@ def main():
             if t["side"] == "BUY":
                 trade_pnl_by_symbol[sym] += qty * (end_px - trade_px) - fees
             elif t["side"] == "SELL":
-                start_px = start_prices.get(sym)
-                if start_px is not None:
-                    trade_pnl_by_symbol[sym] += qty * (trade_px - start_px) - fees
+                trade_pnl_by_symbol[sym] += qty * (trade_px - end_px) - fees
 
         all_symbols = sorted(set(start_sym_val) | set(end_sym_val) | set(trade_pnl_by_symbol))
         contribs = []
@@ -356,7 +398,7 @@ def main():
             for a in week_actions:
                 print(f"{a.symbol}: {a.kind} ×{a.ratio.normalize():f} on {a.ex_date}")
             print()
-        print("🧾 TRADES THIS WEEK")
+        print(f"🧾 TRADES THIS WEEK (calendar week; contributions count trades after {start_date})")
         if trades:
             for t in trades:
                 fees = D(t.get("fees"))
