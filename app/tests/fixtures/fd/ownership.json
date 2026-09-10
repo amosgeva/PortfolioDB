@@ -1,0 +1,32 @@
+{
+  "symbol": "TST_FD",
+  "section": "ownership",
+  "data": {
+    "institutional_ownership": [
+      {
+        "investor": "Example Capital LP",
+        "report_period": "2025-12-31",
+        "security_type": "common_stock",
+        "shares": 1000000.0,
+        "market_value": 50000000.0,
+        "price": 50.0
+      },
+      {
+        "investor": "Sample Advisors LLC",
+        "report_period": "2025-12-31",
+        "security_type": "common_stock",
+        "shares": 400000.0,
+        "market_value": 20000000.0,
+        "price": 50.0
+      },
+      {
+        "investor": "Placeholder Pension Trust",
+        "report_period": "2025-12-31",
+        "security_type": "common_stock",
+        "shares": 100000.0,
+        "market_value": 5000000.0,
+        "price": 50.0
+      }
+    ]
+  }
+}

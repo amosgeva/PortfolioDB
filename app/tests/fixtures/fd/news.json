@@ -1,0 +1,22 @@
+{
+  "symbol": "TST_FD",
+  "section": "news",
+  "data": {
+    "news": [
+      {
+        "date": "2026-02-05T13:00:00+00:00",
+        "source": "Example Wire",
+        "ticker": "TST_FD",
+        "title": "Test Fixtures Inc reports a quarter",
+        "url": "https://example.invalid/news/1"
+      },
+      {
+        "date": "2026-01-20T09:30:00+00:00",
+        "source": "Example Wire",
+        "ticker": "TST_FD",
+        "title": "Test Fixtures Inc names a new CFO",
+        "url": "https://example.invalid/news/2"
+      }
+    ]
+  }
+}

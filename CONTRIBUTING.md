@@ -58,6 +58,14 @@ database (~30s). Run them separately, not in the same process as the fast suite:
 pytest app/mcp/tests/ -m slow
 ```
 
+Three more modules talk SQL to a real database without a marker:
+`app/tests/test_dedupe_guards.py`, `app/tests/test_fd_store.py` and
+`app/mcp/tests/test_data_quality_sql.py`. Locally they skip when no database is
+configured. CI runs them against its disposable PostgreSQL with
+`PORTFOLIODB_TESTS_REQUIRE_DB=1`, which turns that skip into a failure — the
+same working-directory rule as the suites they live in applies. Their payloads
+are the committed fixtures under `app/tests/fixtures/fd/`.
+
 Or just `make test`, which runs the fast suites inside the container.
 
 ## What the code expects of you
@@ -72,7 +80,10 @@ Or just `make test`, which runs the fast suites inside the container.
   `app/portfolio.py::compute_fifo_merged`. Keep its output contract stable.
 - **Symbols are uppercase** on the way in.
 - **Credentials come from `app/db.py::load_config`.** Never read a password
-  directly, never hardcode one, not even in a throwaway script.
+  directly, never hardcode one, not even in a throwaway script. The one
+  exception is a process that brings its own role and must not hold the
+  application's login: it reads only where the database is, through
+  `db.load_target()`, as the MCP server does on its read-only role.
 - **Settings go through `app/settings.py`** (DB → env → default), so a value can
   be changed from the Settings page. Secrets stay in `.env` only.
 - Match the surrounding style, including comment density. Comments here explain

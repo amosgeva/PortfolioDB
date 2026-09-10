@@ -5,7 +5,14 @@ sentinel symbol "TST_FD" and cleans up between tests so it never collides with
 production data.
 
 Skips the whole module if PORTFOLIODB_PASSWORD isn't set or the DB isn't
-reachable, so the unit-test suite (test_fifo) still runs in isolation.
+reachable, so the unit-test suite (test_fifo) still runs in isolation — unless
+PORTFOLIODB_TESTS_REQUIRE_DB is set, as it is in the CI job that has a
+database, in which case that is a failure (see db.connect_for_tests).
+
+The payloads come from ``fixtures/fd/``: small synthetic sections in the
+vendor's shape (one fictional issuer, example.invalid URLs). They used to be
+read from ``cache/financialdatasets/AAPL/``, which is gitignored, so a clean
+clone skipped most of these round trips even with a database (re-audit N06).
 """
 
 from __future__ import annotations
@@ -21,10 +28,9 @@ from psycopg2 import sql
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import fd_store  # noqa: E402
-from db import connect, load_config  # noqa: E402
+from db import TESTS_REQUIRE_DB_ENV, connect_for_tests  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_DIR = REPO_ROOT / "cache" / "financialdatasets" / "AAPL"
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "fd"
 TEST_SYMBOL = "TST_FD"
 
 FD_TABLES = (
@@ -51,24 +57,22 @@ SECTION_TABLE = {
 }
 
 
+def _required() -> bool:
+    return (os.getenv(TESTS_REQUIRE_DB_ENV) or "").strip().lower() in ("1", "true", "yes")
+
+
 def _read_fixture(section: str) -> dict | list | None:
-    """Fixture payload, or None if the file is missing or holds a cached FD
-    error. The fixtures double as the live enrichment cache, so a failed API
-    fetch can overwrite one with an ``{"_error": ...}`` payload — that's an
-    environment problem, not an fd_store regression."""
+    """Committed fixture payload, or None if the file is missing."""
     path = FIXTURE_DIR / f"{section}.json"
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))["data"]
-    if isinstance(data, dict) and "_error" in data:
-        return None
-    return data
+    return json.loads(path.read_text(encoding="utf-8"))["data"]
 
 
 def _load(section: str) -> dict:
     data = _read_fixture(section)
     if data is None:
-        pytest.skip(f"fixture missing or cached-error payload: {section}.json")
+        (pytest.fail if _required() else pytest.skip)(f"fixture missing: {FIXTURE_DIR / (section + '.json')}")
     return data
 
 
@@ -101,14 +105,7 @@ def _counts(conn) -> dict[str, int]:
 
 @pytest.fixture(scope="module")
 def conn():
-    try:
-        cfg = load_config()
-    except Exception as e:
-        pytest.skip(f"DB config unavailable: {e}")
-    try:
-        c = connect(cfg)
-    except Exception as e:
-        pytest.skip(f"DB unreachable: {e}")
+    c = connect_for_tests(skip=pytest.skip, fail=pytest.fail)
     try:
         yield c
     finally:
@@ -131,7 +128,7 @@ def test_facts_roundtrip(conn):
     assert n == 1
     row = fd_store.latest_facts(conn, TEST_SYMBOL)
     assert row is not None
-    assert row["name"] == "Apple Inc"
+    assert row["name"] == "Test Fixtures Inc"
     assert row["sector"] == "Information Technology"
     assert row["exchange"] == "NASDAQ"
     assert row["raw"], "raw JSONB should round-trip"
@@ -149,7 +146,7 @@ def test_metrics_roundtrip(conn):
 
 def test_financials_roundtrip(conn):
     n = fd_store.persist_financials(conn, TEST_SYMBOL, _load("financials"))
-    # AAPL fixture has 4 quarters × 3 statement types
+    # The fixture has 4 quarters × 3 statement types
     assert n == 12
     inc = fd_store.recent_financials(conn, TEST_SYMBOL, "income_statement", limit=4)
     assert len(inc) == 4
@@ -223,10 +220,8 @@ def test_persist_skips_empty_payload(conn):
 # ───────────────────────── idempotency ─────────────────────────
 
 def test_idempotent_upsert(conn):
-    # Only sections whose fixture is currently usable (see _read_fixture).
     sections = [s for s in SECTION_TABLE if _read_fixture(s) is not None]
-    if not sections:
-        pytest.skip("no usable fixtures")
+    assert sections == list(SECTION_TABLE), "every section has a committed fixture"
 
     for sec in sections:
         fd_store.persist_section(conn, TEST_SYMBOL, sec, _load(sec))

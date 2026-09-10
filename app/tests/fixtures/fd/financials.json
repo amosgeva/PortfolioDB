@@ -1,0 +1,182 @@
+{
+  "symbol": "TST_FD",
+  "section": "financials",
+  "data": {
+    "financials": {
+      "income_statements": [
+        {
+          "accession_number": "0000000001-26-000001",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q1",
+          "report_period": "2025-03-31",
+          "filing_date": "2025-05-01",
+          "filing_datetime": "2025-05-01T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000001",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "revenue": 250000000.0,
+          "net_income": 50000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000002",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q2",
+          "report_period": "2025-06-30",
+          "filing_date": "2025-08-01",
+          "filing_datetime": "2025-08-01T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000002",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "revenue": 260000000.0,
+          "net_income": 52000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000003",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q3",
+          "report_period": "2025-09-30",
+          "filing_date": "2025-10-31",
+          "filing_datetime": "2025-10-31T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000003",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "revenue": 270000000.0,
+          "net_income": 54000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000004",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q4",
+          "report_period": "2025-12-31",
+          "filing_date": "2026-01-30",
+          "filing_datetime": "2026-01-30T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000004",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "revenue": 280000000.0,
+          "net_income": 56000000.0
+        }
+      ],
+      "balance_sheets": [
+        {
+          "accession_number": "0000000001-26-000001",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q1",
+          "report_period": "2025-03-31",
+          "filing_date": "2025-05-01",
+          "filing_datetime": "2025-05-01T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000001",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "total_assets": 900000000.0,
+          "shareholders_equity": 400000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000002",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q2",
+          "report_period": "2025-06-30",
+          "filing_date": "2025-08-01",
+          "filing_datetime": "2025-08-01T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000002",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "total_assets": 905000000.0,
+          "shareholders_equity": 403000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000003",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q3",
+          "report_period": "2025-09-30",
+          "filing_date": "2025-10-31",
+          "filing_datetime": "2025-10-31T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000003",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "total_assets": 910000000.0,
+          "shareholders_equity": 406000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000004",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q4",
+          "report_period": "2025-12-31",
+          "filing_date": "2026-01-30",
+          "filing_datetime": "2026-01-30T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000004",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "total_assets": 915000000.0,
+          "shareholders_equity": 409000000.0
+        }
+      ],
+      "cash_flow_statements": [
+        {
+          "accession_number": "0000000001-26-000001",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q1",
+          "report_period": "2025-03-31",
+          "filing_date": "2025-05-01",
+          "filing_datetime": "2025-05-01T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000001",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "free_cash_flow": 60000000.0,
+          "net_income": 50000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000002",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q2",
+          "report_period": "2025-06-30",
+          "filing_date": "2025-08-01",
+          "filing_datetime": "2025-08-01T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000002",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "free_cash_flow": 61000000.0,
+          "net_income": 52000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000003",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q3",
+          "report_period": "2025-09-30",
+          "filing_date": "2025-10-31",
+          "filing_datetime": "2025-10-31T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000003",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "free_cash_flow": 62000000.0,
+          "net_income": 54000000.0
+        },
+        {
+          "accession_number": "0000000001-26-000004",
+          "ticker": "TST_FD",
+          "period": "quarterly",
+          "fiscal_period": "2025-Q4",
+          "report_period": "2025-12-31",
+          "filing_date": "2026-01-30",
+          "filing_datetime": "2026-01-30T06:00:00-04:00",
+          "filing_url": "https://example.invalid/sec/0000000001-26-000004",
+          "form_type": "10-Q",
+          "currency": "USD",
+          "free_cash_flow": 63000000.0,
+          "net_income": 56000000.0
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "symbol": "TST_FD",
+  "section": "facts",
+  "data": {
+    "company_facts": {
+      "ticker": "TST_FD",
+      "name": "Test Fixtures Inc",
+      "sector": "Information Technology",
+      "industry": "Software",
+      "exchange": "NASDAQ",
+      "cik": "0000000001",
+      "location": "Nowhere, ZZ",
+      "sec_filings_url": "https://example.invalid/sec/TST_FD",
+      "is_active": true,
+      "sic_code": "7372",
+      "sic_industry": "Prepackaged Software",
+      "sic_sector": "Services"
+    }
+  }
+}

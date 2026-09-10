@@ -105,6 +105,36 @@ def load_config() -> DbConfig:
     return DbConfig(host=host, port=port, dbname=dbname, user=user, password=password)
 
 
+# Set in the one CI job that has a database. An integration test that would
+# skip for lack of one fails instead, so the job cannot go green by skipping.
+TESTS_REQUIRE_DB_ENV = "PORTFOLIODB_TESTS_REQUIRE_DB"
+
+
+def connect_for_tests(*, skip, fail):
+    """A connection for a test that needs the real database — or the caller's
+    ``skip``/``fail`` (pytest.skip / pytest.fail), whichever applies.
+
+    Three test modules talk SQL to a real database and skip when none is
+    configured, which is right on a laptop and was silently wrong in CI:
+    the only job with a database ran the MCP ``slow`` suite alone, so those
+    35 cases had never executed there (1.7.3 re-audit, N06). With
+    PORTFOLIODB_TESTS_REQUIRE_DB set, a missing or unreachable database is a
+    failure. One helper so the three fixtures cannot drift apart again.
+    """
+    required = (os.getenv(TESTS_REQUIRE_DB_ENV) or "").strip().lower() in ("1", "true", "yes")
+    report = fail if required else skip
+    try:
+        cfg = load_config()
+    except Exception as e:
+        report(f"DB config unavailable: {e}")
+        raise
+    try:
+        return connect(cfg)
+    except Exception as e:
+        report(f"DB unreachable: {e}")
+        raise
+
+
 def connect(cfg: DbConfig):
     return psycopg2.connect(
         host=cfg.host,
