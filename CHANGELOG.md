@@ -16,6 +16,12 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.1] — 2026-09-10
+
+A one-line fix for a 1.7.0 regression that broke every dashboard page. No
+schema change and no migration; the 1.7.0 **Upgrading** steps still apply if
+you have not done them.
+
 ### Fixed
 
 - **1.7.0's dashboard failed to load with "too many values to unpack
@@ -1277,7 +1283,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.1
 [1.7.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.0
 [1.6.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.6.0
 [1.5.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.5.0
