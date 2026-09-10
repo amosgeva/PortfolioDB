@@ -409,7 +409,19 @@ def _historical_series(ts_prices, lot_rows) -> list[tuple]:
     valued = holdings_module.value_series(
         lot_rows, list(ts_prices.items()), carry_forward=True
     )
-    return [(ts, val) for ts, val in valued if val > 0]
+    # Drop only the points before anything was held. After that a zero is a
+    # fact — the securities were sold — and belongs on the chart as a flat
+    # line at zero; dropping it (as `val > 0` did) made the chart bridge from
+    # the last funded day straight to a re-entry and left the gap detector
+    # nothing to stand on (re-audit F07).
+    out: list[tuple] = []
+    funded = False
+    for ts, val in valued:
+        if val > 0:
+            funded = True
+        if funded:
+            out.append((ts, val))
+    return out
 
 
 def _series_since(full_series, jer, today_jer, now_utc, cutoff_days=None, today_only=False) -> list:

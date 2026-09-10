@@ -18,6 +18,14 @@ needs a schema step says so under **Upgrading**.
 
 ### Fixed
 
+- **The portfolio-value chart keeps the days on which everything was sold.**
+  The history dropped every zero-valued point, so a liquidated stretch
+  vanished from the chart and the line bridged from the last funded day to
+  the re-entry. Only the points before anything was ever held are dropped
+  now; a zero after that is drawn as a flat line at zero, and a range that
+  begins on such a day shows no percentage change rather than a division by
+  zero.
+
 - **Dividend backfill: a dividend paid before a later split is no longer
   undercounted.** yfinance states every historical per-share dividend in
   today's split-adjusted units (Apple's $0.82 of August 2020 comes back as
