@@ -18,6 +18,17 @@ needs a schema step says so under **Upgrading**.
 
 ### Fixed
 
+- **CSV import rejects incomplete trade rows instead of skipping them.** A
+  row with some of `Trade Date`, `Purchase Price` and `Quantity` filled in
+  was treated as "not a lot": nothing was imported for the trade, its price
+  snapshot still went in, and the run reported zero rejections — a trade
+  missing from the ledger behind a clean import. Such a row is now rejected
+  with its line number and the missing field, and so is a trade row with no
+  symbol; a row with all three trade fields blank is still a quote-only row,
+  and a wholly blank line is still skipped. The transaction policy applies:
+  atomic mode writes nothing from that file, `--continue-on-error` counts the
+  row as rejected and writes the rest.
+
 - **The weekly report no longer crashes when an unnamed account meets a named
   one.** 1.7.0 moved its position aggregation into Python and sorted
   `(account, symbol)` keys with the default ordering, which refuses to compare

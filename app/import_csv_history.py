@@ -324,8 +324,19 @@ def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | No
     trade_date_raw = (r.get('Trade Date') or '').strip()
     purchase_raw = (r.get('Purchase Price') or '').strip()
     qty_raw = (r.get('Quantity') or '').strip()
-    if not (trade_date_raw and purchase_raw and qty_raw):
-        return None
+    present = {"Trade Date": trade_date_raw, "Purchase Price": purchase_raw, "Quantity": qty_raw}
+    if not any(present.values()):
+        return None                      # a quote-only / watchlist row, by design
+    missing = [name for name, value in present.items() if not value]
+    if missing:
+        # Some trade fields filled, some not: an incomplete trade, not a quote
+        # row. This used to fall through as "not a lot" and import nothing for
+        # the trade while still counting the row as clean (re-audit N02).
+        raise ValueError(
+            f"incomplete trade row — missing {', '.join(missing)}. A row with a "
+            "Trade Date, Purchase Price or Quantity is a trade and needs all three; "
+            "leave all three blank for a quote-only row."
+        )
     comm_raw = (r.get('Commission') or '').strip()
     comment = r.get('Comment')
     return {
@@ -340,6 +351,10 @@ def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | No
     }
 
 
+# The columns whose presence makes a line a row rather than blank padding.
+_CONTENT_COLUMNS = ('Trade Date', 'Purchase Price', 'Quantity', 'Current Price')
+
+
 def _validate_file(rows: list[dict], fp: str, args, tagged_accounts: list[str]) -> tuple[list[dict], list[tuple[str, float]], int]:
     """Parse every row before anything is written.
 
@@ -351,13 +366,15 @@ def _validate_file(rows: list[dict], fp: str, args, tagged_accounts: list[str]) 
     rejected = 0
     for line_no, r in enumerate(rows, start=2):   # line 1 is the header
         sym = (r.get('Symbol') or '').strip().upper()
-        if not sym:
-            continue
         try:
+            if not sym:
+                if not any((r.get(k) or '').strip() for k in _CONTENT_COLUMNS):
+                    continue             # a wholly blank line, not a row
+                raise ValueError("no Symbol on a row that carries trade or price data")
             lot = _parse_lot(r, sym, args, tagged_accounts)
         except Exception as e:
             print(
-                f"ERROR {os.path.basename(fp)}:{line_no} | {sym} | "
+                f"ERROR {os.path.basename(fp)}:{line_no} | {sym or '(no symbol)'} | "
                 f"trade_date={(r.get('Trade Date') or '').strip()!r} "
                 f"qty={(r.get('Quantity') or '').strip()!r} "
                 f"price={(r.get('Purchase Price') or '').strip()!r}: {e}"
