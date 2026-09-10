@@ -18,6 +18,14 @@ needs a schema step says so under **Upgrading**.
 
 ### Fixed
 
+- **The weekly report no longer crashes when an unnamed account meets a named
+  one.** 1.7.0 moved its position aggregation into Python and sorted
+  `(account, symbol)` keys with the default ordering, which refuses to compare
+  `None` with a string; any ledger with both an account-less lot and a named
+  account stopped the report before it printed. Unnamed accounts now sort
+  first, and the stored value is kept as is, so `None` and an empty-string
+  account stay distinct.
+
 - **The portfolio-value chart keeps the days on which everything was sold.**
   The history dropped every zero-valued point, so a liquidated stretch
   vanished from the chart and the line bridged from the last funded day to

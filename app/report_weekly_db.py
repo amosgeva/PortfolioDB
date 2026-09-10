@@ -112,11 +112,18 @@ def positions_as_of(conn, asof_date) -> dict[tuple[str, str], Decimal]:
     against a post-split quote halved (or quartered) the position's value.
     """
     lots = ledger_inputs.load(conn, as_of=asof_date).lots
-    out: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    out: dict[tuple[str | None, str], Decimal] = defaultdict(Decimal)
     for lot in lots:
         qty = D(lot["quantity"])
         out[(lot["account"], lot["symbol"])] += qty if lot["side"] == "BUY" else -qty
-    return {k: q for k, q in sorted(out.items()) if abs(q) > Decimal("0.0000001")}
+    # The account may be NULL (the schema allows it, the CLIs allow omitting
+    # it), and Python will not order None against a string — the 1.7.0 version
+    # crashed the whole report the moment an unnamed account met a named one
+    # (re-audit N01). Sort on a key that places unnamed accounts first; the
+    # returned keys keep the account exactly as stored, so None and "" stay
+    # distinct rather than being folded together.
+    ordered = sorted(out.items(), key=lambda kv: (kv[0][0] is not None, kv[0][0] or "", kv[0][1]))
+    return {k: q for k, q in ordered if abs(q) > Decimal("0.0000001")}
 
 
 def value_positions(positions: dict[tuple[str, str], Decimal], prices: dict[str, Decimal]):
