@@ -158,6 +158,56 @@ def test_dry_run_validates_and_writes_nothing(tmp_path, db):
     assert (conn.commits, conn.rollbacks) == (0, 0)
 
 
+# ── incomplete trade rows (re-audit N02) ──────────────────────────
+#
+# A row with SOME of Trade Date / Purchase Price / Quantity used to be "not a
+# lot": it imported nothing for the trade, still imported its price snapshot,
+# and counted as clean. A trade with a blank quantity is a broken trade.
+
+QUOTE_ONLY = "MSFT,,,,,,watchlist only,2026/05/20,16:00 EDT,436.90\n"
+NO_QTY = "DDD,20260215,BUY,20.00,,0.00,,2026/05/20,16:00 EDT,21.00\n"
+NO_PRICE = "EEE,20260215,BUY,,5,0.00,,2026/05/20,16:00 EDT,21.00\n"
+NO_DATE = "FFF,,BUY,20.00,5,0.00,,2026/05/20,16:00 EDT,21.00\n"
+NO_SYMBOL_WITH_TRADE = ",20260215,BUY,20.00,5,0.00,,2026/05/20,16:00 EDT,21.00\n"
+BLANK_ROW = ",,,,,,,,,\n"
+
+
+@pytest.mark.parametrize("row,field", [(NO_QTY, "Quantity"), (NO_PRICE, "Purchase Price"), (NO_DATE, "Trade Date")])
+def test_an_incomplete_trade_is_rejected_and_names_the_field(tmp_path, db, row, field, capsys):
+    conn = FakeConn()
+    counts = imp._import_file(conn, _csv(tmp_path, GOOD_A, row), _args(), [])
+    assert counts["rejected"] == 1
+    assert counts["inserted"] == 0 and db == [], "atomic mode: nothing written"
+    out = capsys.readouterr().out
+    assert "incomplete trade row" in out and field in out and ":3 " in out   # line number
+
+
+def test_a_quote_only_row_is_still_a_quote(tmp_path, db):
+    conn = FakeConn()
+    counts = imp._import_file(conn, _csv(tmp_path, GOOD_A, QUOTE_ONLY), _args(), [])
+    assert counts["rejected"] == 0
+    assert counts["inserted"] == 1 and counts["snaps_inserted"] == 2
+
+
+def test_a_trade_without_a_symbol_is_rejected_but_a_blank_line_is_skipped(tmp_path, db, capsys):
+    conn = FakeConn()
+    counts = imp._import_file(conn, _csv(tmp_path, GOOD_A, NO_SYMBOL_WITH_TRADE, BLANK_ROW), _args(), [])
+    assert counts["rejected"] == 1
+    assert "no Symbol" in capsys.readouterr().out
+
+
+def test_incomplete_rows_under_continue_and_dry_run(tmp_path, db):
+    conn = FakeConn()
+    partial = imp._import_file(conn, _csv(tmp_path, GOOD_A, NO_QTY, GOOD_B), _args(continue_on_error=True), [])
+    assert partial["inserted"] == 2 and partial["rejected"] == 1
+    # The incomplete row's snapshot is not written either: a rejected row is
+    # rejected whole.
+    assert partial["snaps_inserted"] == 2
+    dry = imp._import_file(FakeConn(), _csv(tmp_path, GOOD_A, NO_QTY, GOOD_B, name="dry.csv"),
+                           _args(dry_run=True, continue_on_error=True), [])
+    assert dry["rejected"] == 1 and dry["attempted"] == 2
+
+
 # ── oversells ─────────────────────────────────────────────────────
 
 

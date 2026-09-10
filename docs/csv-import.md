@@ -47,8 +47,11 @@ case-insensitive — header names must match exactly.
 Two independent things are imported:
 
 - **A lot**, from any row that has `Trade Date` + `Purchase Price` + `Quantity`.
-  Rows without all three are skipped for lots — which is what you want for a
-  holding you never traded through this account.
+  A row with **all three blank** is a quote-only row (a watchlist symbol, or a
+  holding you never traded through this account) and imports no lot. A row
+  with **some** of the three is an incomplete trade and is rejected with its
+  line number and the missing field — it used to be skipped silently, which
+  left a trade out of the ledger behind a clean-looking import.
 - **A price snapshot** per row with a `Current Price`, stamped with the
   timestamp built from that file's `Date` + `Time`. **Each file is one instant**,
   so a directory of daily exports becomes a daily price series.
