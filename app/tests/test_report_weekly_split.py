@@ -75,7 +75,8 @@ class _Conn:
         return False
 
 
-def _run(monkeypatch, capsys, lots):
+def _run(monkeypatch, capsys, lots, cash=()):
+    """Run main() over ``lots`` (raw rows) and ``cash`` ({account, cash, ts} rows)."""
     def fake_load(conn, *, symbol=None, account=None, as_of=None, units="as_of"):
         rows = [r for r in lots if as_of is None or r["trade_date"] <= as_of]
         return ledger_inputs.prepare(rows, ACTIONS, as_of=None if units == "current" else as_of)
@@ -89,7 +90,11 @@ def _run(monkeypatch, capsys, lots):
         if "FROM price_snapshots WHERE ts=%s" in sql_one:
             return [{"symbol": s, "last_price": p} for s, p in PRICES[params[0]].items()]
         if "FROM cash_snapshots" in sql_one:
-            return []
+            latest: dict = {}
+            for r in sorted(cash, key=lambda r: r["ts"]):
+                if r["ts"] <= params[0]:
+                    latest[r["account"]] = r
+            return list(latest.values())
         if "FROM lots" in sql_one:
             lo, hi = params
             return [dict(r) for r in lots if lo <= r["trade_date"] <= hi]

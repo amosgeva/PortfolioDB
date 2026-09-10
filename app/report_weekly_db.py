@@ -33,6 +33,27 @@ def D(x) -> Decimal:
     return Decimal(str(x))
 
 
+def account_sort_key(acct: str | None) -> tuple[bool, str]:
+    """Order accounts with the unnamed one first.
+
+    The schema allows a NULL account and the CLIs allow omitting it, and
+    Python will not order None against a string. Every place the report sorts
+    accounts goes through this one key: 1.7.0 crashed in `positions_as_of`,
+    1.7.2 fixed that helper and still crashed two sections later at the
+    account-totals loop (re-audit N01). None and "" sort as distinct values.
+    """
+    return (acct is not None, acct or "")
+
+
+def account_label(acct: str | None) -> str:
+    """How an account is printed; the data keeps the stored value."""
+    if acct is None:
+        return "(no account)"
+    if acct == "":
+        return "(blank account)"
+    return acct
+
+
 def compact_money(x) -> str:
     if x is None:
         return "n/a"
@@ -141,13 +162,9 @@ def positions_from(lots, asof_date) -> dict[tuple[str, str], Decimal]:
             continue
         qty = D(lot["quantity"])
         out[(lot["account"], lot["symbol"])] += qty if lot["side"] == "BUY" else -qty
-    # The account may be NULL (the schema allows it, the CLIs allow omitting
-    # it), and Python will not order None against a string — the 1.7.0 version
-    # crashed the whole report the moment an unnamed account met a named one
-    # (re-audit N01). Sort on a key that places unnamed accounts first; the
-    # returned keys keep the account exactly as stored, so None and "" stay
-    # distinct rather than being folded together.
-    ordered = sorted(out.items(), key=lambda kv: (kv[0][0] is not None, kv[0][0] or "", kv[0][1]))
+    # Sorted through account_sort_key (see there); the returned keys keep the
+    # account exactly as stored, so None and "" stay distinct.
+    ordered = sorted(out.items(), key=lambda kv: (*account_sort_key(kv[0][0]), kv[0][1]))
     return {k: q for k, q in ordered if abs(q) > Decimal("0.0000001")}
 
 
@@ -311,11 +328,12 @@ def main():
         print(f"Weekly change:    {money(delta)} ({pct(delta_pct)})")
         print()
         print("🏦 ACCOUNT TOTALS")
-        for acct in sorted(set(start_acct_val) | set(end_acct_val) | set(start_cash) | set(end_cash)):
+        accounts = set(start_acct_val) | set(end_acct_val) | set(start_cash) | set(end_cash)
+        for acct in sorted(accounts, key=account_sort_key):
             s = start_acct_val.get(acct, Decimal("0")) + start_cash.get(acct, Decimal("0"))
             e = end_acct_val.get(acct, Decimal("0")) + end_cash.get(acct, Decimal("0"))
             d = e - s
-            print(f"{acct}: {money(s)} → {money(e)} ({money(d)})")
+            print(f"{account_label(acct)}: {money(s)} → {money(e)} ({money(d)})")
         print()
         print("🟢 TOP CONTRIBUTORS")
         for sym, d, p, price_move, trade_pnl, qty_delta, sv, ev in contribs[:5]:
@@ -343,7 +361,7 @@ def main():
             for t in trades:
                 fees = D(t.get("fees"))
                 note = f" — {t.get('notes')}" if t.get("notes") else ""
-                print(f"{t['trade_date']} {t['account']} {t['side']} {t['symbol']} {float(t['quantity']):.4f} @ ${float(t['price']):.2f} fees {money(fees)}{note}")
+                print(f"{t['trade_date']} {account_label(t['account'])} {t['side']} {t['symbol']} {float(t['quantity']):.4f} @ ${float(t['price']):.2f} fees {money(fees)}{note}")
         else:
             print("No trades recorded this week.")
         print()
