@@ -16,6 +16,21 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A position sold during the week keeps its weekly contribution when it
+  has no closing quote.** The collector stops quoting a symbol once it is
+  sold, so a position closed during the week normally has no end-of-week
+  quote; the contribution arithmetic skipped every trade without one, so a
+  full sale printed `$0.00` and a buy-and-sell round trip vanished from the
+  contributor list while the week's total was right. The contribution is now
+  computed from the identity directly — end value − start value + proceeds −
+  outlays — where an endpoint with no shares is worth zero and needs no
+  quote. A held position that lacks its quote is printed as `n/a` and named
+  under the missing-price warning, never as `$0.00`. The price-move and
+  trade-P&L breakdown is still shown when both quotes exist
+  (1.7.4 re-audit, N05 remaining branch).
+
 ## [1.7.4] — 2026-09-10
 
 The fourth pass over the audit: the two findings the re-audit of 1.7.3 added.

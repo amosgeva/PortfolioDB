@@ -316,47 +316,66 @@ def main():
         ]
 
         # Contribution is market P&L, not capital moved between cash and
-        # securities. It is one identity per symbol:
+        # securities. It is one identity per symbol, computed as such:
         #
         #   end value − start value + sale proceeds − purchase outlays
         #
         # with fees counted once, everything in the week's units, and only the
-        # trades after the baseline day. Printed as two parts that sum to it:
-        # the move on the opening shares, start_qty × (end − start), which
-        # marks every opening share — including the ones sold during the week
-        # — to the closing quote; and the trade P&L, which for a buy is
-        # qty × (end − buy) − fees and for a sale qty × (sale − END) − fees.
-        # The sale term used to compare against the START quote, so shares
-        # sold during the week earned their start-to-end move twice: selling 5
-        # of 10 at $110 with quotes $100 → $120 printed $250 for a $150 gain
-        # (1.7.3 re-audit, N05 case A).
-        trade_pnl_by_symbol = defaultdict(Decimal)
+        # trades after the baseline day. An endpoint with no shares is worth
+        # zero and needs no quote — which matters, because the collector stops
+        # quoting a symbol once it is sold, so a position closed during the
+        # week normally has no closing quote. The previous version built the
+        # figure from a per-trade decomposition that skipped every trade
+        # without a closing quote, so a full sale printed $0 and a round trip
+        # vanished from the list (1.7.4 re-audit, N05 remaining branch). An
+        # endpoint that DOES hold shares but has no quote is unavailable, and
+        # is printed as such rather than as $0.
+        #
+        # When both quotes exist the figure is also shown as two parts that
+        # sum to it: the move on the opening shares, start_qty × (end − start),
+        # and the trade P&L (for a buy qty × (end − buy) − fees, for a sale
+        # qty × (sale − END) − fees; the START quote there was the 1.7.3
+        # double count).
+        proceeds: dict[str, Decimal] = defaultdict(Decimal)
+        outlays: dict[str, Decimal] = defaultdict(Decimal)
         for t in week_lots:
             sym = t["symbol"]
-            end_px = end_prices.get(sym)
-            if end_px is None:
-                continue
             qty = D(t["quantity"])
             trade_px = D(t["price"])
             fees = D(t.get("fees"))
             if t["side"] == "BUY":
-                trade_pnl_by_symbol[sym] += qty * (end_px - trade_px) - fees
+                outlays[sym] += qty * trade_px + fees
             elif t["side"] == "SELL":
-                trade_pnl_by_symbol[sym] += qty * (trade_px - end_px) - fees
+                proceeds[sym] += qty * trade_px - fees
 
-        all_symbols = sorted(set(start_sym_val) | set(end_sym_val) | set(trade_pnl_by_symbol))
+        def endpoint_value(qty_map, price_map_, sym):
+            """qty × quote; zero shares need no quote; held shares without one is None."""
+            q = qty_map.get(sym, Decimal("0"))
+            if not q:
+                return Decimal("0")
+            px = price_map_.get(sym)
+            return None if px is None else q * px
+
+        all_symbols = sorted(set(start_qty) | set(end_qty) | set(proceeds) | set(outlays))
         contribs = []
+        unpriced = []          # (symbol, which endpoint lacks a quote for a held position)
         for sym in all_symbols:
+            sv = endpoint_value(start_qty, start_prices, sym)
+            ev = endpoint_value(end_qty, end_prices, sym)
+            if sv is None or ev is None:
+                unpriced.append((sym, "start" if sv is None else "end"))
+                continue
+            d = ev - sv + proceeds.get(sym, Decimal("0")) - outlays.get(sym, Decimal("0"))
             sp = start_prices.get(sym)
             ep = end_prices.get(sym)
-            held_qty = start_qty.get(sym, Decimal("0"))
-            price_move = held_qty * (ep - sp) if sp is not None and ep is not None else Decimal("0")
-            trade_pnl = trade_pnl_by_symbol.get(sym, Decimal("0"))
-            d = price_move + trade_pnl
-            base = start_sym_val.get(sym, Decimal("0"))
-            p = (d / base * Decimal("100")) if base else Decimal("0")
+            if sp is not None and ep is not None:
+                price_move = start_qty.get(sym, Decimal("0")) * (ep - sp)
+                trade_pnl = d - price_move
+            else:
+                price_move = trade_pnl = None      # total is exact; the split of it is not
+            p = (d / sv * Decimal("100")) if sv else Decimal("0")
             qty_delta = end_qty.get(sym, Decimal("0")) - start_qty.get(sym, Decimal("0"))
-            contribs.append((sym, d, p, price_move, trade_pnl, qty_delta, start_sym_val.get(sym, Decimal("0")), end_sym_val.get(sym, Decimal("0"))))
+            contribs.append((sym, d, p, price_move, trade_pnl, qty_delta, sv, ev))
         contribs.sort(key=lambda x: x[1], reverse=True)
 
         print("📊 WEEKLY PORTFOLIO NUMBERS — PortfolioDB Source of Truth")
@@ -382,6 +401,9 @@ def main():
             trade_note = f" | trade P&L {money(trade_pnl)}" if trade_pnl else ""
             qty_note = f" | qty Δ {float(qty_delta):+.4f}" if qty_delta else ""
             print(f"{sym}: {money(d)} ({pct(p)}) | {money(sv)} → {money(ev)}{trade_note}{qty_note}")
+        for sym, which in unpriced:
+            qty = (start_qty if which == "start" else end_qty).get(sym, Decimal("0"))
+            print(f"{sym}: n/a | {float(qty):.4f} shares held at the {which} of the week with no {which} quote")
         print()
         print("🔴 BOTTOM CONTRIBUTORS")
         for sym, d, p, price_move, trade_pnl, qty_delta, sv, ev in sorted(contribs, key=lambda x: x[1])[:5]:

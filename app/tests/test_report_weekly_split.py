@@ -290,6 +290,60 @@ class TestContributionIdentity:
         assert c["CCC"] == Decimal("8")                        # 2 × (44 − 40)
 
 
+class TestClosedPositionsWithoutQuotes:
+    """1.7.4 re-audit, N05 remaining branch. The collector quotes only symbols
+    with a positive quantity or a watchlist flag, so a position sold during
+    the week has no closing quote. BBB is held and quoted on both boundaries
+    so the week's start and end are still found."""
+
+    HELD = [_lot(9, "BBB", "BUY", "5", "10", BEFORE)]
+    NO_CLOSE = {START_TS: {"DDD": Decimal("100"), "BBB": Decimal("10")}, END_TS: {"BBB": Decimal("12")}}
+
+    def _check(self, monkeypatch, capsys, lots, cash, prices=None):
+        out = _run(monkeypatch, capsys, self.HELD + lots, cash=cash, prices=prices or self.NO_CLOSE)
+        contribs = _contributions(out)
+        assert sum(contribs.values(), Decimal("0")) == _weekly_change(out), out
+        assert "Missing price data" not in out, "nothing held at the end lacks a quote"
+        return out, contribs
+
+    def test_a_full_sale_without_a_closing_quote_keeps_its_gain(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE), _lot(2, "DDD", "SELL", "10", "110", TUE)]
+        out, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "1100")))
+        assert c["DDD"] == Decimal("100")
+        assert _line(out, "DDD:").startswith("DDD: $100.00 (+10.00%) | $1,000.00 → $0.00 | qty Δ -10.0000")
+
+    def test_a_round_trip_without_a_closing_quote_stays_in_the_list(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "5", "105", TUE), _lot(2, "DDD", "SELL", "5", "110", THU)]
+        out, c = self._check(monkeypatch, capsys, lots,
+                             _cash((START_TS - timedelta(days=1), "1000"), (TUE_TS, "475"), (THU_TS, "1025")))
+        assert c["DDD"] == Decimal("25")
+        assert _line(out, "DDD:").startswith("DDD: $25.00 (+0.00%) | $0.00 → $0.00")
+
+    def test_a_loss_with_fees(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE), dict(_lot(2, "DDD", "SELL", "10", "95", TUE), fees=Decimal("3"))]
+        _, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (TUE_TS, "947")))
+        assert c["DDD"] == Decimal("-53")
+
+    def test_splits_before_the_sale(self, monkeypatch, capsys):
+        """AAA 2:1 and CCC 1:4 on Wednesday, both sold Thursday in post-action
+        units, neither quoted on Friday."""
+        prices = {START_TS: {"AAA": Decimal("100"), "CCC": Decimal("10"), "BBB": Decimal("10")}, END_TS: {"BBB": Decimal("12")}}
+        lots = [_lot(1, "AAA", "BUY", "10", "100", BEFORE), _lot(2, "AAA", "SELL", "20", "55", THU),
+                _lot(3, "CCC", "BUY", "8", "10", BEFORE), _lot(4, "CCC", "SELL", "2", "44", THU)]
+        _, c = self._check(monkeypatch, capsys, lots, _cash((START_TS - timedelta(days=1), "0"), (THU_TS, "1188")), prices=prices)
+        assert c["AAA"] == Decimal("100")                      # 20 × 55 − 20 × 50
+        assert c["CCC"] == Decimal("8")                        # 2 × 44 − 2 × 40
+
+    def test_a_held_position_without_its_quote_is_unavailable_not_zero(self, monkeypatch, capsys):
+        lots = [_lot(1, "DDD", "BUY", "10", "100", BEFORE)]            # still held on Friday, no Friday quote
+        out = _run(monkeypatch, capsys, self.HELD + lots, prices=self.NO_CLOSE)
+        ddd = _line(out, "DDD:")
+        assert ddd.startswith("DDD: n/a | 10.0000 shares held at the end of the week with no end quote")
+        assert "DDD: $0.00" not in out
+        assert "Missing price data: start=[], end=['DDD']" in out
+        assert _contributions(out) == {"BBB": Decimal("10")}
+
+
 class TestWeekBoundaries:
     """Found in round 3: the market-overview collector writes futures rows at
     other times of day, and the first snapshot at or after Monday 16:15 was
