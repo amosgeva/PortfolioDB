@@ -1,0 +1,34 @@
+{
+  "symbol": "TST_FD",
+  "section": "metrics",
+  "data": {
+    "snapshot": {
+      "ticker": "TST_FD",
+      "currency": "USD",
+      "market_cap": 1000000000.0,
+      "enterprise_value": 1100000000.0,
+      "price_to_earnings_ratio": 20.5,
+      "price_to_sales_ratio": 4.0,
+      "price_to_book_ratio": 3.0,
+      "enterprise_value_to_ebitda_ratio": 12.5,
+      "enterprise_value_to_revenue_ratio": 4.4,
+      "peg_ratio": 1.5,
+      "earnings_per_share": 2.5,
+      "book_value_per_share": 17.0,
+      "gross_margin": 0.45,
+      "operating_margin": 0.25,
+      "net_margin": 0.2,
+      "return_on_equity": 0.3,
+      "return_on_assets": 0.15,
+      "return_on_invested_capital": 0.2,
+      "debt_to_equity": 0.5,
+      "debt_to_assets": 0.25,
+      "current_ratio": 1.5,
+      "quick_ratio": 1.2,
+      "free_cash_flow_yield": 0.05,
+      "payout_ratio": 0.2,
+      "revenue_growth": 0.1,
+      "earnings_growth": 0.12
+    }
+  }
+}

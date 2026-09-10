@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from db import connect, load_config  # noqa: E402
+from db import connect_for_tests  # noqa: E402
 
 TEST_SYMBOL = "TST_DEDUP"
 TEST_ACCOUNTS = ("TSTACC_A", "TSTACC_B")
@@ -67,14 +67,7 @@ def _wipe(conn) -> None:
 
 @pytest.fixture(scope="module")
 def conn():
-    try:
-        cfg = load_config()
-    except Exception as e:
-        pytest.skip(f"DB config unavailable: {e}")
-    try:
-        c = connect(cfg)
-    except Exception as e:
-        pytest.skip(f"DB unreachable: {e}")
+    c = connect_for_tests(skip=pytest.skip, fail=pytest.fail)
     try:
         yield c
     finally:

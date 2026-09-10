@@ -1,0 +1,46 @@
+{
+  "symbol": "TST_FD",
+  "section": "insiders",
+  "data": {
+    "insider_trades": [
+      {
+        "filing_date": "2026-02-03",
+        "form_type": "4",
+        "is_board_director": false,
+        "issuer": "Test Fixtures Inc",
+        "name": "Doe Jane",
+        "report_period": "2026-02-01",
+        "security_title": "Common Stock",
+        "ticker": "TST_FD",
+        "title": "Chief Financial Officer",
+        "transaction_code": "S",
+        "transaction_date": "2026-02-01",
+        "transaction_type": "Open market sale",
+        "transaction_shares": 1000.0,
+        "transaction_price_per_share": 50.0,
+        "transaction_value": 50000.0,
+        "shares_owned_before_transaction": 11000.0,
+        "shares_owned_after_transaction": 10000.0
+      },
+      {
+        "filing_date": "2026-01-17",
+        "form_type": "4",
+        "is_board_director": true,
+        "issuer": "Test Fixtures Inc",
+        "name": "Roe Richard",
+        "report_period": "2026-01-15",
+        "security_title": "Common Stock",
+        "ticker": "TST_FD",
+        "title": "Director",
+        "transaction_code": "P",
+        "transaction_date": "2026-01-15",
+        "transaction_type": "Open market purchase",
+        "transaction_shares": 500.0,
+        "transaction_price_per_share": 48.0,
+        "transaction_value": 24000.0,
+        "shares_owned_before_transaction": 2000.0,
+        "shares_owned_after_transaction": 2500.0
+      }
+    ]
+  }
+}

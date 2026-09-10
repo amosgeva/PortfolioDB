@@ -7,8 +7,6 @@ identical across requests since FastMCP wraps it in middleware.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from app.mcp.auth import StaticBearerVerifier, build_verifier, load_token

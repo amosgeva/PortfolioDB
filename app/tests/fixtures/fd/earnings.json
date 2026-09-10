@@ -1,0 +1,50 @@
+{
+  "symbol": "TST_FD",
+  "section": "earnings",
+  "data": {
+    "earnings": [
+      {
+        "accession_number": "0000000001-26-000011",
+        "ticker": "TST_FD",
+        "fiscal_period": "2025-Q4",
+        "report_period": "2025-12-31",
+        "filing_date": "2026-01-30",
+        "filing_datetime": "2026-01-30T16:30:00-05:00",
+        "filing_window": "AFTER_HOURS",
+        "source_type": "10-Q",
+        "currency": "USD",
+        "quarterly": {
+          "earnings_per_share": 0.7,
+          "estimated_earnings_per_share": 0.65,
+          "eps_surprise": "BEAT",
+          "eps_surprise_pct": 0.0769,
+          "revenue": 280000000.0,
+          "estimated_revenue": 270000000.0,
+          "revenue_surprise": "BEAT",
+          "revenue_surprise_pct": 0.037
+        }
+      },
+      {
+        "accession_number": "0000000001-26-000012",
+        "ticker": "TST_FD",
+        "fiscal_period": "2025-Q3",
+        "report_period": "2025-09-30",
+        "filing_date": "2025-10-31",
+        "filing_datetime": "2025-10-31T16:30:00-04:00",
+        "filing_window": "AFTER_HOURS",
+        "source_type": "10-Q",
+        "currency": "USD",
+        "quarterly": {
+          "earnings_per_share": 0.6,
+          "estimated_earnings_per_share": 0.62,
+          "eps_surprise": "MISS",
+          "eps_surprise_pct": -0.0323,
+          "revenue": 270000000.0,
+          "estimated_revenue": 272000000.0,
+          "revenue_surprise": "MISS",
+          "revenue_surprise_pct": -0.0074
+        }
+      }
+    ]
+  }
+}

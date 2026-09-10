@@ -16,6 +16,19 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Changed
+
+- **The 35 SQL integration tests now run in CI.** `test_dedupe_guards.py`,
+  `test_fd_store.py` and `test_data_quality_sql.py` talk SQL to a real
+  database and skip when none is configured; the only CI job with a database
+  ran the MCP `slow` suite alone, so those cases had never executed there. The
+  job now runs them too, with `PORTFOLIODB_TESTS_REQUIRE_DB=1` making a skip
+  for lack of a database a failure (one shared `db.connect_for_tests`). The FD
+  store tests read committed synthetic fixtures under `app/tests/fixtures/fd/`
+  instead of the gitignored enrichment cache, so a clean clone exercises every
+  round trip (1.7.3 re-audit, N06). The four unused test imports pyflakes kept
+  listing are gone.
+
 ### Fixed
 
 - **Weekly contributor P&L no longer double-counts sales or baseline-day

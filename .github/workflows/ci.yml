@@ -173,6 +173,25 @@ jobs:
       - name: Reconciliation suite
         run: python -m pytest app/mcp/tests/ -m slow -q
 
+      # Three modules talk SQL to a real database and carry no marker: they skip
+      # themselves when none is configured, which is right on a laptop and was
+      # silently wrong here. This is the only job with a database, and until
+      # 1.7.4 it ran the slow suite alone, so their 35 cases had never executed
+      # in CI (re-audit N06). The flag turns "skipped for lack of a database"
+      # into a failure, so this job cannot go green by skipping. Same
+      # working-directory rule as the suites they live in; `-rs` prints any
+      # skip that does happen.
+      - name: SQL integration tests (app suite, from app/)
+        working-directory: app
+        env:
+          PORTFOLIODB_TESTS_REQUIRE_DB: '1'
+        run: python -m pytest tests/test_dedupe_guards.py tests/test_fd_store.py -q -rs
+
+      - name: SQL integration tests (MCP data-quality detectors, from the root)
+        env:
+          PORTFOLIODB_TESTS_REQUIRE_DB: '1'
+        run: python -m pytest app/mcp/tests/test_data_quality_sql.py -q -rs
+
   # Until this job existed, nothing in CI ever built app/Dockerfile — so a
   # Dockerfile-only PR passed every check without anyone learning whether the
   # image still built. Not hypothetical: PR #65, a bot's base-image "fix"

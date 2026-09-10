@@ -18,12 +18,16 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+import importlib
+
 import pytest
 
 # Importing deps first puts app/ on sys.path, so the bare `db` module resolves.
-from app.mcp.deps import get_conn  # noqa: F401
+# Done through importlib so the import is visibly for its side effect rather
+# than an unused name every linter has to be told about.
+importlib.import_module("app.mcp.deps")
 
-from db import connect, load_config  # noqa: E402
+from db import connect_for_tests  # noqa: E402
 
 TEST_SYMBOLS = ("ZZDQA", "ZZDQB", "ZZDQC")
 TEST_ACCOUNT = "ZZDQ-ACCT"
@@ -46,14 +50,7 @@ def _wipe(conn) -> None:
 
 @pytest.fixture(scope="module")
 def conn():
-    try:
-        cfg = load_config()
-    except Exception as e:
-        pytest.skip(f"DB config unavailable: {e}")
-    try:
-        c = connect(cfg)
-    except Exception as e:
-        pytest.skip(f"DB unreachable: {e}")
+    c = connect_for_tests(skip=pytest.skip, fail=pytest.fail)
     try:
         yield c
     finally:
