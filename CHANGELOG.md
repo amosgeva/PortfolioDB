@@ -16,6 +16,21 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Security
+
+- **The MCP container no longer receives the application's read-write
+  password.** The `mcp` compose service inherited the shared environment
+  block, and with it `PORTFOLIODB_PASSWORD`, because the pool read the
+  database address through `load_config()`, which insists on that password —
+  so the one container built to hold only a `SELECT`-only role also held the
+  login that could write. The address now comes from a credential-free
+  `db.load_target()`, the compose file gives `mcp` the address and its own
+  settings only, and the read-only path never looks at the write password.
+  The deliberate `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` opt-out still works but
+  you now supply `PORTFOLIODB_PASSWORD` to the service yourself in
+  `docker-compose.override.yml` ([exposure](docs/exposure.md#the-mcp-server)
+  shows the block); without it the server refuses to start and says so.
+
 ### Fixed
 
 - **CSV import rejects incomplete trade rows instead of skipping them.** A

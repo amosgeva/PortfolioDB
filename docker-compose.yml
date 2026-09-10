@@ -40,15 +40,21 @@ x-app-base: &app-base
     postgres:
       condition: service_healthy
 
-x-app-env: &app-env
+# Where the database is. No credentials: the mcp service takes this alone and
+# brings its own read-only role.
+x-db-target: &db-target
   # Talk to the postgres service over the docker network, not the host port
   # published below (which is what .env's PORTFOLIODB_HOST points at).
   PORTFOLIODB_HOST: postgres
   PORTFOLIODB_PORT: 5432
   PORTFOLIODB_DB: portfoliodb
+  TZ: ${PORTFOLIODB_TZ:-UTC}
+
+# The application's own login, for the services that write.
+x-app-env: &app-env
+  <<: *db-target
   PORTFOLIODB_USER: portfoliouser
   PORTFOLIODB_PASSWORD: ${POSTGRES_PASSWORD}
-  TZ: ${PORTFOLIODB_TZ:-UTC}
 
 services:
   postgres:
@@ -149,7 +155,13 @@ services:
     # code starts reading it, not before.
     env_file: []
     environment:
-      <<: *app-env
+      # The database's address only — not *app-env, so the application's
+      # read-write password never reaches this container. The read-only role
+      # below is what it connects as. If you set the fallback flag instead,
+      # you must also hand it PORTFOLIODB_PASSWORD in docker-compose.override.yml
+      # (docs/exposure.md#the-mcp-server shows the block); it refuses to start
+      # and says so otherwise.
+      <<: *db-target
       PORTFOLIODB_MCP_TOKEN: ${PORTFOLIODB_MCP_TOKEN}
       PORTFOLIODB_MCP_HOST: 0.0.0.0
       PORTFOLIODB_MCP_PORT: 8765
