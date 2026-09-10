@@ -527,7 +527,7 @@ def _news_feed(conn, held_syms, watch_syms, stocks) -> tuple[list[dict], str | N
             "time": _format_age(r.get("published_at")),
             "url": _safe_url(r.get("url")),
         })
-    return news
+    return news, None
 
 
 def _realized_by_symbol(fifo) -> list[dict]:
