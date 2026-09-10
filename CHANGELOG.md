@@ -18,6 +18,20 @@ needs a schema step says so under **Upgrading**.
 
 ### Fixed
 
+- **Dividend backfill: a dividend paid before a later split is no longer
+  undercounted.** yfinance states every historical per-share dividend in
+  today's split-adjusted units (Apple's $0.82 of August 2020 comes back as
+  $0.205 after the 4:1), so the shares it is multiplied by must be in today's
+  units too. 1.7.0 read the ledger as of the ex-date, which left a later split
+  out and recorded half (or a quarter) of the cash for every dividend paid
+  before one. The backfill now selects lots by ex-date and counts them in
+  current units (`ledger_inputs.load(units="current")`). **Existing
+  estimates:** rows written by earlier backfills carry the old amounts, and
+  because the dedupe key includes the amount a rerun would insert the
+  corrected row beside the old one. `add_income.py --backfill
+  --replace-estimates` deletes the symbol's `source='yfinance'` rows first
+  and reports how many it replaced; manual rows are never touched.
+
 - **Historical MCP positions and the daily/EOD report state splits in the
   right units.** `get_positions` with an `as_of` before a recorded split
   applied the split anyway, so "the day before a 2:1" reported twenty shares

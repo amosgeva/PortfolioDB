@@ -137,20 +137,37 @@ def prepare(
     return PreparedLedger(lots=lots, actions=acts)
 
 
+UNITS = ("as_of", "current")
+
+
 def load(
     conn,
     *,
     symbol: str | None = None,
     account: str | None = None,
     as_of: date | None = None,
+    units: str = "as_of",
 ) -> PreparedLedger:
     """Read lots and corporate actions from an open connection and prepare them.
 
     Filters are optional and bound as parameters. ``as_of`` keeps lots with
-    ``trade_date <= as_of`` — the same rule the MCP cutoff uses — and hands
-    the same date to ``prepare``, which leaves out actions dated after it (see
-    there for why). Every action is loaded; the date decides which apply.
+    ``trade_date <= as_of`` — the same rule the MCP cutoff uses.
+
+    ``units`` says which day's share units the result is stated in:
+
+    * ``"as_of"`` (default): the observation date's. Actions dated after
+      ``as_of`` are left out (see ``prepare``), so "the position on the day
+      before a 2:1" is ten shares. This is what valuations at a cutoff need.
+    * ``"current"``: today's. Every action applies, including ones dated after
+      ``as_of``. This is what a *quantity that will be multiplied by a
+      present-day per-share figure* needs — the dividend backfill, whose
+      vendor states historical per-share amounts in today's split-adjusted
+      units (re-audit F10).
+
+    Every action is loaded; ``as_of`` and ``units`` decide which apply.
     """
+    if units not in UNITS:
+        raise ValueError(f"units must be one of {UNITS}, got {units!r}")
     query = LOTS_SQL
     params: list[Any] = []
     if symbol is not None:
@@ -166,9 +183,4 @@ def load(
 
     rows = fetch_all(conn, query, tuple(params))
     actions = corporate_actions.fetch_actions(conn)
-    if as_of is not None:
-        # An action dated after the requested day has not happened yet from
-        # that day's point of view; restating into units that do not exist
-        # yet would misstate the position as of that day.
-        actions = [a for a in actions if a.ex_date <= as_of]
-    return prepare(rows, actions)
+    return prepare(rows, actions, as_of=None if units == "current" else as_of)

@@ -38,19 +38,21 @@ BACKFILL_NOTE = "auto-backfill (estimate: pay_date = ex_date; entitlement from l
 
 
 def _shares_held_on(conn, symbol: str, as_of, *, per_account: bool = False) -> dict[str | None, float]:
-    """Shares of ``symbol`` held on ``as_of``, in the units the ledger is read in.
+    """Shares of ``symbol`` held on ``as_of``, in TODAY's split units.
 
-    Goes through the prepared ledger, so a position bought before a recorded
-    split is counted in post-split shares — the units yfinance's dividend
-    series is stated in. The raw BUY−SELL sum this replaced counted ten
-    pre-split shares as ten for a dividend paid after a 2:1, and recorded half
-    the entitlement (audit F10).
+    The lots are selected by the ex-date; their quantity is stated in current
+    units, because that is the unit yfinance states every historical
+    per-share dividend in (Apple's $0.82 of August 2020 comes back as $0.205
+    after the later 4:1). Ten pre-split shares times a rebased per-share
+    figure is half the cash; twenty restated shares times it is the cash. The
+    1.7.0 version read the ledger as of the ex-date, which dropped the later
+    split and undercounted every dividend paid before one (re-audit F10).
 
     Returns {account: shares}; with ``per_account`` False the accounts are
     merged under the single key None, which is the shape the income row
     takes.
     """
-    ledger = ledger_inputs.load(conn, symbol=symbol, as_of=as_of)
+    ledger = ledger_inputs.load(conn, symbol=symbol, as_of=as_of, units="current")
     sym = symbol.upper()
     if not per_account:
         return {None: holdings.holdings_on(ledger.lots, as_of).get(sym, 0.0)}
@@ -82,7 +84,24 @@ def _insert_income(conn, **f) -> int:
     )
 
 
-def _backfill(conn, symbol: str, since, *, per_account: bool = False) -> tuple[int, int]:
+def _replace_estimates(conn, symbol: str) -> int:
+    """Delete the symbol's earlier backfilled estimates; returns how many.
+
+    Only rows the backfill itself wrote (``source = 'yfinance'``). Manual
+    entries are never touched. Needed because the dedupe key includes the
+    amount: a corrected estimate would otherwise be inserted *beside* the old
+    one rather than replace it.
+    """
+    return run(
+        conn,
+        "DELETE FROM income WHERE symbol = %s AND source = 'yfinance'",
+        (symbol,),
+    )
+
+
+def _backfill(
+    conn, symbol: str, since, *, per_account: bool = False, replace_estimates: bool = False
+) -> tuple[int, int]:
     """Insert one estimated DIVIDEND row per ex-date the ledger held shares on.
 
     Returns (inserted, duplicates): the dedupe key is (symbol, account, kind,
@@ -90,15 +109,22 @@ def _backfill(conn, symbol: str, since, *, per_account: bool = False) -> tuple[i
     duplicate instead of a silent zero. ``per_account`` writes one row per
     account; the default merges them under a NULL account, which is the shape
     every row backfilled before 1.7.0 has, so reruns keep deduplicating.
+    ``replace_estimates`` deletes the symbol's earlier yfinance rows first —
+    the way to correct amounts written by a version that counted them wrong.
     """
     import yfinance as yf
 
     # yfinance states per-share dividends in today's (split-adjusted) units,
-    # which is why the entitlement must be counted in the same units.
+    # which is why the entitlement is counted in the same units
+    # (_shares_held_on loads with units="current").
     divs = yf.Ticker(symbol).dividends   # per-share Series indexed by ex-date
     if divs is None or len(divs) == 0:
         print(f"No dividend history for {symbol}")
         return 0, 0
+
+    if replace_estimates:
+        removed = _replace_estimates(conn, symbol)
+        print(f"replaced {removed} earlier estimate(s) for {symbol}")
 
     inserted = duplicates = 0
     for ts, per_share in divs.items():
@@ -132,6 +158,10 @@ def main():
     ap.add_argument("--per-account", action="store_true",
                     help="Backfill one row per account instead of one merged row (account NULL). "
                          "Rows written before 1.7.0 are merged; mixing the two double-counts.")
+    ap.add_argument("--replace-estimates", action="store_true",
+                    help="Delete this symbol's earlier backfilled (source=yfinance) rows before "
+                         "inserting, so corrected amounts replace old estimates instead of "
+                         "landing beside them. Manual rows are never touched.")
     ap.add_argument("--account", default=None)
     ap.add_argument("--kind", choices=KINDS, default="DIVIDEND")
     ap.add_argument("--ex-date", default=None, help="YYYY-MM-DD")
@@ -160,11 +190,14 @@ def main():
             since = (
                 datetime.strptime(args.since, "%Y-%m-%d").date() if args.since else None
             )
-            inserted, duplicates = _backfill(conn, symbol, since, per_account=args.per_account)
+            inserted, duplicates = _backfill(
+                conn, symbol, since,
+                per_account=args.per_account, replace_estimates=args.replace_estimates,
+            )
             print(
                 f"OK backfilled {inserted} dividend row(s) for {symbol}"
                 f" ({duplicates} already present). Rows are estimates: pay date = ex-date,"
-                " entitlement from the ledger in split-adjusted shares."
+                " entitlement from the ledger in today's split-adjusted shares."
             )
             return
 
