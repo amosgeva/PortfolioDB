@@ -16,6 +16,24 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.4] — 2026-09-10
+
+The fourth pass over the audit: the two findings the re-audit of 1.7.3 added.
+The weekly report's contributor arithmetic credited a sale's move twice and
+counted a baseline-day trade as new, which round 3's flat-price fixtures could
+not see; and 35 SQL integration tests had never run in CI because the only job
+with a database ran the slow suite alone. The weekly report also stops taking
+futures-only market-overview snapshots as its week boundaries. No schema
+change and no migration.
+
+**Upgrading**
+
+- Nothing to do. If you run the weekly report yourself, expect the
+  contributor amounts to change where the week held sales or trades dated on
+  the start snapshot's day; the week's totals were already right.
+- The 1.7.3 **Upgrading** step (rerun `--replace-estimates` without `--since`
+  once if it was used with `--since` on 1.7.2) still applies if not done.
+
 ### Changed
 
 - **The 35 SQL integration tests now run in CI.** `test_dedupe_guards.py`,
@@ -1468,7 +1486,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.3...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.4...HEAD
+[1.7.4]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.4
 [1.7.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.3
 [1.7.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.2
 [1.7.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.1
