@@ -16,6 +16,31 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.2] — 2026-09-10
+
+The second pass over the 1.7.x audit: six findings the re-audit of 1.7.1
+turned up, each a case the first pass had reasoned about and got wrong at
+one edge — a split dated after the observation, a dividend paid before a
+later split, a liquidated stretch on the chart, an unnamed account beside a
+named one, a half-filled CSV trade row, and the write password sitting in the
+one container built not to have it. No schema change and no migration.
+
+**Upgrading**
+
+- If you ran `add_income.py --backfill` on 1.7.0 or 1.7.1 for a symbol that
+  split *after* one of its dividends, the estimates for the earlier dividends
+  are undercounted. Rerun with `--backfill --replace-estimates` for that
+  symbol; it deletes the `source='yfinance'` rows first and says how many it
+  replaced. Manual income rows are never touched.
+- Compose deployments that run the MCP server on
+  `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` must now add `PORTFOLIODB_PASSWORD`
+  to the `mcp` service in `docker-compose.override.yml`
+  ([exposure](docs/exposure.md#the-mcp-server) shows the block). Deployments
+  on the read-only role, which is the default, need nothing.
+- A CSV export with half-filled trade rows that imported clean before will
+  now be rejected with the line numbers; fix the rows or blank all three
+  trade fields to make them quote-only.
+
 ### Security
 
 - **The MCP container no longer receives the application's read-write
@@ -1356,7 +1381,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.2
 [1.7.1]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.1
 [1.7.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.0
 [1.6.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.6.0
