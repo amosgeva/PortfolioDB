@@ -124,6 +124,17 @@ class TestPrepare:
         assert plain.price_rows(RAW_PRICE_ROWS) == [dict(r) for r in RAW_PRICE_ROWS]
         assert plain.adjusted_symbols == frozenset()
 
+    def test_prepare_as_of_leaves_out_later_actions(self):
+        """The observation date decides which actions apply: the day before the
+        2:1, ten shares are ten shares (re-audit F03, case A)."""
+        before = ledger_inputs.prepare(LOTS, ACTIONS, as_of=D2)
+        assert before.actions == ()
+        assert {lot["id"]: lot["quantity"] for lot in before.lots}[1] == Decimal("10")
+        on_ex = ledger_inputs.prepare(LOTS, ACTIONS, as_of=D3)
+        assert len(on_ex.actions) == 2
+        assert {lot["id"]: lot["quantity"] for lot in on_ex.lots}[1] == Decimal("20")
+        assert ledger_inputs.prepare(LOTS, ACTIONS).actions == tuple(ACTIONS)
+
     def test_load_filters_actions_after_as_of(self, monkeypatch):
         """As of D2 the splits have not happened: the position is ten shares."""
         monkeypatch.setattr(ledger_inputs, "fetch_all", lambda conn, q, p: [dict(r) for r in LOTS if r["trade_date"] <= D2])

@@ -116,10 +116,23 @@ class PreparedLedger:
 
 
 def prepare(
-    lot_rows: Iterable[Mapping[str, Any]], actions: Iterable[CorporateAction]
+    lot_rows: Iterable[Mapping[str, Any]],
+    actions: Iterable[CorporateAction],
+    *,
+    as_of: date | None = None,
 ) -> PreparedLedger:
-    """Pure half of load(): restate the given rows with the given actions."""
+    """Pure half of load(): restate the given rows with the given actions.
+
+    ``as_of`` is the observation date. An action dated after it has not
+    happened yet from that day's point of view, so it is left out: a position
+    read "as of the day before a 2:1 split" is ten shares at the quote of that
+    day, not twenty shares against that same quote (the MCP historical-cutoff
+    defect in the 1.7.1 re-audit, F03). The rule lives here so every caller
+    that filters lots by date filters actions by the same date.
+    """
     acts = tuple(actions)
+    if as_of is not None:
+        acts = tuple(a for a in acts if a.ex_date <= as_of)
     lots = corporate_actions.adjust_lot_rows([dict(r) for r in lot_rows], acts)
     return PreparedLedger(lots=lots, actions=acts)
 
@@ -134,10 +147,9 @@ def load(
     """Read lots and corporate actions from an open connection and prepare them.
 
     Filters are optional and bound as parameters. ``as_of`` keeps lots with
-    ``trade_date <= as_of`` — the same rule the MCP cutoff uses. The corporate
-    actions are always loaded in full: an action after ``as_of`` must not be
-    applied, and ``lot_factor`` already skips it by comparing ex-dates, so
-    filtering the actions here would only create a second rule to keep in sync.
+    ``trade_date <= as_of`` — the same rule the MCP cutoff uses — and hands
+    the same date to ``prepare``, which leaves out actions dated after it (see
+    there for why). Every action is loaded; the date decides which apply.
     """
     query = LOTS_SQL
     params: list[Any] = []
