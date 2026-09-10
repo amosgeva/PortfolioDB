@@ -764,7 +764,11 @@
     });
     var area = areaLine + ' L' + pts[pts.length-1][0].toFixed(1) + ',' + (H-2) + ' L' + pts[0][0].toFixed(1) + ',' + (H-2) + ' Z';
     var last = pts[pts.length-1];
-    var chg = (data[data.length-1] - data[0]) / data[0] * 100;
+    // A range can start on a day the securities were all sold (value 0), and
+    // a change from zero is not a percentage. The series keeps such points
+    // since 1.7.2; the label says nothing rather than Infinity.
+    var chg = data[0] ? (data[data.length-1] - data[0]) / data[0] * 100 : null;
+    var chgTxt = chg == null ? '—' : F.pct(chg);
     // max drawdown over the visible window (peak → trough), shaded if material
     var peakI = 0, ddS = 0, ddE = 0, maxDD = 0;
     for (var di = 1; di < data.length; di++) {
@@ -806,7 +810,7 @@
       '<div class="pv-y">' + yLabels + '</div>' +
       '<div class="pv-plot">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" ' +
-      'aria-label="Portfolio value, ' + pvRange + ' range, ' + F.pct(chg) +
+      'aria-label="Portfolio value, ' + pvRange + ' range, ' + chgTxt +
         (bad.count ? ', ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted' : '') +
         (pvGapList().length ? ', ' + pvGapList().length + ' collection gap' + (pvGapList().length > 1 ? 's' : '') + ' marked' : '') + '">' +
       '<defs><pattern id="pv-gap" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
@@ -825,7 +829,7 @@
       'background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:6px 9px;' +
       'box-shadow:var(--shadow-tip);font-size:var(--fs-meta);white-space:nowrap;z-index:5"></div>' +
       '<div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none">' +
-      '<span style="color:' + color + '">' + pvRange + ' ' + F.pct(chg) + '</span>' +
+      '<span style="color:' + color + '">' + pvRange + ' ' + chgTxt + '</span>' +
       (maxDD >= 0.005 ? '<span style="color:var(--muted);font-weight:500">  ·  max DD −' + (maxDD*100).toFixed(1) + '%</span>' : '') + '</div>' +
       // Say it on the chart rather than only in the markup: a gap the operator
       // can see but not explain is its own kind of untrustworthy number.

@@ -288,6 +288,12 @@ class TestDashboardPayload:
         data = payload_module.build_payload_data(object(), lambda syms: {})
         assert data["holdings"] == []
         assert data["pv"]["1Y"][0][1] == pytest.approx(1280.0), "history survives the sale"
+        # Re-audit F07: the day everything was sold is a real observation with
+        # value zero, kept on the chart rather than dropped.
+        last_ts, last_val = data["pv"]["1Y"][-1]
+        assert last_ts == int(_ts(D5).timestamp() * 1000)
+        assert last_val == pytest.approx(0.0)
+        assert len(data["pv"]["1Y"]) == 5, "one point per snapshot day, including the zero"
         by_period = {p["period"]: p["portfolio"] for p in data["returns"]["periods"]}
         # D4 was the only day with a move (+9.68%); the D5 sale at the same
         # prices adds nothing and takes nothing away.
