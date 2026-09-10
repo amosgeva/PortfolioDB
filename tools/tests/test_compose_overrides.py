@@ -75,11 +75,12 @@ def _override_blocks_in_docs() -> list[tuple[str, str]]:
     return blocks
 
 
-def _render(override_yaml: str) -> dict:
+def _render(override_yaml: str, *, profile: str | None = None) -> dict:
     """Effective compose model for base + override, from a scratch project dir.
 
     A scratch directory rather than the repo root so the render never reads the
-    operator's real `.env` or their own docker-compose.override.yml.
+    operator's real `.env` or their own docker-compose.override.yml. A service
+    behind a profile (mcp) is only rendered when that profile is named.
     """
     with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
@@ -91,6 +92,7 @@ def _render(override_yaml: str) -> dict:
             [
                 "docker", "compose",
                 "--project-name", "pdbrendercheck",
+                *(["--profile", profile] if profile else []),
                 "-f", "docker-compose.yml",
                 "-f", "override.yml",
                 "config", "--format", "json",
@@ -106,6 +108,10 @@ def _render(override_yaml: str) -> dict:
 
 def _ports(model: dict, service: str) -> list[dict]:
     return model["services"][service].get("ports") or []
+
+
+def _env(model: dict, service: str) -> dict:
+    return model["services"][service].get("environment") or {}
 
 
 def _touched_services(override_yaml: str) -> set[str]:
@@ -155,6 +161,46 @@ def test_override_template_binds_dashboard_to_loopback_only():
     assert all(e.get("host_ip") == "127.0.0.1" for e in entries), (
         f"the template leaves a non-loopback dashboard mapping: {entries}"
     )
+
+
+# ── what the mcp container is handed (re-audit N03) ──────────────────────────
+
+
+def _render_mcp(override_yaml: str = "services: {}\n") -> dict:
+    return _render(override_yaml, profile="mcp")
+
+
+@requires_compose
+def test_the_mcp_service_is_not_handed_the_write_password():
+    """It brings its own read-only role; the application's login is not its business."""
+    model = _render_mcp()
+    mcp = _env(model, "mcp")
+    assert "PORTFOLIODB_PASSWORD" not in mcp, "the mcp container holds the read-write password again"
+    assert "PORTFOLIODB_USER" not in mcp
+    # It still knows where the database is, and the services that write still log in.
+    assert mcp["PORTFOLIODB_HOST"] == "postgres" and mcp["PORTFOLIODB_DB"] == "portfoliodb"
+    assert "PORTFOLIODB_MCP_RO_USER" in mcp and "PORTFOLIODB_MCP_RO_PASSWORD" in mcp
+    for service in ("dashboard", "scheduler"):
+        env = _env(model, service)
+        assert env.get("PORTFOLIODB_PASSWORD") == "synthetic-not-a-secret", service
+        assert env.get("PORTFOLIODB_HOST") == "postgres", service
+
+
+def _fallback_block_in_docs() -> str:
+    text = EXPOSURE_DOC.read_text(encoding="utf-8")
+    blocks = [m.group(1) for m in _FENCE.finditer(text)
+              if "mcp:" in m.group(1) and "PORTFOLIODB_PASSWORD" in m.group(1)]
+    assert len(blocks) == 1, "exposure.md should show exactly one fallback override block"
+    return blocks[0]
+
+
+@requires_compose
+def test_the_documented_fallback_override_supplies_the_password():
+    """The block the guide shows for the opt-out must actually hand the password over."""
+    model = _render_mcp(_fallback_block_in_docs())
+    mcp = _env(model, "mcp")
+    assert mcp.get("PORTFOLIODB_PASSWORD") == "synthetic-not-a-secret"
+    assert mcp.get("PORTFOLIODB_MCP_ALLOW_RW_FALLBACK") == "1"
 
 
 @requires_compose

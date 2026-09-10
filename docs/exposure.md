@@ -106,9 +106,24 @@ a missing grant cannot. The escape hatch for a deliberate operator is
 `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1`, which runs the server on the
 application's read-write credentials and logs a warning on every start.
 
-The MCP container also receives only the environment it needs (the database,
-its own settings) rather than the whole `.env`: the LLM keys and the vendor
-API key have no business in a process that answers an LLM over the network.
+The MCP container also receives only the environment it needs (the database's
+address, its own settings) rather than the whole `.env`: the LLM keys and the
+vendor API key have no business in a process that answers an LLM over the
+network — and neither does the application's read-write password, which the
+`mcp` service is not given at all. The read-only role is the only login it
+holds. If you take the fallback, you have to hand it the password yourself,
+in `docker-compose.override.yml`:
+
+```yaml
+services:
+  mcp:
+    environment:
+      PORTFOLIODB_MCP_ALLOW_RW_FALLBACK: "1"
+      PORTFOLIODB_PASSWORD: ${POSTGRES_PASSWORD}
+```
+
+Without that block the fallback refuses to start and says which line is
+missing, rather than running on a password it was quietly handed.
 
 To let an agent on another machine reach it, tunnel rather than publish:
 

@@ -72,7 +72,16 @@ def _load_env_file_if_needed() -> None:
                 os.environ[key] = val
 
 
-def load_config() -> DbConfig:
+def load_target() -> tuple[str, int, str]:
+    """(host, port, dbname) from the environment — where the database is, with
+    no credentials attached.
+
+    Split out of load_config so a process that brings its own role (the MCP
+    server on its read-only role) can find the database without holding the
+    application's read-write password. load_config used to be the only way to
+    read the host, so the MCP container had to be handed PORTFOLIODB_PASSWORD
+    just to satisfy it (re-audit N03).
+    """
     # Lazy .env fallback so manual `python ...` invocations work like the launchers do.
     _load_env_file_if_needed()
 
@@ -80,6 +89,11 @@ def load_config() -> DbConfig:
     host = os.getenv("PORTFOLIODB_HOST", "127.0.0.1")
     port = int(os.getenv("PORTFOLIODB_PORT", "54320"))
     dbname = os.getenv("PORTFOLIODB_DB", "portfoliodb")
+    return host, port, dbname
+
+
+def load_config() -> DbConfig:
+    host, port, dbname = load_target()
     user = os.getenv("PORTFOLIODB_USER", "portfoliouser")
     password = os.getenv("PORTFOLIODB_PASSWORD", "")
 

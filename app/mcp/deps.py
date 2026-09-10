@@ -24,7 +24,7 @@ from psycopg2.pool import ThreadedConnectionPool
 # app/ is put on sys.path by this package's __init__ (see app/mcp/__init__.py),
 # which runs before any submodule, so the bare sibling import below resolves
 # no matter which app.mcp module is imported first.
-from db import load_config
+from db import load_config, load_target
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ RO_PW_ENV = "PORTFOLIODB_MCP_RO_PASSWORD"  # nosec B105  # nosemgrep
 ALLOW_RW_FALLBACK_ENV = "PORTFOLIODB_MCP_ALLOW_RW_FALLBACK"
 
 
-def _credentials(cfg) -> tuple[str, str, bool]:
+def _credentials() -> tuple[str, str, bool]:
     """(user, password, is_read_only_role) for the pool.
 
     The MCP server answers an LLM. Its surface is read-only by design, and
@@ -54,11 +54,26 @@ def _credentials(cfg) -> tuple[str, str, bool]:
     the two .env lines). The fallback to the application's credentials is
     still there for a deliberate operator, behind PORTFOLIODB_MCP_ALLOW_RW_FALLBACK,
     and is logged as a warning every time the pool is built.
+
+    Only the fallback reads the application's configuration: the read-only
+    path never touches PORTFOLIODB_PASSWORD, so the MCP container does not
+    need to be given it (docker-compose.yml hands the mcp service the
+    database's address and its own settings, not the write password).
     """
     ro_user = (os.getenv(RO_USER_ENV) or "").strip()
     if ro_user:
         return ro_user, os.getenv(RO_PW_ENV) or "", True
     if (os.getenv(ALLOW_RW_FALLBACK_ENV) or "").strip().lower() in ("1", "true", "yes"):
+        try:
+            cfg = load_config()
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"{ALLOW_RW_FALLBACK_ENV} is set, so the MCP server needs the application's "
+                "credentials, but PORTFOLIODB_PASSWORD is not in its environment. The mcp "
+                "compose service is deliberately not given it; add it in "
+                "docker-compose.override.yml (see docs/exposure.md#the-mcp-server), or "
+                f"better, create the read-only role with `make ro-role`. ({e})"
+            ) from e
         log.warning(
             "MCP server is connecting as %s, the application's READ-WRITE role, because "
             "%s is set. Read-only is then only a session setting. Create the read-only "
@@ -76,24 +91,24 @@ def _credentials(cfg) -> tuple[str, str, bool]:
 
 
 def _build_pool() -> ThreadedConnectionPool:
-    cfg = load_config()
+    host, port, dbname = load_target()
     minconn = int(os.getenv("PORTFOLIODB_MCP_POOL_MIN", "1"))
     maxconn = int(os.getenv("PORTFOLIODB_MCP_POOL_MAX", "10"))
     # Two layers, see _credentials: the role decides what the connection MAY
     # do; the session option below makes a stray write fail early even on the
     # fallback credentials.
-    user, password, ro_role = _credentials(cfg)
+    user, password, ro_role = _credentials()
     log.info(
         "Creating MCP DB pool: host=%s port=%s db=%s user=%s min=%s max=%s read_only=session%s",
-        cfg.host, cfg.port, cfg.dbname, user, minconn, maxconn,
+        host, port, dbname, user, minconn, maxconn,
         "+role" if ro_role else " ONLY (fallback)",
     )
     return ThreadedConnectionPool(
         minconn,
         maxconn,
-        host=cfg.host,
-        port=cfg.port,
-        dbname=cfg.dbname,
+        host=host,
+        port=port,
+        dbname=dbname,
         user=user,
         password=password,
         options="-c default_transaction_read_only=on",
