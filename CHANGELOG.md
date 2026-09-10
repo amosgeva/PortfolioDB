@@ -16,6 +16,21 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.5] — 2026-09-10
+
+The fifth pass over the audit closes its last open finding: the weekly
+report's contribution for a position sold during the week, which had no
+closing quote to be valued against and so printed as zero. The figure now
+comes from the value-and-flow identity directly, so a closed position needs no
+quote and a held one without its quote says so instead of reading as zero.
+No schema change and no migration.
+
+**Upgrading**
+
+- Nothing to do. Weekly contributor lines change only for symbols sold during
+  the week with no closing quote, and for held symbols missing a quote (now
+  `n/a`); totals are unchanged.
+
 ### Fixed
 
 - **A position sold during the week keeps its weekly contribution when it
@@ -1501,7 +1516,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.4...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.5...HEAD
+[1.7.5]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.5
 [1.7.4]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.4
 [1.7.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.3
 [1.7.2]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.2
