@@ -18,6 +18,16 @@ needs a schema step says so under **Upgrading**.
 
 ### Fixed
 
+- **The weekly report completes with unnamed accounts present.** 1.7.2 fixed
+  the account sort inside the positions helper, but the account-totals loop
+  in the report itself sorted the same union of accounts (plus the cash
+  accounts) with the default ordering, so an unnamed lot beside a named
+  account still stopped the report two sections later with a `TypeError`.
+  Every account boundary now uses one sort key (unnamed first, `None` and
+  `""` kept distinct) and unnamed accounts print as `(no account)` instead
+  of `None`. The test runs the whole command, not the helper
+  (1.7.2 re-audit, N01 remaining case).
+
 - **The weekly and executive reports state splits in one unit basis.** The
   weekly report valued its start and end positions in each date's units but
   multiplied them by raw snapshot quotes, and fed raw trade rows into its
