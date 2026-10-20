@@ -171,11 +171,17 @@ def _drive_real_sdk(provider: str):
     """Build the real client, send one completion through an in-memory
     transport, and return (url, authorization header) as the server saw them.
     No network, no real key."""
-    import httpx
+    import importlib
+
+    import openai
+
+    # openai 3.x moved from httpx to its fork httpx2, and httpx is no longer
+    # installed alongside it: take the transport from the package the SDK uses.
+    httpx = importlib.import_module(openai.DefaultHttpxClient.__mro__[1].__module__.partition(".")[0])
 
     seen: dict[str, str | None] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request):
         seen["url"] = str(request.url)
         seen["auth"] = request.headers.get("authorization")
         return httpx.Response(200, json=_chat_completion_json())

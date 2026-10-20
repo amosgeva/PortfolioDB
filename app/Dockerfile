@@ -15,7 +15,7 @@
 # pulled" were only nominally the same. The digest below is the multi-arch
 # index; Dependabot (.github/dependabot.yml) proposes the bump when the tag
 # moves, and the weekly scan (security-scan.yml) says when a bump is overdue.
-FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
@@ -30,16 +30,17 @@ FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae
 # redirect to http:// is followed happily, and the download becomes tamperable
 # by anything on the path. The sha256sum check that follows would catch a
 # swapped binary, but only after it had been written to disk.
-# v0.2.49 (2026-08-14): v0.2.33 was built with Go 1.23.1, whose standard
-# library carries a dozen HIGH/CRITICAL advisories (crypto/tls, net/url, x509)
-# that the weekly Trivy scan reports against the binary. Checksums computed
-# from the release assets on 2026-09-09; sizes matched GitHub's asset list.
-ARG SUPERCRONIC_VERSION=v0.2.49
+# v0.2.50 (2026-10-16) is built with Go 1.27.2. v0.2.49's Go 1.26.6 standard
+# library carried HIGH advisories in net/http, http2 and crypto/tls that the
+# weekly Trivy scan reports against the binary, as v0.2.33's Go 1.23.1 did
+# before it. Checksums computed from the release assets on 2026-10-20; each
+# matches the SHA-1 in the release notes and the sha256 GitHub's API records.
+ARG SUPERCRONIC_VERSION=v0.2.50
 ARG TARGETARCH
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) sha=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1 ;; \
-      arm64) sha=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5 ;; \
+      amd64) sha=d2d7c97fbfefc763d5bbcbbb3f8d61f9dd3410ce5d05a737c414994b80b8cdd0 ;; \
+      arm64) sha=a1c0af9872e8de89a1ce5c1b596e26c42917d5a2cf914d98faee2e28156899e2 ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \

@@ -11,3 +11,11 @@
 # itself fetched over TLS. Upgrading pip changes nothing until pypa re-vendors.
 GHSA-6v7p-g79w-8964
 CVE-2025-47273
+#
+# pip 26.2.1 also vendors urllib3 2.7.0. The application's own urllib3 (the one
+# requests and yfinance import) is 2.8.0, which carries the fix; these two are
+# pip's copy only. One needs an HTTPS proxy to intercept (pip runs at build
+# time, straight to PyPI), the other is a memory DoS against pip's own
+# downloads.
+CVE-2026-97687
+CVE-2026-97689
