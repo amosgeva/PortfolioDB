@@ -4,10 +4,10 @@ yfinance>=1.5,<2
 python-dotenv>=1.2.2,<2   # floor is the CVE-2026-28684 fix, not a feature need
 streamlit>=1.63,<2
 python-dateutil>=2.8,<3
-plotly>=5.18,<7
-anthropic>=0.40,<1
+plotly>=5.18,<8
+anthropic>=0.40,<2
 # OpenAI-compatible advisor path (OpenAI / OpenRouter / Ollama / LM Studio)
-openai>=1.50,<3
+openai>=1.50,<4
 # MCP server (app/mcp/)
-fastmcp>=3.3,<4
+fastmcp>=3.3,<5
 uvicorn[standard]>=0.30,<1
