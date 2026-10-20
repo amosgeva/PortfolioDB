@@ -16,6 +16,60 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.6] — 2026-10-20
+
+A maintenance release. The published image is rebuilt on a current base and
+cron runner, which clears every HIGH and CRITICAL finding the weekly image scan
+had been reporting since late September, and every Python dependency moves to
+its newest release, including four major versions. No figure is computed
+differently. Before release, positions, P&L, the report totals, the dashboard
+feed and the MCP tools were computed from a real ledger under the old and the
+new dependency sets, and the two outputs were identical. No schema change and
+no migration.
+
+**Upgrading**
+
+- Nothing to do: `docker compose pull` and restart.
+- Running from source instead: `pip install -r app/requirements.txt` (with
+  `-c app/constraints.txt` for the exact tested set). The ranges now admit
+  plotly 7, anthropic 1.x, openai 3.x and fastmcp 4.
+- If your own code runs inside the image and imports `httpx`, install it
+  yourself: the anthropic and openai SDKs moved to its fork `httpx2`, and
+  `httpx` is no longer in the image.
+
+### Security
+
+- **The image is rebuilt on Debian 13.7.** The pinned `python:3.14-slim` base
+  carried 17 HIGH/CRITICAL advisories with fixes available, in gzip, pcre2,
+  sqlite, OpenSSL and perl (one CRITICAL). The base digest moves to the current
+  one, which ships the fixed packages.
+- **supercronic v0.2.50, built with Go 1.27.2.** v0.2.49's Go 1.26.6 standard
+  library carried HIGH advisories in `net/http`, HTTP/2 and `crypto/tls`, which
+  the scan reports against the scheduler's binary. The new binary is pinned by
+  sha256, checked against both the release notes and GitHub's recorded asset
+  digests.
+- The two remaining urllib3 findings are allowlisted in `.trivyignore`, with
+  the reason. They are in pip's own vendored copy (pip 26.2.1 is the newest
+  release); the urllib3 the application imports is 2.8.0, which carries the
+  fix.
+
+### Changed
+
+- **Dependencies at their newest releases**, as resolved and locked in
+  `app/constraints.txt`: plotly 7, anthropic 1.x, openai 3.x, fastmcp 4 with
+  the MCP SDK 2, streamlit 1.66, pandas 3.0.6, and their transitive
+  dependencies. Pillow stays on 12, because streamlit requires `<13`.
+  Advisor, dashboard, report and MCP behaviour is unchanged, and LLM provider
+  settings and keys work as before.
+- **Tests for the third-party surfaces nothing covered before**, so the next
+  upgrade is judged by the suite rather than by the first broken page. They
+  cover the real anthropic and openai SDKs over an in-memory transport, the
+  executive report's plotly charts, the dashboard script end to end in
+  Streamlit's AppTest (against a live database), and the full MCP server over
+  the protocol and over streamable HTTP with bearer auth. An opt-in check of
+  yfinance's live response shape runs with `PORTFOLIODB_LIVE_VENDOR_TESTS=1`
+  and never in CI.
+
 ## [1.7.5] — 2026-09-10
 
 The fifth pass over the audit closes its last open finding: the weekly
@@ -1516,7 +1570,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.5...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.6...HEAD
+[1.7.6]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.6
 [1.7.5]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.5
 [1.7.4]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.4
 [1.7.3]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.3
