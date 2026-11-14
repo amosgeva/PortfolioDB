@@ -5,6 +5,7 @@
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=amosgeva_PortfolioDB&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=amosgeva_PortfolioDB)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Container image](https://img.shields.io/badge/ghcr.io-portfoliodb-2496ed?logo=docker&logoColor=white)](https://github.com/amosgeva/PortfolioDB/pkgs/container/portfoliodb)
+[![PortfolioDB on StartupScores](https://startupscores.com/badge/portfoliodb.svg?style=shield&v=combo&theme=dark)](https://startupscores.com/open-source/portfoliodb)
 
 **[portfoliodb.app](https://portfoliodb.app)** — the project's front page.
 
