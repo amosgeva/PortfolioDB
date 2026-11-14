@@ -15,7 +15,7 @@
 # pulled" were only nominally the same. The digest below is the multi-arch
 # index; Dependabot (.github/dependabot.yml) proposes the bump when the tag
 # moves, and the weekly scan (security-scan.yml) says when a bump is overdue.
-FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
@@ -30,17 +30,17 @@ FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6
 # redirect to http:// is followed happily, and the download becomes tamperable
 # by anything on the path. The sha256sum check that follows would catch a
 # swapped binary, but only after it had been written to disk.
-# v0.2.50 (2026-10-16) is built with Go 1.27.2. v0.2.49's Go 1.26.6 standard
-# library carried HIGH advisories in net/http, http2 and crypto/tls that the
-# weekly Trivy scan reports against the binary, as v0.2.33's Go 1.23.1 did
-# before it. Checksums computed from the release assets on 2026-10-20; each
-# matches the SHA-1 in the release notes and the sha256 GitHub's API records.
-ARG SUPERCRONIC_VERSION=v0.2.50
+# v0.2.51 (2026-10-21) is built with Go 1.27.3. Go 1.27.2 (v0.2.50) carried a
+# HIGH crypto/x509 advisory, and earlier Go releases others in net/http, http2
+# and crypto/tls, all reported by the weekly Trivy scan against the binary.
+# Checksums computed from the release assets on 2026-11-14; each matches the
+# SHA-1 in the release notes and the sha256 GitHub's API records.
+ARG SUPERCRONIC_VERSION=v0.2.51
 ARG TARGETARCH
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) sha=d2d7c97fbfefc763d5bbcbbb3f8d61f9dd3410ce5d05a737c414994b80b8cdd0 ;; \
-      arm64) sha=a1c0af9872e8de89a1ce5c1b596e26c42917d5a2cf914d98faee2e28156899e2 ;; \
+      amd64) sha=cc232108374e8e2b537045f2d5eaa1229f619db314c3ba6a14d38b35dc0aa123 ;; \
+      arm64) sha=4ae22576a78223d8ccdf5f3b3660a5cbb5288416bf0ca96afc4a36d195932b94 ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     apt-get update && apt-get install -y --no-install-recommends curl ca-certificates; \
@@ -64,8 +64,12 @@ WORKDIR /app
 
 # System deps: psycopg2-binary ships its libpq, but tzdata is needed for the
 # timezone math the engines and the snapshot guard rely on (PORTFOLIODB_TZ).
+#
+# zlib1g is named so apt upgrades it from trixie-security: the pinned base
+# carries 1:1.3.dfsg+really1.3.1-1+b1, which has two HIGH advisories that
+# 1+deb13u1 fixes. Drop it from this line once a base digest ships deb13u1.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tzdata \
+ && apt-get install -y --no-install-recommends tzdata zlib1g \
  && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first for better layer caching. requirements.txt is the
@@ -77,7 +81,13 @@ COPY app/requirements.txt /app/app/requirements.txt
 COPY app/constraints.txt /app/app/constraints.txt
 # `--only-binary :all:` — wheels only, so no package's setup.py runs at build
 # time; every pin in the lock has one.
-RUN pip install --only-binary :all: -c /app/app/constraints.txt -r /app/app/requirements.txt
+#
+# pip itself is upgraded to the locked version first. It vendors its own
+# certifi, msgpack and urllib3, and the base image's pip lags: 26.2.x bundles a
+# certifi that still trusts the compromised emSign roots, which pip would use
+# to verify its own downloads.
+RUN pip install --only-binary :all: -c /app/app/constraints.txt --upgrade pip \
+ && pip install --only-binary :all: -c /app/app/constraints.txt -r /app/app/requirements.txt
 
 # Bring the rest of the app/ tree (engines, dashboard, services, MCP server),
 # the scheduler's crontab, and the SQL — the last one so an install that pulled

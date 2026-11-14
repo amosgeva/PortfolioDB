@@ -2,20 +2,12 @@
 # Each entry says why, and each reason is one that a pin cannot change. Remove
 # an entry the day it stops being true.
 #
-# pip's vendored copies. Trivy reads src/pip/_vendor/vendor.txt and reports
-# the packages pip bundles for its own use as if they were installed. pip
-# 26.2.1 — the newest release, and the one the base image ships — still
-# vendors msgpack 1.1.2 and setuptools 70.3.0 (pkg_resources). Nothing in this
-# application imports either: pip uses msgpack for its own HTTP cache and
-# pkg_resources for its own metadata handling, at build time, on input pip
-# itself fetched over TLS. Upgrading pip changes nothing until pypa re-vendors.
-GHSA-6v7p-g79w-8964
+# pip's vendored setuptools. Trivy reads src/pip/_vendor/vendor.txt and reports
+# the packages pip bundles for its own use as if they were installed. pip 26.3
+# — the newest release, which the Dockerfile installs — still vendors
+# setuptools 70.3.0 (pkg_resources). Nothing in this application imports it:
+# pip uses pkg_resources for its own metadata handling, at build time, on input
+# pip itself fetched over TLS. Upgrading pip changes nothing until pypa
+# re-vendors. (pip 26.3 re-vendored msgpack and urllib3, so their entries are
+# gone.)
 CVE-2025-47273
-#
-# pip 26.2.1 also vendors urllib3 2.7.0. The application's own urllib3 (the one
-# requests and yfinance import) is 2.8.0, which carries the fix; these two are
-# pip's copy only. One needs an HTTPS proxy to intercept (pip runs at build
-# time, straight to PyPI), the other is a memory DoS against pip's own
-# downloads.
-CVE-2026-97687
-CVE-2026-97689
