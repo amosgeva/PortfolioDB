@@ -281,18 +281,20 @@ needs a schema step says so under **Upgrading**.
   markup in the read-only views now goes through one escaping template
   (`html` in `app/dashboard/static/src/core/html.js`); a symbol, note,
   account, news title or fundamentals field containing `<img onerror=…>`,
-  quotes or `&#60;` entities renders as text. *At run time* every
-  interpolated value is escaped or is a branded value accepted only in its
-  own slot: markup only between tags, `safeUrl()` URLs only in `href`/`src`,
-  `attrs()` lists (allow-listed names, no `on*`) only inside a tag. Unquoted
-  attribute values, tag and attribute names and comments are refused, and so
-  is literal text carrying a handler, a script-capable element or
-  `javascript:` (also when written with character references). *Lint and an
-  AST guard* add that the template is only ever used as a tag, imported
-  plainly from `core/html.js`; that no other markup sink is referenced; and
-  that no computed member write or call, reflection or prototype route exists
-  in the front-end sources. A jsdom test walks every view with a hostile
-  payload. Links must be `http(s)`.
+  quotes or `&#60;` entities renders as text. *At run time* a slot may sit
+  only between tags (text or nested markup), inside `<title>` (text only),
+  inside a quoted attribute value (text only), as the whole quoted value of
+  a URL attribute (`safeUrl()` only), or as a separated attribute list in a
+  tag (`attrs()` only, allow-listed names); anything else throws. Literal
+  text is tokenized: every attribute name and element it completes is
+  checked (no `on*`, `srcdoc`, script/style/iframe/textarea and other raw-text
+  or script-capable elements, no comments), and every template must end
+  outside any tag. *Lint and an AST guard* add that the template is only
+  ever used as a tag, imported plainly from `core/html.js`; that no other
+  markup sink is referenced; and that the front-end sources contain no
+  computed member access at all outside two audited data helpers. The exact
+  rules and their known limits are at the top of `core/html.js`. A jsdom test
+  walks every view with a hostile payload. Links must be `http(s)`.
 - **Security: CSV exports neutralise formulas.** A text cell starting with
   `= + - @`, a tab or a carriage return is prefixed with `'` in the positions
   and lots exports; numbers stay numeric.

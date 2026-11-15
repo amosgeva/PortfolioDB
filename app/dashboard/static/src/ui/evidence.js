@@ -5,9 +5,10 @@ import { html } from '../core/html.js';
 import { app, holdingRows, totals } from '../core/state.js';
 import * as F from '../core/format.js';
 import { cashEntries, entryDate, unpricedSymbols } from '../views/kpis.js';
+import { item } from '../core/dict.js';
 
 function evEq(rows, result) {
-  return html`<table class="ev-eq">${rows.map((r) => html`<tr><td class="ev-op">${r[2] || ''}</td><td>${r[0]}</td><td class="num${r[3] ? ' ' + r[3] : ''}">${r[1]}</td></tr>`)}<tr class="ev-sum"><td class="ev-op"></td><td>${result[0]}</td><td class="num${result[2] ? ' ' + result[2] : ''}">${result[1]}</td></tr></table>`;
+  return html`<table class="ev-eq">${rows.map((r) => html`<tr><td class="ev-op">${item(r, 2) || ''}</td><td>${item(r, 0)}</td><td class="num${item(r, 3) ? ' ' + item(r, 3) : ''}">${item(r, 1)}</td></tr>`)}<tr class="ev-sum"><td class="ev-op"></td><td>${item(result, 0)}</td><td class="num${item(result, 2) ? ' ' + item(result, 2) : ''}">${item(result, 1)}</td></tr></table>`;
 }
 // The server rounds each term to the cent and the total from unrounded inputs,
 // so the printed terms can miss the printed total by a penny. The gap is named
@@ -129,9 +130,9 @@ export function kpiEvidence(key, routes) {
       route: holdings,
     };
     case 'deltaLast': {
-      const pv = (app.D.pv && (app.D.pv['1D'] || app.D.pv['1W'])) || [];
-      const prev = pv.length > 1 ? pv[pv.length - 2][1] : null;
-      const last = pv.length ? pv[pv.length - 1][1] : null;
+      const pv = (app.D.pv && (item(app.D.pv, '1D') || item(app.D.pv, '1W'))) || [];
+      const prev = pv.length > 1 ? item(item(pv, pv.length - 2), 1) : null;
+      const last = pv.length ? item(item(pv, pv.length - 1), 1) : null;
       return {
         title: 'Change since last snapshot', value: F.signed(k.deltaLast),
         what: 'How the portfolio moved between the two most recent price collections. It is a step, not a day: if the collector missed a run, this spans the gap.',

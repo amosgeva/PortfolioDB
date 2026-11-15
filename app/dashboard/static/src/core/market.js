@@ -1,4 +1,4 @@
-import { put } from './dict.js';
+import { put, item } from './dict.js';
 
 // US equity session state, computed in New York time.
 //
@@ -99,14 +99,14 @@ export function etParts(date) {
 /** { level: open|pre|after|closed, label } for the session at `date`. */
 export function marketState(date) {
   const p = etParts(date || new Date());
-  const wd = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[p.weekday];
+  const wd = item({ Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }, p.weekday);
   const day = p.year + '-' + p.month + '-' + p.day;
   const mins = (Number.parseInt(p.hour, 10) % 24) * 60 + Number.parseInt(p.minute, 10);
   if (wd === 0 || wd === 6) return { level: 'closed', label: 'Closed' };
   const year = Number(p.year);
-  const hol = nyseHolidays(year)[day];
+  const hol = item(nyseHolidays(year), day);
   if (hol) return { level: 'closed', label: 'Holiday', detail: hol };
-  const early = nyseEarlyCloses(year)[day];
+  const early = item(nyseEarlyCloses(year), day);
   const close = early ? MIN.early : MIN.close;
   const afterEnd = early ? MIN.earlyAfter : MIN.after;
   if (mins >= MIN.open && mins < close) return { level: 'open', label: early ? 'Open · early close 13:00' : 'Market open' };

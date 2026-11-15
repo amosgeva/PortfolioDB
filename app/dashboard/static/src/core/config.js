@@ -23,7 +23,7 @@ export function validCurrency(c) {
 function browserLocale() {
   try {
     const n = typeof navigator !== 'undefined' ? navigator : null;
-    const l = n && ((n.languages && n.languages[0]) || n.language);
+    const l = n && ((n.languages && Array.from(n.languages).at(0)) || n.language);
     if (l) { new Intl.NumberFormat(l); return l; }
   } catch (e) { /* unsupported locale tag: fall through */ }
   return 'en-US';

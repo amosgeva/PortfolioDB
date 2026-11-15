@@ -12,6 +12,7 @@
 // vertical swipe scrolling the page.
 
 import { setHTML } from '../core/html.js';
+import { item } from '../core/dict.js';
 
 const HINT = 'Use the left and right arrow keys to read each point.';
 
@@ -32,7 +33,7 @@ export function attachInspector(o) {
     if (o.nearest) return o.nearest(svgX);
     let best = 0, bestD = Infinity;
     for (let i = 0; i < points.length; i++) {
-      const d = Math.abs(points[i].x - svgX);
+      const d = Math.abs(item(points, i).x - svgX);
       if (d < bestD) { bestD = d; best = i; }
     }
     return best;
@@ -40,7 +41,7 @@ export function attachInspector(o) {
 
   function show(i, announce) {
     idx = Math.max(0, Math.min(points.length - 1, i));
-    const p = points[idx];
+    const p = item(points, idx);
     cross.setAttribute('x1', p.x); cross.setAttribute('x2', p.x); cross.setAttribute('opacity', '1');
     cursor.setAttribute('cx', p.x); cursor.setAttribute('cy', p.y); cursor.setAttribute('opacity', '1');
     const rect = svg.getBoundingClientRect();

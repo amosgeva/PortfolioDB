@@ -1,37 +1,65 @@
 // The one way markup reaches the page.
 //
-// setHTML(el, x) is the only innerHTML write in src/, and it accepts only a
-// value produced by the `html` tagged template below. What holds, and why:
+// setHTML(el, x) is the only innerHTML write in src/, and x must be output of
+// the `html` tagged template below. The rules, exactly as enforced:
 //
-// GUARANTEED AT RUN TIME, for every template object the engine built from
-// source text (a genuine html`...` call site):
-//   * Every interpolated runtime value is either escaped or one of three
-//     branded kinds, and each kind is accepted only in the one slot it was made
-//     for - nothing is promoted by being nested:
-//       - text slot (between tags):   strings (escaped), Markup (html``)
-//       - quoted attribute value:     strings (escaped) - Markup is refused
-//       - URL attribute (href, src):  SafeUrl (safeUrl()) only
-//       - attribute-list slot <a ${}>: AttrList (attrs()) only, whose names
-//         are checked against an allow-list (no on*, no URL attributes)
-//     An unquoted attribute value, a tag or attribute name, a comment or raw
-//     text slot is refused outright.
-//   * Every template must end where it began, outside any tag, so a fragment
-//     cannot leave its parent inside an open tag for the next slot to fill.
-//   * Literal text is checked once per template (cached by identity): no
-//     event-handler attributes, script-capable elements, comments,
-//     javascript:/srcdoc/formaction/xlink:href - also after decoding character
-//     references.
+// RUNTIME (core/html.js; applies to every template object html receives)
+//  R1 Slots. A `${}` slot may sit in exactly one of these positions; any other
+//     position throws when the template is first used:
+//       text     - between tags, outside any element listed under R3.
+//                  Takes strings/numbers (escaped) or html`` Markup.
+//       rcdata   - inside <title>. Takes strings/numbers (escaped) only.
+//       attr     - inside a quoted attribute value (whole or part) of a
+//                  non-URL attribute. Takes strings/numbers (escaped) only.
+//       url      - the ENTIRE quoted value of a URL attribute (href, src, …).
+//                  Takes a safeUrl() value only.
+//       tag      - an attribute-list position inside a start tag, with
+//                  whitespace, '>' or '/' (never a name character) after it.
+//                  Takes an attrs() list only.
+//     So a slot never sits in a tag name, an attribute name, an unquoted
+//     value, beside a name it could extend, or inside a comment.
+//  R2 Nothing is promoted by nesting: each branded kind (Markup, SafeUrl,
+//     AttrList) is accepted only in the slot made for it; arrays are checked
+//     element by element.
+//  R3 Literal text is tokenized once per template (cached by identity):
+//     every attribute name it completes is checked (no on*, srcdoc,
+//     formaction, xlink:href), every element it opens is checked (no script,
+//     style, iframe, object, embed, textarea, xmp, plaintext, noscript,
+//     noembed, noframes, template, form, base, meta, link, math, frame,
+//     svg animate/set/foreignObject …), and comments, <!…> and <?…> are refused.
+//     A text pass also refuses javascript:/vbscript:/data:text/html and handler
+//     spellings, including after decoding character references.
+//  R4 Every template ends where it began - outside any tag, attribute,
+//     <title> or dangling '<' - so a fragment cannot change its parent's
+//     parsing context.
+//  attrs() names are allow-listed (data-*, aria-*, role, tabindex, class,
+//  title, id, opacity, type, name, value, alt, lang, dir, hidden, disabled).
 //
-// GUARANTEED BY LINT AND THE AST GUARD (eslint.config.mjs, tests/guards.test.mjs):
-//   * `html` is used only as a template tag, imported as exactly
-//     `import { html, … } from '…/core/html.js'` - no call, alias, quoted
-//     import name, namespace, re-export, storage or shadowing. This is what
-//     makes "genuine template object" true: at run time a frozen array with a
-//     frozen `raw` cannot be told apart from one, so forging is stopped here.
-//   * No other markup sink, read or written, dotted or computed; no computed
-//     member write or call at all outside core/dict.js; no reflection,
-//     prototype access or Object.assign/defineProperty route to a sink.
-//   * Inline eslint-disable comments are ignored in src/.
+// STATIC (eslint.config.mjs and the AST guard in tests/guards.test.mjs; src/)
+//  S1 `html` is used only as a template tag, imported as exactly
+//     `import { html, … } from '…/core/html.js'` (identifier names, no alias,
+//     no namespace/default/dynamic import, re-export, storage, call or shadow).
+//  S2 No reference - read, write, call or destructure - to a markup sink name
+//     (innerHTML, outerHTML, srcdoc, insertAdjacentHTML, document.write, …)
+//     outside this file.
+//  S3 No computed member access at all (read, write or call) outside
+//     core/dict.js, whose item()/put() touch only plain objects, arrays and
+//     strings; no computed object keys, Reflect, prototype/constructor access,
+//     or Object.assign/defineProperty/descriptor routes; inline
+//     eslint-disable comments are ignored.
+//
+// KNOWN LIMITS (what is NOT claimed)
+//  * A template object forged from runtime text (a frozen array with a frozen
+//    `raw`) cannot be told from a genuine one at run time. S1 is what excludes
+//    it; R3 refuses handlers and script-capable elements in it regardless.
+//  * The rules cover src/. Code outside it (tests, tooling) is not linted
+//    with them and does not run in the dashboard.
+//  * CSS inside a quoted style attribute is escaped text, not parsed: the
+//    rules stop markup and handler injection, not every CSS-level effect.
+//  * The static rules are syntactic; they do not model `eval`-free dynamic
+//    property access through APIs not listed (none is used in src/).
+
+import { item } from './dict.js';
 
 const MARKUP = new WeakSet();
 const URLS = new WeakSet();
@@ -48,23 +76,26 @@ const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;
 
 /** Escape a value for use as HTML text or inside a quoted attribute. */
 export function esc(v) {
-  return String(v == null ? '' : v).replace(/[&<>"'`]/g, (c) => ESC[c]);
+  return String(v == null ? '' : v).replace(/[&<>"'`]/g, (c) => item(ESC, c));
 }
 
 const empty = (v) => v === null || v === undefined || v === false || v === '';
 
-/** Render one interpolated value for a slot kind, or throw. */
+/** Render one interpolated value for a slot kind, or throw (R1, R2). */
 function render(v, kind, attr) {
   if (empty(v)) return '';
   if (Array.isArray(v)) return v.map((x) => render(x, kind, attr)).join('');
   switch (kind) {
     case 'text':
       if (isSafe(v)) return v.s;
-      if (isAttrList(v)) throw new TypeError('html: an attrs() list belongs in a tag, not in text');
-      return esc(isSafeUrl(v) ? v.u : v);
+      if (isBranded(v)) throw new TypeError('html: only text or html`` markup belongs between tags');
+      return esc(v);
+    case 'rcdata':
+      if (isBranded(v)) throw new TypeError('html: only text may be interpolated into <' + attr + '>');
+      return esc(v);
     case 'attr':
-      if (isSafe(v) || isAttrList(v)) throw new TypeError('html: markup may not be interpolated into the ' + attr + ' attribute');
-      return esc(isSafeUrl(v) ? v.u : v);
+      if (isBranded(v)) throw new TypeError('html: only text may be interpolated into the ' + attr + ' attribute');
+      return esc(v);
     case 'url':
       if (!isSafeUrl(v)) throw new TypeError('html: ' + attr + ' needs a safeUrl() value');
       return esc(v.u);
@@ -76,94 +107,143 @@ function render(v, kind, attr) {
   }
 }
 
-// ---- literal-text policy -------------------------------------------------
-const DENY_LITERAL = [
+// ---- R3: literal text ----------------------------------------------------
+const FORBIDDEN_ELEMENT = new Set(['script', 'style', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'base', 'meta', 'link',
+  'form', 'template', 'noscript', 'noembed', 'noframes', 'textarea', 'xmp', 'plaintext', 'listing', 'math', 'animate', 'animatemotion',
+  'animatetransform', 'set', 'foreignobject', 'handler', 'portal', 'svg:script']);
+const RCDATA = new Set(['title']);
+const FORBIDDEN_ATTR = /^(on.*|srcdoc|formaction|xlink:href|xmlns:.*|is)$/i;
+const DENY_TEXT = [
   /(^|[\s"'/`=])on[a-z]+\s*=/i,
-  /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|form|style|template|noscript|math|animate|set|foreignobject|handler|xmp|plaintext)\b/i,
-  /javascript:|vbscript:|livescript:|data:text\/html|srcdoc|formaction|xlink:href|<!--|<!\[cdata\[|<\?/i,
+  /javascript:|vbscript:|livescript:|data:text\/html|<!--|<!\[cdata\[/i,
 ];
 const NAMED_REFS = { colon: ':', tab: '\t', newline: '\n', lpar: '(', rpar: ')', sol: '/', equals: '=', lt: '<', gt: '>', quot: '"', apos: '\'', amp: '&' };
-/** Literal text with character references decoded and control/space runs
- *  removed, so `java&#115;cript:` or `on&#99;lick=` are seen for what they are. */
 function decoded(s) {
   return s.replace(/&#x([0-9a-f]+);?/gi, (m, h) => String.fromCodePoint(Number.parseInt(h, 16) || 32))
     .replace(/&#(\d+);?/g, (m, d) => String.fromCodePoint(Number(d) || 32))
-    .replace(/&([a-z]+);/gi, (m, n) => (Object.hasOwn(NAMED_REFS, n.toLowerCase()) ? NAMED_REFS[n.toLowerCase()] : m));
+    .replace(/&([a-z]+);/gi, (m, n) => (Object.hasOwn(NAMED_REFS, n.toLowerCase()) ? item(NAMED_REFS, n.toLowerCase()) : m));
 }
-function checkLiteral(literal) {
+function checkText(strings) {
+  // Slots are joined as a space, so a boundary is a separator, never glue.
+  const literal = strings.join(' ');
   const dec = decoded(literal);
   const squeezed = Array.from(dec).filter((ch) => ch.codePointAt(0) > 32).join('');
-  const variants = [literal, dec, squeezed];
-  for (const text of variants) {
-    for (const re of DENY_LITERAL) {
+  for (const text of [literal, dec, squeezed]) {
+    for (const re of DENY_TEXT) {
       if (re.test(text)) throw new TypeError('html: template literal text is not allowed (' + re.source.slice(0, 40) + '…)');
     }
   }
 }
 
-// ---- slot classification -------------------------------------------------
+// ---- R1/R3/R4: the tokenizer --------------------------------------------
 const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'srcset', 'poster', 'background', 'cite', 'data', 'ping', 'xlink:href', 'manifest', 'codebase', 'longdesc', 'usemap']);
+const isSpace = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
+const fail = (why) => { throw new TypeError('html: ' + why); };
 
 /**
- * Classify every hole by the context the literal text puts it in, with a
- * small HTML tokenizer over the literal parts. Holes do not change the state:
- * escaped text cannot, Markup is only accepted in text slots and is itself a
- * balanced template, and an AttrList is a complete `name="value"` sequence.
+ * Walk the literal parts as an HTML tokenizer would, and return one slot
+ * descriptor per hole. Slots do not change the state: escaped text cannot,
+ * Markup is a balanced template (R4) accepted only in text slots, and an
+ * AttrList is a complete ` name="value"` sequence followed by a separator.
  */
 function classify(strings) {
   const holes = [];
-  let st = 'text', attr = '';
-  for (let i = 0; i < strings.length; i++) {
-    const s = strings[i];
+  let st = 'text', name = '', attr = '', endTag = false, rc = '', valueLen = 0, quote = '';
+  const n = strings.length;
+  const completeTagName = () => {
+    const tag = name.toLowerCase();
+    if (!/^[a-z][a-z0-9:-]*$/.test(tag)) fail('malformed tag name "' + name + '"');
+    if (!endTag && FORBIDDEN_ELEMENT.has(tag)) fail('<' + tag + '> is not allowed in a template');
+    rc = !endTag && RCDATA.has(tag) ? tag : '';
+  };
+  const completeAttrName = () => {
+    if (FORBIDDEN_ATTR.test(attr)) fail('attribute "' + attr + '" is not allowed in a template');
+  };
+  const closeTag = () => { st = rc ? 'rcdata' : 'text'; };
+  for (let i = 0; i < n; i++) {
+    const s = item(strings, i);
     for (let j = 0; j < s.length; j++) {
-      const c = s[j];
+      const c = item(s, j);
       switch (st) {
         case 'text':
-          // A '<' right before a hole would let the hole name the tag.
-          if (c === '<' && (j === s.length - 1 ? i < strings.length - 1 : /[a-zA-Z/!?]/.test(s[j + 1]))) st = 'tagname';
+          if (c === '<') {
+            if (j === s.length - 1) fail(i < n - 1 ? 'a slot may not name a tag' : 'a template may not end with "<"');
+            const d = item(s, j + 1);
+            if (d === '!' || d === '?') fail('comments and <!…>/<?…> are not allowed in a template');
+            if (d === '/') { endTag = true; j++; } else endTag = false;
+            if (j === s.length - 1) fail('a slot may not name a tag');
+            name = ''; st = 'tagname';
+          }
+          break;
+        case 'rcdata':
+          if (c === '<' && s.slice(j + 1, j + 2 + rc.length).toLowerCase() === '/' + rc) {
+            endTag = true; name = ''; j += 1; st = 'tagname';
+          }
           break;
         case 'tagname':
+          if (isSpace(c)) { completeTagName(); st = endTag ? 'endtag' : 'tag'; }
+          else if (c === '>') { completeTagName(); if (endTag) st = 'text'; else closeTag(); }
+          else if (c === '/') { completeTagName(); st = 'tag'; }
+          else name += c;
+          break;
+        case 'endtag':
           if (c === '>') st = 'text';
-          else if (/\s/.test(c)) st = 'tag';
           break;
         case 'tag':
-          if (c === '>') st = 'text';
-          else if (c !== '/' && !/\s/.test(c)) { st = 'attrname'; attr = c.toLowerCase(); }
+          if (c === '>') closeTag();
+          else if (c === '/') { if (item(s, j + 1) === '>') { st = 'text'; j++; } }
+          else if (!isSpace(c)) { st = 'attrname'; attr = c.toLowerCase(); }
           break;
         case 'attrname':
-          if (c === '=') st = 'beforevalue';
-          else if (c === '>') st = 'text';
-          else if (/\s/.test(c)) st = 'afterattr';
+          if (c === '=') { completeAttrName(); st = 'beforevalue'; }
+          else if (c === '>') { completeAttrName(); closeTag(); }
+          else if (isSpace(c) || c === '/') { completeAttrName(); st = 'afterattr'; }
           else attr += c.toLowerCase();
           break;
         case 'afterattr':
           if (c === '=') st = 'beforevalue';
-          else if (c === '>') st = 'text';
-          else if (!/\s/.test(c)) { st = 'attrname'; attr = c.toLowerCase(); }
+          else if (c === '>') closeTag();
+          else if (!isSpace(c) && c !== '/') { st = 'attrname'; attr = c.toLowerCase(); }
           break;
         case 'beforevalue':
-          if (c === '"') st = 'dq';
-          else if (c === '\'') st = 'sq';
-          else if (c === '>') st = 'text';
-          else if (!/\s/.test(c)) st = 'unquoted';
+          if (c === '"' || c === '\'') { st = 'value'; quote = c; valueLen = 0; }
+          else if (c === '>') closeTag();
+          else if (!isSpace(c)) st = 'unquoted';
           break;
-        case 'dq': if (c === '"') st = 'tag'; break;
-        case 'sq': if (c === '\'') st = 'tag'; break;
+        case 'value':
+          if (c === quote) st = 'tag';
+          else valueLen++;
+          break;
         case 'unquoted':
-          if (/\s/.test(c)) st = 'tag';
-          else if (c === '>') st = 'text';
+          if (isSpace(c)) st = 'tag';
+          else if (c === '>') closeTag();
           break;
         default: break;
       }
     }
-    if (i < strings.length - 1) {
-      if (st === 'text') holes.push({ kind: 'text' });
-      else if (st === 'dq' || st === 'sq') holes.push({ kind: URL_ATTRS.has(attr) ? 'url' : 'attr', attr });
-      else if (st === 'tag' || st === 'afterattr') holes.push({ kind: 'tag' });
-      else holes.push({ kind: 'bad', why: st === 'tagname' ? 'a tag name' : st === 'attrname' ? 'an attribute name' : 'an unquoted attribute value' });
+    if (i === n - 1) break;
+    const next = item(strings, i + 1);
+    const first = next.length ? item(next, 0) : '';
+    switch (st) {
+      case 'text': holes.push({ kind: 'text' }); break;
+      case 'rcdata': holes.push({ kind: 'rcdata', attr: rc }); break;
+      case 'value':
+        if (URL_ATTRS.has(attr)) {
+          if (valueLen !== 0 || first !== quote) fail('a ' + attr + ' slot must be the entire quoted value');
+          holes.push({ kind: 'url', attr });
+        } else holes.push({ kind: 'attr', attr });
+        valueLen++;
+        break;
+      case 'tag': case 'afterattr':
+        if (!(first === '' ? false : isSpace(first) || first === '>' || first === '/')) fail('an attribute-list slot must be followed by whitespace, ">" or "/"');
+        holes.push({ kind: 'tag' });
+        break;
+      case 'tagname': fail('a slot may not sit in a tag name'); break;
+      case 'attrname': fail('a slot may not sit in or beside an attribute name'); break;
+      default: fail('a slot may not sit in an unquoted attribute value');
     }
   }
-  if (st !== 'text') throw new TypeError('html: a template must end outside any tag (it ends inside ' + st + ')');
+  if (st !== 'text') fail('a template must end outside any tag or <title> (it ends in ' + st + ')');
   return holes;
 }
 
@@ -171,7 +251,7 @@ const PLANS = new WeakMap();
 function plan(strings) {
   let p = PLANS.get(strings);
   if (p) return p;
-  checkLiteral(strings.join('\u0000'));
+  checkText(strings);
   p = classify(strings);
   PLANS.set(strings, p);
   return p;
@@ -185,17 +265,16 @@ function isTemplateStrings(strings) {
 
 /**
  * Tagged template: html`<b>${text}</b>` returns Markup for a text slot.
- * Arrays are joined, each element rendered for the slot; null, undefined,
+ * Arrays are joined, each element rendered for its slot; null, undefined,
  * false and '' render as nothing, so `${cond && html`…`}` works.
  */
 export function html(strings, ...values) {
   if (!isTemplateStrings(strings)) throw new TypeError('html must be used as a tagged template');
   const holes = plan(strings);
-  let out = strings[0];
+  let out = item(strings, 0);
   for (let i = 0; i < values.length; i++) {
-    const h = holes[i];
-    if (h.kind === 'bad') throw new TypeError('html: interpolation into ' + h.why + ' is not supported');
-    out += render(values[i], h.kind, h.attr) + strings[i + 1];
+    const h = item(holes, i);
+    out += render(item(values, i), h.kind, h.attr) + item(strings, i + 1);
   }
   return brand(MARKUP, { s: out });
 }
@@ -206,24 +285,20 @@ export function join(items, sep) {
   return brand(MARKUP, { s: items.map((x) => render(x, 'text')).join(s) });
 }
 
-// Attribute names attrs() may set. No event handlers (on*), no URL-bearing
-// attributes (href/src/... go in the template literally, with a safeUrl()
-// value), no srcdoc/formaction/style-with-url tricks.
 const ATTR_NAME = /^(?:(?:data|aria)-[a-z0-9-]+|role|tabindex|class|title|id|opacity|type|name|value|alt|lang|dir|hidden|disabled)$/;
 
 /**
  * An attribute list for a tag slot: attrs({ 'data-sym': s, role: 'button' })
  * renders ` data-sym="…" role="button"`. Names must be on the allow-list;
- * values are escaped; null/undefined/false values are omitted.
+ * values are escaped text; null/undefined/false values are omitted.
  */
 export function attrs(map) {
   let s = '';
-  for (const name of Object.keys(map)) {
-    if (!ATTR_NAME.test(name)) throw new TypeError('attrs: attribute "' + name + '" is not allowed');
-    const v = map[name];
+  for (const [key, v] of Object.entries(map)) {
+    if (!ATTR_NAME.test(key)) throw new TypeError('attrs: attribute "' + key + '" is not allowed');
     if (v === null || v === undefined || v === false) continue;
-    if (isBranded(v) && !isSafeUrl(v)) throw new TypeError('attrs: ' + name + ' takes text, not markup');
-    s += ' ' + name + '="' + esc(isSafeUrl(v) ? v.u : v) + '"';
+    if (isBranded(v)) throw new TypeError('attrs: ' + key + ' takes text, not a branded value');
+    s += ' ' + key + '="' + esc(v) + '"';
   }
   return brand(ATTRS, { s });
 }

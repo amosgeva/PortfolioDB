@@ -6,6 +6,7 @@ import { html, setHTML } from '../core/html.js';
 import { app } from '../core/state.js';
 import { symOpenBtn } from '../ui/symbols.js';
 import { isDark } from '../ui/theme.js';
+import { item } from '../core/dict.js';
 
 function tile(l, v, cls) {
   return html`<div class="stat-mini stat-mini--well"><div class="v num${cls ? ' ' + cls : ''}">${v}</div><div class="l">${l}</div></div>`;
@@ -37,7 +38,7 @@ export function renderRisk() {
   const C = R.corr || {}, syms = C.syms || [], m = C.m || [];
   if (syms.length < 2) { setHTML(corrHost, html`<div class="empty">Need at least two holdings for correlations.</div>`); return; }
   const rows = syms.map((si, i) => html`<span class="corr__lbl" style="text-align:right;padding-right:6px">${si}</span>${syms.map((sj, j) => {
-    const v = m[i] ? m[i][j] : null;
+    const v = item(m, i) ? item(item(m, i), j) : null;
     if (v == null) return html`<span class="corr__cell" style="background:var(--surface-2);color:var(--faint)">—</span>`;
     const strong = Math.abs(v) > 0.65 && !isDark();
     return html`<span class="corr__cell" title="${si + ' × ' + sj + ' = ' + v.toFixed(2)}" style="${'background:' + corrColor(v) + (strong ? ';color:#fff' : '')}">${v.toFixed(2)}</span>`;

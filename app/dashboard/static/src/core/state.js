@@ -5,6 +5,7 @@
 // and never mutated by a later payload.
 
 import { readConfig } from './config.js';
+import { item } from './dict.js';
 
 export const app = {
   D: {},
@@ -31,9 +32,9 @@ export function initState(D) {
 }
 
 export function get(sym) {
-  return Object.hasOwn(app.stocks, sym) ? app.stocks[sym] : undefined;
+  return Object.hasOwn(app.stocks, sym) ? item(app.stocks, sym) : undefined;
 }
-export function list() { return Object.keys(app.stocks).map((k) => app.stocks[k]); }
+export function list() { return Object.keys(app.stocks).map((k) => item(app.stocks, k)); }
 
 /** Open positions joined to their latest quote. */
 export function holdingRows() {
@@ -54,17 +55,17 @@ export function totals(rs) {
 
 // symLots carries every lot per symbol (payload builds it from the same rows
 // the P&L engine uses), so a truncated list can state what it is truncating.
-export function lotTotal(sym) { return ((app.D.symLots || {})[sym] || []).length; }
+export function lotTotal(sym) { return (item(app.D.symLots || {}, sym) || []).length; }
 export function lotTotalAll() {
   const m = app.D.symLots || {};
   let n = 0;
-  Object.keys(m).forEach((k) => { n += m[k].length; });
+  Object.keys(m).forEach((k) => { n += item(m, k).length; });
   return n;
 }
 
 /** The price series used for the benchmark overlay, or null. */
 export function benchmarkSeries() {
   const ph = app.D.priceHist || {};
-  const s = ph[app.cfg.benchmarkSymbol];
+  const s = item(ph, app.cfg.benchmarkSymbol);
   return Array.isArray(s) && s.length > 1 ? s : null;
 }

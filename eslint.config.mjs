@@ -5,9 +5,9 @@
 // The no-restricted-syntax rules are the static half of the guarantee stated
 // at the top of app/dashboard/static/src/core/html.js. They ban SHAPES, not
 // spellings, because spellings can always be rebuilt at run time:
-//   * no computed member write or call anywhere (core/dict.js `put` is the one
-//     audited computed write), so `const k = 'innerHTML'; el[k] = x` and
-//     `el[m](x)` are both impossible to write;
+//   * no computed member access at all - read, write or call - outside
+//     core/dict.js (`item`/`put`, plain data only), so `el[k] = x`,
+//     `el[m](x)` and `const fn = el[k]; fn.call(...)` are all unwritable;
 //   * no reference at all - read, write, call or destructure - to a markup
 //     sink name outside core/html.js, so `const f = el.insertAdjacentHTML`
 //     is caught too;
@@ -31,10 +31,8 @@ export const SINKS = [
     message: 'Markup sinks are reached only through setHTML(el, html`...`) from core/html.js.' },
   { selector: `MemberExpression[computed=true][property.value=/^(${SINK_NAMES}|on.*)$/i]`,
     message: 'A computed reference to a markup or event-handler property is still a sink.' },
-  { selector: 'AssignmentExpression > MemberExpression.left[computed=true]',
-    message: 'No computed member writes: a key held in a variable can be innerHTML or on*. Use put() from core/dict.js.' },
-  { selector: 'CallExpression > MemberExpression.callee[computed=true]',
-    message: 'No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write.' },
+  { selector: 'MemberExpression[computed=true]',
+    message: 'No computed member access (read, write or call): a key held in a variable can name a sink. Use item()/put() from core/dict.js, Map, or Array#at.' },
   { selector: 'AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]',
     message: 'No on* property handlers; use addEventListener.' },
   { selector: "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(on.*|srcdoc|formaction)$/i]",
@@ -88,7 +86,7 @@ export const SRC_RULES = {
 // exactly the rules it exists to implement, and from nothing else.
 const without = (list, ...starts) => list.filter((r) => !starts.some((s) => r.selector.startsWith(s)));
 export const HTML_JS_RULES = [...without(SINKS, 'MemberExpression[property.name=/^(innerHTML'), ...without(HTML_USAGE, "Identifier[name='html']")];
-export const DICT_JS_RULES = [...without(SINKS, 'AssignmentExpression > MemberExpression.left[computed=true]', 'MemberExpression[property.name=/^(prototype'), ...HTML_USAGE];
+export const DICT_JS_RULES = [...without(SINKS, 'MemberExpression[computed=true]', 'MemberExpression[property.name=/^(prototype'), ...HTML_USAGE];
 
 export default [
   {

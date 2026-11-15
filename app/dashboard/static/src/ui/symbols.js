@@ -9,6 +9,7 @@
 import { html, attrs, safeUrl } from '../core/html.js';
 import { app } from '../core/state.js';
 import { symColor } from '../charts/common.js';
+import { item } from '../core/dict.js';
 
 // Attributes that turn a [data-sym] element into a real control. One delegated
 // handler opens the drawer, so each trigger has to carry its own role, tab stop
@@ -41,7 +42,7 @@ const CDN = 'https://assets.parqet.com/logos/symbol/';
  *  (config.logo_cdn) - a fresh install with no logo cache otherwise leaked its
  *  whole holdings list (audit A-5). */
 export function logoUrl(sym) {
-  const cached = safeUrl((app.D.logos || {})[sym], { allowDataImage: true });
+  const cached = safeUrl(item(app.D.logos || {}, sym), { allowDataImage: true });
   if (cached) return cached;
   if (app.cfg.logoCdn) return safeUrl(CDN + encodeURIComponent(sym) + '?format=png&size=64');
   return null;

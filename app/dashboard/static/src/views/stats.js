@@ -9,6 +9,7 @@ import { $ } from '../core/dom.js';
 import { html, setHTML } from '../core/html.js';
 import { app } from '../core/state.js';
 import { pctTxt } from '../core/format.js';
+import { item } from '../core/dict.js';
 
 function recCard(label, rec, meta) {
   if (!rec) return html`<div class="rec"><div class="rec__lbl">${label}</div><div class="rec__val">—</div><div class="rec__meta">${meta || 'not enough history'}</div></div>`;
@@ -55,9 +56,9 @@ export function renderStats() {
     tbl.rows.forEach((r) => r.months.forEach((m) => { if (m != null) peak = Math.max(peak, Math.abs(m)); }));
     const head = html`<tr><th class="stbl__yr">Year</th>${tbl.labels.map((l) => html`<th>${l}</th>`)}<th>Year</th></tr>`;
     const body = tbl.rows.map((r) => html`<tr><td class="stbl__yr">${r.year}</td>${r.months.map((m, i) => {
-      const partial = (r.partial_months || []).indexOf(tbl.labels[i]) >= 0;
+      const partial = (r.partial_months || []).indexOf(item(tbl.labels, i)) >= 0;
       const cls = 'stbl__m' + (m == null ? '' : ' on') + (partial ? ' part' : '');
-      const title = m == null ? 'no observations' : tbl.labels[i] + ' ' + r.year + ': ' + pctTxt(m) + (partial ? ' (partial period)' : '');
+      const title = m == null ? 'no observations' : item(tbl.labels, i) + ' ' + r.year + ': ' + pctTxt(m) + (partial ? ' (partial period)' : '');
       return html`<td class="${cls}" style="${monthTint(m, peak)}" title="${title}">${m == null ? '·' : pctTxt(m, 1)}</td>`;
     })}<td class="tot${r.year_pct == null ? '' : ' on'}" title="${r.months_observed + ' month(s) observed'}">${pctTxt(r.year_pct, 1)}</td></tr>`);
     setHTML(months, html`${head}${body}`);
@@ -65,7 +66,7 @@ export function renderStats() {
 
   if (hit) {
     setHTML(hit, html`${['day', 'week', 'month'].map((k) => {
-      const b = st[k], decided = b.positive + b.negative;
+      const b = item(st, k), decided = b.positive + b.negative;
       const upPct = decided ? (b.positive / decided) * 100 : 0;
       const note = b.partial_excluded ? b.complete + ' complete (' + b.partial_excluded + ' partial excluded)' : b.complete + ' ' + k + 's';
       return html`<div class="hitrow"><div class="hitrow__lbl">${k}s</div><div class="hitrow__track"><div class="hitrow__up" style="width:${upPct.toFixed(1)}%"></div><div class="hitrow__down" style="width:${(100 - upPct).toFixed(1)}%"></div></div><div class="hitrow__val" title="${note}">${b.hit_rate_pct == null ? '—' : b.hit_rate_pct.toFixed(0) + '% up'} <span style="color:var(--faint)">· ${b.complete}</span></div></div>`;

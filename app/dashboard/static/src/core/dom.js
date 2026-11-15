@@ -1,3 +1,4 @@
+import { item } from './dict.js';
 // Small DOM helpers shared by every view. Nothing here writes markup: that is
 // html.js's job alone.
 
@@ -35,7 +36,7 @@ export function trapTab(container, e) {
   const f = $all(FOCUSABLE, container).filter((el) =>
     el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   if (!f.length) { e.preventDefault(); return; }
-  const first = f[0], last = f[f.length - 1], active = document.activeElement;
+  const first = item(f, 0), last = item(f, f.length - 1), active = document.activeElement;
   if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
 }

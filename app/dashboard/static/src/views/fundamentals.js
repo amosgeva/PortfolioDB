@@ -6,6 +6,7 @@ import { $, setText } from '../core/dom.js';
 import { html, setHTML, safeUrl } from '../core/html.js';
 import { app } from '../core/state.js';
 import * as F from '../core/format.js';
+import { item } from '../core/dict.js';
 
 function fpct(x, d) { return x == null ? '—' : F.num(Number(x) * 100, d == null ? 1 : d) + '%'; }
 function fratio(x, d) { return x == null ? '—' : F.num(Number(x), d == null ? 2 : d); }
@@ -18,7 +19,7 @@ function statBox(label, val) {
 // Magnitude, not direction: positive quarters take a neutral ink and only a
 // negative quarter earns a colour, because only it means something.
 function barChart(items, key, title) {
-  const vals = items.map((t) => (t[key] == null ? null : Number(t[key])));
+  const vals = items.map((t) => (item(t, key) == null ? null : Number(item(t, key))));
   if (!vals.some((v) => v != null)) {
     return html`<div style="flex:1"><div style="font-size:var(--fs-meta);color:var(--muted);margin-bottom:6px">${title}</div><div class="empty" style="padding:14px">no data</div></div>`;
   }
@@ -27,12 +28,12 @@ function barChart(items, key, title) {
   const W = items.length * 26, H = 80;
   const bars = nums.map((v, i) => {
     const h = Math.abs(v) / max * 56, x = i * 26 + 4, y = v >= 0 ? (62 - h) : 62;
-    const lbl = F.periodLabel((items[i] || {}).period) + ' · ' + (vals[i] == null ? 'no data' : (vals[i] < 0 ? '−' : '') + F.compact(Math.abs(vals[i])));
+    const lbl = F.periodLabel((item(items, i) || {}).period) + ' · ' + (item(vals, i) == null ? 'no data' : (item(vals, i) < 0 ? '−' : '') + F.compact(Math.abs(item(vals, i))));
     return html`<rect x="${x}" y="${y.toFixed(1)}" width="16" height="${h.toFixed(1)}" rx="2" fill="${v < 0 ? 'var(--down)' : 'var(--muted)'}"><title>${lbl}</title></rect>`;
   });
   // The peak names the top of the scale, the ends name the span.
-  const first = F.periodLabel((items[0] || {}).period);
-  const lastP = F.periodLabel((items[items.length - 1] || {}).period);
+  const first = F.periodLabel((item(items, 0) || {}).period);
+  const lastP = F.periodLabel((item(items, items.length - 1) || {}).period);
   const span = first === lastP ? first : first + ' – ' + lastP;
   return html`<div style="flex:1;min-width:160px"><div class="bc-hd"><span>${title}</span><span class="bc-peak num">peak ${F.compact(max)}</span></div><svg viewBox="0 0 ${W} ${H}" style="width:100%;height:80px" preserveAspectRatio="none" role="img" aria-label="${title + ', ' + span + ', peak ' + F.compact(max)}"><line x1="0" x2="${W}" y1="62" y2="62" stroke="var(--border)"/>${bars}</svg><div class="bc-x"><span>${first}</span><span>${lastP}</span></div></div>`;
 }
@@ -52,7 +53,7 @@ export function renderFundamentals() {
     if (app.D.fdDefault) sel.value = app.D.fdDefault;
     sel.addEventListener('change', renderFundamentals);
   }
-  const sym = sel.value, fd = (app.D.fundamentals || {})[sym];
+  const sym = sel.value, fd = item(app.D.fundamentals || {}, sym);
   setText($('#fd-asof'), app.D.asOf ? 'As of ' + app.D.asOf : '');
   if (!fd) { setHTML(host, html`<div class="empty">No fundamentals on file for ${sym}.</div>`); return; }
 
@@ -72,7 +73,7 @@ export function renderFundamentals() {
       ['Profitability', [['ROE', fpct(m.return_on_equity)], ['Gross', fpct(m.gross_margin)], ['Op margin', fpct(m.operating_margin)], ['Net margin', fpct(m.net_margin)]]],
       ['Growth & balance', [['Rev growth', fpct(m.revenue_growth)], ['EPS growth', fpct(m.earnings_growth)], ['D/E', fratio(m.debt_to_equity)], ['Current', fratio(m.current_ratio)]]],
     ];
-    out.push(card('Valuation & quality', html`<div class="card__bd fd-groups">${groups.map((g) => html`<div class="fd-group"><div class="fd-group__t">${g[0]}</div><div class="fd-group__grid">${g[1].map((c) => html`<div><div style="${LBL}">${c[0]}</div><div class="num" style="font-size:var(--fs-xl);font-weight:600;margin-top:3px">${c[1]}</div></div>`)}</div></div>`)}</div>`));
+    out.push(card('Valuation & quality', html`<div class="card__bd fd-groups">${groups.map((g) => html`<div class="fd-group"><div class="fd-group__t">${item(g, 0)}</div><div class="fd-group__grid">${item(g, 1).map((c) => html`<div><div style="${LBL}">${item(c, 0)}</div><div class="num" style="font-size:var(--fs-xl);font-weight:600;margin-top:3px">${item(c, 1)}</div></div>`)}</div></div>`)}</div>`));
   }
 
   if (fd.trend && fd.trend.length) {

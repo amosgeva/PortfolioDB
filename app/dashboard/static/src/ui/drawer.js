@@ -11,6 +11,7 @@ import { X as X_ICON } from './icons.js';
 import { symBadge } from './symbols.js';
 import { kpiEvidence } from './evidence.js';
 import { spanMs, lotMarkers } from '../views/price-chart.js';
+import { item } from '../core/dict.js';
 
 let el, scrim, hd, bd, foot, prevFocus = null;
 const hooks = { switchView: () => {}, openFundamentalsFor: () => {}, isPaletteOpen: () => false };
@@ -36,28 +37,28 @@ export function closeDrawer() {
 }
 
 function chartHTML(sym) {
-  const series = ((app.D.priceHist || {})[sym]) || [];
+  const series = (item(app.D.priceHist || {}, sym)) || [];
   const s = get(sym);
   if (series.length < 2) {
-    return (s && s.hist && s.hist.length > 1) ? sparkSVG(s.hist, s.hist[s.hist.length - 1] >= s.hist[0], 440, 110) : null;
+    return (s && s.hist && s.hist.length > 1) ? sparkSVG(s.hist, item(s.hist, s.hist.length - 1) >= item(s.hist, 0), 440, 110) : null;
   }
-  const now = series[series.length - 1][0];
-  let data = series.filter((p) => p[0] >= now - spanMs('3M'));
+  const now = item(item(series, series.length - 1), 0);
+  let data = series.filter((p) => item(p, 0) >= now - spanMs('3M'));
   if (data.length < 2) data = series.slice();
   const W = 440, H = 140, padT = 10, padB = 12, padL = 4, padR = 4;
-  const xs = data.map((p) => p[0]), ys = data.map((p) => p[1]);
-  const xmin = xs[0], xmax = xs[xs.length - 1], xr = (xmax - xmin) || 1;
+  const xs = data.map((p) => item(p, 0)), ys = data.map((p) => item(p, 1));
+  const xmin = item(xs, 0), xmax = item(xs, xs.length - 1), xr = (xmax - xmin) || 1;
   const ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys), yr = (ymax - ymin) || 1;
   const X = (t) => padL + (t - xmin) / xr * (W - padL - padR);
   const Y = (v) => padT + (1 - (v - ymin) / yr) * (H - padT - padB);
-  const up = ys[ys.length - 1] >= ys[0], color = up ? 'var(--up)' : 'var(--down)';
-  const line = data.map((p, i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ');
+  const up = item(ys, ys.length - 1) >= item(ys, 0), color = up ? 'var(--up)' : 'var(--down)';
+  const line = data.map((p, i) => (i ? 'L' : 'M') + X(item(p, 0)).toFixed(1) + ',' + Y(item(p, 1)).toFixed(1)).join(' ');
   const area = line + ' L' + X(xmax).toFixed(1) + ',' + (H - padB) + ' L' + X(xmin).toFixed(1) + ',' + (H - padB) + ' Z';
   const id = nextId('dg');
-  const chg = ys[0] ? (ys[ys.length - 1] - ys[0]) / ys[0] * 100 : 0;
+  const chg = item(ys, 0) ? (item(ys, ys.length - 1) - item(ys, 0)) / item(ys, 0) * 100 : 0;
   // The chart behind a cost basis carries its scale at its bounds: the span in
   // dates, the extent in prices - what a trade marker is read against.
-  return html`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:140px;display:block" role="img" aria-label="${sym + ' price, last 3 months, ' + F.pct(chg) + ', low ' + F.money(ymin) + ', high ' + F.money(ymax)}"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".18"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${id})"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>${lotMarkers(((app.D.symLots || {})[sym]) || [], X, Y, xmin, xmax, 6)}</svg><div class="dc-x"><span>${F.fmtDate(xmin, 'day')}</span><span>${F.fmtDate(xmax, 'day')}</span></div><div class="dc-foot"><span class="num" style="color:${color}">${F.pct(chg)} over 3 months</span><span class="dc-hl num">${'low ' + F.money(ymin) + ' · high ' + F.money(ymax)}</span></div>`;
+  return html`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:140px;display:block" role="img" aria-label="${sym + ' price, last 3 months, ' + F.pct(chg) + ', low ' + F.money(ymin) + ', high ' + F.money(ymax)}"><defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".18"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="${area}" fill="url(#${id})"/><path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>${lotMarkers((item(app.D.symLots || {}, sym)) || [], X, Y, xmin, xmax, 6)}</svg><div class="dc-x"><span>${F.fmtDate(xmin, 'day')}</span><span>${F.fmtDate(xmax, 'day')}</span></div><div class="dc-foot"><span class="num" style="color:${color}">${F.pct(chg)} over 3 months</span><span class="dc-hl num">${'low ' + F.money(ymin) + ' · high ' + F.money(ymax)}</span></div>`;
 }
 
 function box(l, v, cls) { return html`<div><div class="l">${l}</div><div class="v${cls ? ' ' + cls : ''}">${v}</div></div>`; }

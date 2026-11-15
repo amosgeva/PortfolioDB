@@ -68,6 +68,11 @@ export const MUST_FAIL = {
   prototypeRef: 'export function f() { return Element.prototype; }',
   reflect: "export function f(el, x) { Reflect.set(el, 'innerHTML', x); }",
   reflectAlias: 'export function f() { const R = Reflect; return R; }',
+  // Round 3 (B1): a computed read, later invoked; and any computed access at all.
+  computedMethodRead: "export function computedMethodRead(el, text) {\n  const key = 'insertAdjacentHTML';\n  const fn = el[key];\n  fn.call(el, 'beforeend', text);\n}",
+  computedRead: 'export function f(o, k) { return o[k]; }',
+  indexRead: 'export function f(a) { return a[0]; }',
+  optionalComputed: 'export function f(o, k) { return o?.[k]; }',
   // Round 1 and 2 (B2): html used other than as a tag, or imported non-plainly.
   htmlAsCall: IMPORT + "export function f(x) { return html(['<b>' + x]); }",
   aliasTemplate: "import { html as h, setHTML } from '../core/html.js';\nexport function f(el, x) { const raw = Object.freeze([x]); const a = Object.freeze(Object.assign([x], { raw })); setHTML(el, h(a)); }",
@@ -98,9 +103,9 @@ test('every banned shape is a lint error (QA B1/B2, rounds 1 and 2)', async () =
     assert.ok(hits.length > 0, name + ' was not flagged: ' + JSON.stringify(res.messages));
   }
   // The sanctioned forms stay clean.
-  const [ok] = await eslint.lintText("import { html, attrs, safeUrl, setHTML } from '../core/html.js';\nimport { put } from '../core/dict.js';\n" +
+  const [ok] = await eslint.lintText("import { html, attrs, safeUrl, setHTML } from '../core/html.js';\nimport { put, item } from '../core/dict.js';\n" +
     'export function f(el, x, u) { setHTML(el, html`<a class="x" ${attrs({ "data-a": x })} href="${safeUrl(u)}">${html`<b>${x}</b>`}</a>`); }\n' +
-    'export function g(m, k, v) { put(m, k, v); return m[k]; }\n',
+    'export function g(m, k, v) { put(m, k, v); return item(m, k); }\n',
   { filePath: join(SRC, 'views', 'fixture-ok.js') });
   assert.deepEqual(ok.messages, []);
 });
@@ -136,8 +141,7 @@ export function scanSource(file, code) {
       const isCall = p && p.type === 'CallExpression' && p.callee === n;
       if (name && SINK_NAMES.has(name)) at(n, (isWrite ? 'write ' : isCall ? 'call ' : 'reference ') + name);
       if (name && /^on[a-z]+$/i.test(name) && isWrite) at(n, 'handler ' + name);
-      if (n.computed && isWrite && !file.endsWith('core/dict.js')) at(n, 'computed write');
-      if (n.computed && isCall) at(n, 'computed call');
+      if (n.computed && !file.endsWith('core/dict.js')) at(n, 'computed member access');
       if (name === 'prototype' && !file.endsWith('core/dict.js')) at(n, 'prototype access');
       if (n.object.type === 'Identifier' && n.object.name === 'Object' && /^(assign|defineProperty|defineProperties|getOwnPropertyDescriptors?|setPrototypeOf)$/.test(name || '')) at(n, 'Object.' + name);
     }

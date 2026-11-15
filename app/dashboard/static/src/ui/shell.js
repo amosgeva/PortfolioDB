@@ -9,6 +9,7 @@ import { marketState } from '../core/market.js';
 import { softRefresh, topNavigate } from '../core/host.js';
 import { symTrigger } from './symbols.js';
 import { toast } from './toast.js';
+import { item } from '../core/dict.js';
 
 const MKT_COLORS = { open: 'var(--up)', pre: 'var(--warn)', after: 'var(--warn)', closed: 'var(--faint)' };
 
@@ -35,8 +36,8 @@ export function updClock() {
   setText($('.mkt-pill .lbl'), s.label);
   const dot = $('.mkt-pill .dot');
   if (dot) {
-    dot.style.setProperty('--dot-c', MKT_COLORS[s.level]);
-    dot.style.backgroundColor = MKT_COLORS[s.level];
+    dot.style.setProperty('--dot-c', item(MKT_COLORS, s.level));
+    dot.style.backgroundColor = item(MKT_COLORS, s.level);
     dot.classList.toggle('closed', s.level === 'closed');
   }
 }

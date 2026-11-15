@@ -1,3 +1,4 @@
+import { item } from './dict.js';
 // CSV export cells.
 //
 // Quoting a cell is not enough: a spreadsheet still evaluates a quoted cell
@@ -22,6 +23,6 @@ export function csvCell(v) {
 /** Rows of objects to CSV text, one column per header key. */
 export function toCsv(header, rows) {
   const lines = [header.map(csvCell).join(',')];
-  rows.forEach((r) => { lines.push(header.map((k) => csvCell(r[k])).join(',')); });
+  rows.forEach((r) => { lines.push(header.map((k) => csvCell(item(r, k))).join(',')); });
   return lines.join('\r\n') + '\r\n';
 }

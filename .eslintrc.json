@@ -30,12 +30,8 @@
         "message": "A computed reference to a markup or event-handler property is still a sink."
       },
       {
-        "selector": "AssignmentExpression > MemberExpression.left[computed=true]",
-        "message": "No computed member writes: a key held in a variable can be innerHTML or on*. Use put() from core/dict.js."
-      },
-      {
-        "selector": "CallExpression > MemberExpression.callee[computed=true]",
-        "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
+        "selector": "MemberExpression[computed=true]",
+        "message": "No computed member access (read, write or call): a key held in a variable can name a sink. Use item()/put() from core/dict.js, Map, or Array#at."
       },
       {
         "selector": "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",
@@ -166,12 +162,8 @@
             "message": "A computed reference to a markup or event-handler property is still a sink."
           },
           {
-            "selector": "AssignmentExpression > MemberExpression.left[computed=true]",
-            "message": "No computed member writes: a key held in a variable can be innerHTML or on*. Use put() from core/dict.js."
-          },
-          {
-            "selector": "CallExpression > MemberExpression.callee[computed=true]",
-            "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
+            "selector": "MemberExpression[computed=true]",
+            "message": "No computed member access (read, write or call): a key held in a variable can name a sink. Use item()/put() from core/dict.js, Map, or Array#at."
           },
           {
             "selector": "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",
@@ -270,14 +262,6 @@
           {
             "selector": "MemberExpression[property.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__)$/]",
             "message": "Markup sinks are reached only through setHTML(el, html`...`) from core/html.js."
-          },
-          {
-            "selector": "MemberExpression[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
-            "message": "A computed reference to a markup or event-handler property is still a sink."
-          },
-          {
-            "selector": "CallExpression > MemberExpression.callee[computed=true]",
-            "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
           },
           {
             "selector": "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",

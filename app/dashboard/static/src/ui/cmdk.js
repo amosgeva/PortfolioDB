@@ -4,6 +4,7 @@ import { $, $all, trapTab } from '../core/dom.js';
 import { html, setHTML } from '../core/html.js';
 import { list } from '../core/state.js';
 import * as F from '../core/format.js';
+import { item } from '../core/dict.js';
 
 let cmdk, input, listEl, sel = 0, items = [], prevFocus = null;
 let commandsFor = () => [];
@@ -40,7 +41,7 @@ function scrollSel() {
   const el = listEl.querySelector('.is-sel');
   if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
 }
-function run(i) { const c = items[i]; closePalette(); if (c) c.run(); }
+function run(i) { const c = item(items, i); closePalette(); if (c) c.run(); }
 
 export function openPalette() {
   if (!cmdk) return;

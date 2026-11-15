@@ -1,3 +1,4 @@
+import { item } from './dict.js';
 // Number, money and date formatting.
 //
 // Locale, currency and time zone come from configureFormat() (called once at
@@ -134,5 +135,5 @@ export function periodLabel(period) {
 /** An ISO date (YYYY-MM-DD) from an ISO timestamp, or null. */
 export function isoDay(s) {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(s || ''));
-  return m ? m[1] : null;
+  return m ? item(m, 1) : null;
 }

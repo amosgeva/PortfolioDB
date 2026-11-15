@@ -6,6 +6,7 @@ import { app, holdingRows } from '../core/state.js';
 import * as F from '../core/format.js';
 import { sparkSVG } from '../charts/common.js';
 import { ARROW_UP, ARROW_DN } from '../ui/icons.js';
+import { item } from '../core/dict.js';
 
 function deltaHTML(val, p, isMoney) {
   const up = val >= 0;
@@ -79,7 +80,7 @@ export function narrative() {
   else parts.push((dc > 0 ? 'Up ' : 'Down ') + F.money(Math.abs(dc)) + ' (' + F.pct(k.dayChangePct) + ') today');
   const rs = holdingRows();
   if (k.dayChangePct != null && rs.length && Math.abs(dc) >= 0.005) {
-    const top = rs.slice().sort((a, b) => Math.abs(b.day * b.qty) - Math.abs(a.day * a.qty))[0];
+    const top = item(rs.slice().sort((a, b) => Math.abs(b.day * b.qty) - Math.abs(a.day * a.qty)), 0);
     if (top && Math.abs(top.day * top.qty) > 0.005) {
       parts.push((top.day * top.qty >= 0 ? 'led by ' : 'dragged by ') + top.sym + ' ' + F.pct(top.dayPct));
     }
@@ -97,7 +98,7 @@ export function narrative() {
 
 // Built with DOM nodes: the label never becomes text-to-parse.
 function sparkWindowLabel(series, up) {
-  const p = series[0] ? ((series[series.length - 1] - series[0]) / series[0]) * 100 : 0;
+  const p = item(series, 0) ? ((item(series, series.length - 1) - item(series, 0)) / item(series, 0)) * 100 : 0;
   const el = document.createElement('div');
   el.className = 'kpi__spark-label';
   el.appendChild(document.createTextNode('past month '));
@@ -120,8 +121,8 @@ export function renderKPIs() {
   if (spark) {
     // The number above is *today*; the line is the past month and can fall
     // while today rises, so it is labelled.
-    const pvm = ((app.D.pv || {})['1M'] || []).map((p) => p[1]);
-    const up = pvm.length > 1 && pvm[pvm.length - 1] >= pvm[0];
+    const pvm = (item(app.D.pv || {}, '1M') || []).map((p) => item(p, 1));
+    const up = pvm.length > 1 && item(pvm, pvm.length - 1) >= item(pvm, 0);
     setHTML(spark, pvm.length > 1 ? sparkSVG(pvm, up, 600, 54) : html``);
     if (pvm.length > 1) spark.insertBefore(sparkWindowLabel(pvm, up), spark.firstChild);
   }

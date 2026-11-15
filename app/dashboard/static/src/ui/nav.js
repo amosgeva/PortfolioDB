@@ -5,6 +5,7 @@ import { $, $all, clickable, setText } from '../core/dom.js';
 import { syncUrl, nativeNav, onParent, parentQueryView, session } from '../core/host.js';
 import { app } from '../core/state.js';
 import { openRail } from './shell.js';
+import { item } from '../core/dict.js';
 
 export const TITLES = {
   portfolio: ['Portfolio', 'Real-time overview of your holdings'],
@@ -25,7 +26,7 @@ export function currentView() {
 }
 
 export function switchView(name, skipHistory) {
-  const view = TITLES[name] ? name : 'portfolio';
+  const view = item(TITLES, name) ? name : 'portfolio';
   $all('.nav a[data-view]').forEach((a) => {
     const on = a.dataset.view === view;
     a.classList.toggle('is-active', on);
@@ -37,9 +38,9 @@ export function switchView(name, skipHistory) {
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   $all('.view[data-view-pane]').forEach((v) => v.classList.toggle('is-active', v.dataset.viewPane === view));
-  const t = TITLES[view];
-  setText($('[data-title]'), t[0]);
-  setText($('[data-subtitle]'), t[1]);
+  const t = item(TITLES, view);
+  setText($('[data-title]'), item(t, 0));
+  setText($('[data-subtitle]'), item(t, 1));
   const lazy = firstShow.get(view);
   if (lazy) { firstShow.delete(view); lazy(); }
   openRail(false);
@@ -60,9 +61,9 @@ export function initNav() {
 export function restoreView() {
   // A soft refresh stashes the pane it was on (consumed once).
   const initial = session.take('pdb_refresh_view') || app.D.initialView;
-  if (initial && initial !== 'portfolio' && TITLES[initial]) switchView(initial, true);
+  if (initial && initial !== 'portfolio' && item(TITLES, initial)) switchView(initial, true);
   onParent('popstate', (ev) => {
     const v = (ev.state && ev.state.pdbView) || parentQueryView() || 'portfolio';
-    if (TITLES[v]) switchView(v, true);
+    if (item(TITLES, v)) switchView(v, true);
   });
 }

@@ -159,45 +159,97 @@ test('QA B2: a frozen array with a frozen raw built from runtime text cannot bec
   }
 });
 
-test('html enforces slot contexts; nothing is promoted by nesting (QA B2 rounds 1 and 2)', () => {
+test('html slot rules R1/R2: each slot position and each branded kind, nothing promoted by nesting', () => {
   const evil = 'x onmouseover=alert(1)';
   assert.throws(() => html`<div data-x=${evil}>safe</div>`, /unquoted attribute value/);
   assert.throws(() => html`<div data-x= ${evil}>`, /unquoted attribute value/);
-  assert.throws(() => html`<img src="x" onerror="${evil}">`, /not allowed/);
   assert.throws(() => html`<div data-${evil}="1">`, /attribute name/);
-  assert.throws(() => html`<${'img'} src="x">`, /tag name/);
+  assert.throws(() => html`<${'img'} src="x">`, /name a tag/);
+  assert.throws(() => html`<div${'x'}>`, /tag name/);
   // Tag (attribute-list) slots take attrs() only - not strings, not Markup.
   assert.throws(() => html`<div ${'onclick=alert(1)'}>`, /only an attrs\(\) list/);
-  assert.throws(() => html`<div ${html`data-a="1"`}>`, /only an attrs\(\) list/);
+  assert.throws(() => html`<div ${html`<b>x</b>`}>`, /only an attrs\(\) list/);
   assert.equal(html`<div ${attrs({ 'data-a': '1"x', role: 'button' })}>`.s, '<div  data-a="1&quot;x" role="button">');
   assert.equal(html`<div ${''} class="a">`.s, '<div  class="a">');
-  // QA round 2: an inner template built from runtime name/value, spliced into
-  // a parent's attribute list, URL or attribute slot, is refused in each.
+  // QA round 2: an inner template spliced into a parent's tag, URL or attribute slot.
   const attributeList = (name, value) => html`${name}="${value}"`;
   assert.throws(() => html`<a ${attributeList('href', 'javascript:void(0)')}>x</a>`, /only an attrs\(\) list/);
   assert.throws(() => html`<a ${attributeList('onclick', 'void(0)')}>x</a>`, /only an attrs\(\) list/);
   assert.throws(() => html`<a href="${html`https://e.test/${'x'}`}">x</a>`, /needs a safeUrl/);
-  assert.throws(() => html`<a title="${html`<b>x</b>`}">x</a>`, /markup may not be interpolated into the title/);
-  assert.throws(() => html`<a title="${[html`<b>x</b>`]}">x</a>`, /markup may not be interpolated/, 'arrays are checked per element');
-  assert.throws(() => html`<p>${attrs({ role: 'x' })}</p>`, /belongs in a tag/);
+  assert.throws(() => html`<a title="${html`<b>x</b>`}">x</a>`, /only text may be interpolated into the title attribute/);
+  assert.throws(() => html`<a title="${[html`<b>x</b>`]}">x</a>`, /only text/, 'arrays are checked per element');
+  assert.throws(() => html`<p>${attrs({ role: 'x' })}</p>`, /only text or html`` markup/);
+  assert.throws(() => html`<p>${safeUrl('https://e.test')}</p>`, /only text or html`` markup/);
   // attrs() names are allow-listed: no handlers, no URL attributes.
   for (const name of ['onclick', 'OnLoad', 'href', 'src', 'srcdoc', 'style', 'formaction', 'xlink:href', 'data-x"y']) {
     assert.throws(() => attrs({ [name]: 'v' }), /not allowed/, name);
   }
   assert.throws(() => attrs({ title: html`<b>x</b>` }), /takes text/);
-  // A template must end outside any tag, so it cannot leave its parent open.
-  assert.throws(() => html`<a `, /must end outside any tag/);
-  assert.throws(() => html`<a title="${'x'}`, /must end outside any tag/);
-  // URL attributes take safeUrl() values only.
+  // R4: a template must end where it began.
+  assert.throws(() => html`<a `, /must end outside/);
+  assert.throws(() => html`<a title="${'x'}`, /must end outside/);
+  assert.throws(() => html`<b>x</b><`, /may not end with "<"/);
+  // URL attributes: a safeUrl() value, as the entire quoted value.
   assert.throws(() => html`<a href="${'https://example.com'}">x</a>`, /needs a safeUrl\(\) value/);
   assert.throws(() => html`<img src="${'data:image/png;base64,AAAA'}">`, /needs a safeUrl/);
+  assert.throws(() => html`<a href="x${safeUrl('https://e.test')}">x</a>`, /entire quoted value/);
+  assert.throws(() => html`<a href="${safeUrl('https://e.test')}/path">x</a>`, /entire quoted value/);
   assert.equal(html`<a href="${safeUrl('https://e.test/?a=1&b="2"')}">x</a>`.s, '<a href="https://e.test/?a=1&amp;b=&quot;2&quot;">x</a>');
   assert.equal(html`<a href="${null}">x</a>`.s, '<a href="">x</a>');
   // Text and quoted values are escaped; Markup nests in text slots.
   assert.equal(html`<p title='${evil}"'>${evil}</p>`.s, '<p title=\'x onmouseover=alert(1)"\'>x onmouseover=alert(1)</p>');
   assert.equal(html`<p>${html`<b>${'<i>'}</b>`}</p>`.s, '<p><b>&lt;i&gt;</b></p>');
+  assert.equal(html`<svg><rect><title>${'</title><b>'}</title></rect></svg>`.s, '<svg><rect><title>&lt;/title&gt;&lt;b&gt;</title></rect></svg>');
 });
 
+test('QA round 3, B2a: a literal handler cannot hide behind a slot boundary', () => {
+  // Codex's fixture: an allowed attrs() slot followed directly by a literal handler.
+  assert.throws(() => html`<button ${attrs({ 'data-qa': 'x' })}onclick="void(0)">fixture</button>`, /must be followed by whitespace|not allowed/);
+  assert.throws(() => html`<button ${attrs({ 'data-qa': 'x' })} onclick="void(0)">fixture</button>`, /not allowed/);
+  // No '=', so only the tokenizer's attribute-name check can see it.
+  assert.throws(() => html`<div onclick>x</div>`, /attribute "onclick" is not allowed/);
+  // Every completed attribute name is checked, however it is separated.
+  for (const t of [() => html`<div title="a"onclick="b">x</div>`, () => html`<div/onclick="b">x</div>`, () => html`<div
+onclick="b">x</div>`, () => html`<div ONCLICK>x</div>`, () => html`<iframe srcdoc="x"></iframe>`, () => html`<a xlink:href="x">x</a>`]) {
+    assert.throws(t, /not allowed/);
+  }
+  // A name split across a slot is a slot inside an attribute name.
+  assert.throws(() => html`<div o${'x'}nclick="b">x</div>`, /attribute name/);
+  assert.throws(() => html`<div ${attrs({ role: 'x' })}${attrs({ id: 'y' })}>`, /followed by whitespace/);
+});
+
+test('QA round 3, B2b: raw-text and RCDATA elements', () => {
+  // Raw-text/escapable-raw-text elements are refused outright...
+  for (const t of [() => html`<textarea>${'v'}</textarea>`, () => html`<xmp>x</xmp>`, () => html`<plaintext>`, () => html`<noscript>x</noscript>`,
+    () => html`<noembed>x</noembed>`, () => html`<noframes>x</noframes>`, () => html`<style>x</style>`, () => html`<script>x</script>`,
+    () => html`<iframe></iframe>`, () => html`<listing>x</listing>`]) {
+    assert.throws(t, /is not allowed in a template/);
+  }
+  // ...including Codex's composition, which escaped a textarea.
+  assert.throws(() => html`<textarea>${html`</textarea><b>outside textarea</b>`}</textarea>`, /textarea> is not allowed/);
+  // <title> is RCDATA: its slot takes text only, never Markup, and must close.
+  assert.throws(() => html`<title>${html`</title><b>outside</b>`}</title>`, /only text may be interpolated into <title>/);
+  assert.throws(() => html`<rect><title>${'x'}`, /must end outside/);
+  assert.throws(() => html`<!-- ${'x'} -->`, /comments|not allowed/);
+});
+
+test('round 3 fixtures in a real DOM: nothing reaches the document', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { document } = new JSDOM('<div id="o"></div>').window;
+  const o = document.getElementById('o');
+  const attempts = [
+    () => setHTML(o, html`<button ${attrs({ 'data-qa': 'local' })}onclick="void(0)">fixture</button>`),
+    () => setHTML(o, html`<textarea>${html`</textarea><b>outside textarea</b>`}</textarea>`),
+    () => setHTML(o, html`<title>${html`</title><b>outside</b>`}</title>`),
+  ];
+  for (const a of attempts) assert.throws(a, TypeError);
+  assert.equal(o.innerHTML, '', 'no fixture produced any markup');
+  assert.equal(document.querySelectorAll('[onclick], b').length, 0);
+  // The supported compositions still render.
+  setHTML(o, html`<button type="button" ${attrs({ 'data-qa': '"local"' })}>${html`<b>${'<i>'}</b>`}</button>`);
+  assert.equal(o.querySelector('button').getAttribute('data-qa'), '"local"');
+  assert.equal(o.querySelector('b').textContent, '<i>');
+});
 test('literal-text policy also decodes character references (QA round 2 java&#115;cript:)', () => {
   const forge = (t) => Object.freeze(Object.assign([t], { raw: Object.freeze([t]) }));
   for (const t of ['<a href="java&#115;cript:void(0)">x</a>', '<a href="java&#x73;cript:x">', '<a href="javascript&colon;x">',

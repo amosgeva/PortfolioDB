@@ -3,7 +3,7 @@
 
 import { $, $all, activate, bySym, clickable, setText, prefersReducedMotion } from '../core/dom.js';
 import { html, attrs, setHTML } from '../core/html.js';
-import { put } from '../core/dict.js';
+import { put, item } from '../core/dict.js';
 import { app, list, holdingRows, totals } from '../core/state.js';
 import * as F from '../core/format.js';
 import { sparkSVG, symColor, onFill, CAT, CAT_OTHER, CAT_CASH } from '../charts/common.js';
@@ -83,10 +83,10 @@ const ALLOC_PALETTE = CAT.slice(0, 9);
 function treemapHTML(slices, total) {
   // weight-proportional treemap (two greedy strips): tile area = weight
   const rows = [[], []], sums = [0, 0];
-  slices.forEach((s) => { const i = sums[0] <= sums[1] ? 0 : 1; rows[i].push(s); put(sums, i, sums[i] + s.val); });
-  if (!rows[1].length) { rows.pop(); sums.pop(); }
+  slices.forEach((s) => { const i = item(sums, 0) <= item(sums, 1) ? 0 : 1; item(rows, i).push(s); put(sums, i, item(sums, i) + s.val); });
+  if (!item(rows, 1).length) { rows.pop(); sums.pop(); }
   return html`<div style="display:flex;flex-direction:column;gap:4px;width:100%" role="img" aria-label="Allocation treemap, tile size is portfolio weight">${rows.map((row, ri) => {
-    const h = Math.max(64, Math.round(176 * sums[ri] / total));
+    const h = Math.max(64, Math.round(176 * item(sums, ri) / total));
     return html`<div style="display:flex;gap:4px;height:${h}px">${row.map((s) => {
       const p = s.val / total * 100;
       return html`<div title="${s.label + ' · ' + F.money(s.val) + ' · ' + p.toFixed(1) + '%'}" style="flex:${s.val.toFixed(2)} 1 0;min-width:0;background:${s.color};border-radius:var(--r-sm);color:${onFill(s.color)};padding:8px 9px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden"><b style="font-size:var(--fs-meta);white-space:nowrap;text-overflow:ellipsis;overflow:hidden">${s.label}</b><span class="num" style="font-size:var(--fs-micro)">${p.toFixed(1)}%</span></div>`;
@@ -109,16 +109,16 @@ export function renderAlloc() {
     const taken = new Set();
     slices = top.map((r) => {
       let c = symColor(r.sym);
-      for (let g = 0; taken.has(c) && g < 9; g++) c = CAT[(CAT.indexOf(c) + 1) % 9];
+      for (let g = 0; taken.has(c) && g < 9; g++) c = item(CAT, (CAT.indexOf(c) + 1) % 9);
       taken.add(c);
       return { label: r.sym, val: r.mktVal, color: c };
     });
     if (otherVal > 0) slices.push({ label: 'Other', val: otherVal, color: CAT_OTHER });
     if (app.cash > 0) slices.push({ label: 'Cash', val: app.cash, color: CAT_CASH });
   } else {
-    const rows = ((app.D.alloc || {})[allocDim]) || [];
+    const rows = (item(app.D.alloc || {}, allocDim)) || [];
     const otherR = rows.slice(7).reduce((a, r) => a + r.value, 0);
-    slices = rows.slice(0, 7).map((r, i) => ({ label: r.key, val: r.value, color: ALLOC_PALETTE[i % ALLOC_PALETTE.length] }));
+    slices = rows.slice(0, 7).map((r, i) => ({ label: r.key, val: r.value, color: item(ALLOC_PALETTE, i % ALLOC_PALETTE.length) }));
     if (otherR > 0) slices.push({ label: 'Other', val: otherR, color: CAT_OTHER });
     total = slices.reduce((a, s) => a + s.val, 0);
     if (total <= 0) { setHTML(host, html`<div class="empty">No allocation data for this view.</div>`); return; }
@@ -144,7 +144,7 @@ const sortState = { key: 'mktVal', dir: -1 };
 
 function rowHTML(r) {
   // null dayPct → neutral tag; spark colour falls back to the hist trend
-  const dUp = r.dayPct != null ? r.dayPct >= 0 : r.hist[r.hist.length - 1] >= r.hist[0];
+  const dUp = r.dayPct != null ? r.dayPct >= 0 : item(r.hist, r.hist.length - 1) >= item(r.hist, 0);
   const dTag = r.dayPct == null ? '' : (r.dayPct >= 0 ? 'tag--up' : 'tag--down');
   const gUp = r.gl >= 0;
   return html`<tr data-sym="${r.sym}"><td>${symOpenBtn(r.sym, html`<span class="sym-cell">${symBadge(r.sym)}<span class="nm"><b>${r.sym}</b>${subName(r.sym, r.name)}</span></span>`)}</td><td class="price">${F.money(r.price)}</td><td><span class="tag ${dTag}">${F.pct(r.dayPct)}</span></td><td class="num">${F.qty(r.qty)}</td><td class="num">${F.money(r.mktVal)}</td><td class="num" style="color:var(--muted)">${F.money(r.avgCost)}</td><td class="num ${gUp ? 'up' : 'down'}">${(gUp ? '+' : '−') + F.money(Math.abs(r.gl))} <span style="font-size:var(--fs-micro)">${F.pct(r.glPct)}</span></td><td class="spark-cell">${sparkSVG(r.hist, dUp)}</td></tr>`;
@@ -159,7 +159,7 @@ export function renderTable() {
   const rs = holdingRows();
   const k = sortState.key, dir = sortState.dir;
   rs.sort((a, b) => {
-    const x = a[k], y = b[k];
+    const x = item(a, k), y = item(b, k);
     if (typeof x === 'string') return String(x).localeCompare(String(y)) * dir;
     return ((x == null ? -Infinity : x) - (y == null ? -Infinity : y)) * dir || 0;
   });
@@ -207,10 +207,10 @@ export function flashChangedPrices() {
     list().forEach((s) => { cur.set(s.sym, s.price); });
     if (!prefersReducedMotion()) {
       cur.forEach((price, sym) => {
-        if (prev[sym] == null || prev[sym] === price) return;
+        if (item(prev, sym) == null || item(prev, sym) === price) return;
         const row = bySym($('#holdings'), 'tr[data-sym]', sym);
         const cell = row && row.querySelector('td.price');
-        if (cell) cell.classList.add(price > prev[sym] ? 'flash-up' : 'flash-down');
+        if (cell) cell.classList.add(price > item(prev, sym) ? 'flash-up' : 'flash-down');
       });
     }
     localStorage.setItem('pdb_prices', JSON.stringify(Object.fromEntries(cur)));
@@ -272,7 +272,7 @@ export function renderWaterfall() {
 
 function chipGroup(sel, attr, onPick) {
   const chips = $all(sel);
-  chips.forEach((b) => b.addEventListener('click', () => { activate(chips, b); onPick(b.dataset[attr]); }));
+  chips.forEach((b) => b.addEventListener('click', () => { activate(chips, b); onPick(b.getAttribute('data-' + attr)); }));
 }
 
 export function initPortfolioControls() {
