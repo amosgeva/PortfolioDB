@@ -15,15 +15,22 @@ from db import fetch_all
 TZ_NAME = reporting_tz.tz_name()
 
 
+# Every price read below skips last_price <= 0: Yahoo answers 0.0 outside
+# regular hours and the collector has stored it, and a zero is not a price —
+# it reads as a −100% day and zeroes a TWR curve for good (audit F-15). The
+# collector-side guard is W2a's; the readers refuse it too.
+
+
 def latest_prices(conn) -> list[dict]:
-    """Latest snapshot row per symbol."""
+    """Latest positive snapshot row per symbol."""
     return fetch_all(
         conn,
         """
         SELECT ps.symbol, ps.ts, ps.last_price, ps.bid, ps.ask, ps.source
         FROM price_snapshots ps
         JOIN (
-          SELECT symbol, MAX(ts) AS ts FROM price_snapshots GROUP BY symbol
+          SELECT symbol, MAX(ts) AS ts FROM price_snapshots
+          WHERE last_price > 0 GROUP BY symbol
         ) m ON m.symbol = ps.symbol AND m.ts = ps.ts
         ORDER BY ps.symbol;
         """,
@@ -43,14 +50,16 @@ def prev_close(conn) -> list[dict]:
         conn,
         """
         WITH latest AS (
-          SELECT symbol, MAX(ts) AS ts FROM price_snapshots GROUP BY symbol
+          SELECT symbol, MAX(ts) AS ts FROM price_snapshots
+          WHERE last_price > 0 GROUP BY symbol
         ),
         prev AS (
           SELECT ps.symbol, ps.ts, ps.last_price,
                  ROW_NUMBER() OVER (PARTITION BY ps.symbol ORDER BY ps.ts DESC) AS rn
           FROM price_snapshots ps
           JOIN latest l ON l.symbol = ps.symbol
-          WHERE (ps.ts AT TIME ZONE %s)::date < (l.ts AT TIME ZONE %s)::date
+          WHERE ps.last_price > 0
+            AND (ps.ts AT TIME ZONE %s)::date < (l.ts AT TIME ZONE %s)::date
         )
         SELECT symbol, ts, last_price FROM prev WHERE rn = 1;
         """,
@@ -71,7 +80,7 @@ def price_history(conn, days: int = 370) -> list[dict]:
         """
         SELECT ts, symbol, last_price
         FROM price_snapshots
-        WHERE ts >= now() - make_interval(days => %s)
+        WHERE ts >= now() - make_interval(days => %s) AND last_price > 0
         ORDER BY ts
         """,
         (days,),
@@ -120,6 +129,7 @@ def second_latest_prices(conn) -> list[dict]:
           SELECT symbol, ts, last_price,
                  ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
           FROM price_snapshots
+          WHERE last_price > 0
         )
         SELECT symbol, ts, last_price FROM ranked WHERE rn = 2;
         """,

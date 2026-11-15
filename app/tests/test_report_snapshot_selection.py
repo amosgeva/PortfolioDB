@@ -34,6 +34,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import report_portfolio_db as rp
 
+# The open positions these fixtures stand for; get_snapshot would otherwise
+# derive them from the (absent) lots table.
+HELD = {"NVDA", "SPY"}
+
 
 # ───────────────────────── the percent guard ─────────────────────────
 
@@ -124,7 +128,7 @@ def test_daily_skips_a_benchmark_only_latest_snapshot(fake_fetch_all):
     ])
     fake_fetch_all(conn)
 
-    snap = rp.get_snapshot(conn, mode="daily")
+    snap = rp.get_snapshot(conn, mode="daily", held=HELD)
     assert snap.ts == "2026-08-31T23:13:00+00:00"
     assert set(snap.prices) == {"NVDA", "SPY"}
 
@@ -139,7 +143,7 @@ def test_daily_uses_a_mixed_snapshot_when_that_is_newest(fake_fetch_all):
     ])
     fake_fetch_all(conn)
 
-    snap = rp.get_snapshot(conn, mode="daily")
+    snap = rp.get_snapshot(conn, mode="daily", held=HELD)
     assert snap.ts == "2026-08-31T21:00:00+00:00"
     assert set(snap.prices) == {"NVDA", "ES=F"}
 
@@ -153,7 +157,7 @@ def test_eod_still_respects_its_upper_bound(fake_fetch_all, monkeypatch):
     ])
     fake_fetch_all(conn)
 
-    snap = rp.get_snapshot(conn, mode="eod")
+    snap = rp.get_snapshot(conn, mode="eod", held=HELD)
     assert snap.ts == "2020-01-01T10:00:00+00:00"
 
 
@@ -164,4 +168,4 @@ def test_no_portfolio_snapshot_at_all_is_an_error_not_a_crash(fake_fetch_all):
     fake_fetch_all(conn)
 
     with pytest.raises(RuntimeError, match="No price snapshots found"):
-        rp.get_snapshot(conn, mode="daily")
+        rp.get_snapshot(conn, mode="daily", held=HELD)

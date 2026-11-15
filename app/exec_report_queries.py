@@ -20,7 +20,8 @@ from db import fetch_all
 
 
 def fetch_latest_prices(conn) -> dict[str, dict]:
-    """Newest quote per symbol, with its timestamp."""
+    """Newest positive quote per symbol, with its timestamp (a zero quote is
+    Yahoo's off-hours placeholder, not a price)."""
     rows = fetch_all(
         conn,
         """
@@ -29,6 +30,7 @@ def fetch_latest_prices(conn) -> dict[str, dict]:
         JOIN (
           SELECT symbol, MAX(ts) AS ts
           FROM price_snapshots
+          WHERE last_price > 0
           GROUP BY symbol
         ) m ON m.symbol = ps.symbol AND m.ts = ps.ts
         """,
@@ -57,6 +59,7 @@ def fetch_eod_by_day(conn) -> dict[date, dict[str, float]]:
                    ORDER BY ts DESC
                  ) AS rn
           FROM price_snapshots
+          WHERE last_price > 0
         )
         SELECT symbol, d, last_price
         FROM daily

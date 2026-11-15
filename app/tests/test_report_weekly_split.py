@@ -115,6 +115,8 @@ def _run(monkeypatch, capsys, lots, cash=(), prices=None):
                 if r["ts"] <= params[0]:
                     latest[r["account"]] = r
             return list(latest.values())
+        if "FROM instruments" in sql_one:
+            return []
         if "FROM lots" in sql_one:
             lo, hi = params
             return [dict(r) for r in lots if lo <= r["trade_date"] <= hi]

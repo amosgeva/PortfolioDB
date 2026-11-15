@@ -154,7 +154,7 @@ def daily(monkeypatch):
     monkeypatch.setattr(rep, "fetch_all", lambda conn, q, p=None: [])
     # Friday's snapshot quotes AAA only; BBB missed it and was last quoted on
     # Wednesday; CCC is held and was never quoted.
-    monkeypatch.setattr(rep, "get_snapshot", lambda conn, mode: rep.Snapshot(
+    monkeypatch.setattr(rep, "get_snapshot", lambda conn, mode, **kw: rep.Snapshot(
         ts=snap_ts, prices={"AAA": {"symbol": "AAA", "ts": snap_ts, "last_price": D("110")}}))
     monkeypatch.setattr(rep, "get_quotes_at_or_before", lambda conn, ts: {
         "AAA": {"symbol": "AAA", "ts": _close(THU), "last_price": D("104")},
@@ -162,7 +162,7 @@ def daily(monkeypatch):
     })
     monkeypatch.setattr(rep, "get_prev_snapshot_map", lambda conn, ts: {
         "AAA": (_close(THU), 104.0), "BBB": (_close(WED) - timedelta(days=1), 50.0)})
-    monkeypatch.setattr(rep, "get_day_start_snapshot_map", lambda conn, ts: (
+    monkeypatch.setattr(rep, "get_day_start_snapshot_map", lambda conn, ts, **kw: (
         datetime.combine(FRI, time(16, 15), tzinfo=TZ), {"AAA": 105.0, "BBB": 52.0}))
     lots = LOTS + [_lot(3, "CCC", "BUY", "2", "30", date(2026, 11, 2))]
     monkeypatch.setattr(rep.ledger_inputs, "load", lambda conn, **kw: ledger_inputs.prepare(lots, []))
@@ -222,7 +222,7 @@ class TestDailyDayStartIgnoresBenchmarks:
             return [dict(zip(cols, r)) for r in cur.fetchall()]
 
         monkeypatch.setattr(rep, "fetch_all", fetch_all)
-        ts, prices = rep.get_day_start_snapshot_map(conn, ts=_close(FRI))
+        ts, prices = rep.get_day_start_snapshot_map(conn, ts=_close(FRI), held={"AAA"})
         assert ts == rows[1][1]
         assert prices == {"AAA": 105.0}
 

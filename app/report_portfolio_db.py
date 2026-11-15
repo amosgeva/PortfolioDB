@@ -123,30 +123,60 @@ def unrealized_pct(pnl, cost):
 # Benchmarks for the Markets strip (index futures, added in 1.1.0) are collected
 # around the clock on their own cadence, while the held symbols stop after the
 # US close — so for most of the day MAX(ts) names a benchmark-only instant at
-# which nothing in the portfolio has a price. Joining instruments and excluding
-# benchmarks asks the question this report actually means: when were the
-# *holdings* last priced. The FK on price_snapshots.symbol guarantees the join
-# never drops a row.
-_LATEST_PORTFOLIO_TS = """
-    SELECT MAX(ps.ts) AS ts
+# which nothing in the portfolio has a price. Excluding benchmarks was not
+# enough either: a watchlist symbol, or one sold last month that is still
+# collected, can be quoted after the holdings stopped, and its instant made the
+# report's day a Sunday, labelled every holding stale and printed a $0.00 delta
+# (QA of PR #123, B1). The instant is now the executive report's rule,
+# portfolio_kpis.portfolio_as_of: the newest quote of a HELD symbol, with the
+# newest non-benchmark quote only when nothing is held. A zero quote (Yahoo's
+# placeholder outside regular hours) is not a price and never decides it.
+_LATEST_PER_SYMBOL = """
+    SELECT ps.symbol, MAX(ps.ts) AS ts, i.benchmark
     FROM price_snapshots ps
     JOIN instruments i ON i.symbol = ps.symbol
-    WHERE NOT i.benchmark
+    WHERE ps.last_price > 0{cutoff}
+    GROUP BY ps.symbol, i.benchmark
 """
 
-_FIRST_PORTFOLIO_TS_FROM = """
-    SELECT MIN(ps.ts) AS ts
+_FIRST_TS_FROM = """
+    SELECT ps.symbol, MIN(ps.ts) AS ts, i.benchmark
     FROM price_snapshots ps
     JOIN instruments i ON i.symbol = ps.symbol
-    WHERE NOT i.benchmark AND ps.ts >= %s
+    WHERE ps.last_price > 0 AND ps.ts >= %s
+    GROUP BY ps.symbol, i.benchmark
 """
 
 
-def get_snapshot(conn, *, mode: str) -> Snapshot:
+def held_symbols(conn) -> set[str]:
+    """Symbols with an open position, by the engines' rules (prepared ledger)."""
+    fifo = compute_fifo_merged(ledger_inputs.load(conn).lots)
+    return set(fifo[fifo["qty"] > 0]["symbol"]) if not fifo.empty else set()
+
+
+def _choose(rows, held: set[str], pick) -> object | None:
+    """Apply portfolio_kpis' held-symbol rule to per-symbol timestamps."""
+    stamps = {r["symbol"]: r["ts"] for r in rows if r.get("ts") is not None}
+    held_stamps = [ts for s, ts in stamps.items() if s in held]
+    if held_stamps:
+        return pick(held_stamps)
+    bench = {r["symbol"] for r in rows if r.get("benchmark")}
+    rest = [ts for s, ts in stamps.items() if s not in bench]
+    return pick(rest) if rest else None
+
+
+def get_snapshot(conn, *, mode: str, held: set[str] | None = None) -> Snapshot:
+    """The snapshot the report is read at: when the holdings were last priced.
+
+    ``held`` defaults to the ledger's open positions; main() passes the set it
+    already computed.
+    """
+    if held is None:
+        held = held_symbols(conn)
     if mode == "daily":
-        # Latest snapshot that priced something the portfolio can hold.
-        row = fetch_all(conn, _LATEST_PORTFOLIO_TS)
-        ts = row[0]["ts"]
+        rows = fetch_all(conn, _LATEST_PER_SYMBOL.format(cutoff=""))
+        ts = kpis.portfolio_as_of({r["symbol"]: r["ts"] for r in rows}, held,
+                                  {r["symbol"] for r in rows if r.get("benchmark")})
         if ts is None:
             raise RuntimeError("No price snapshots found")
     elif mode == "eod":
@@ -155,8 +185,9 @@ def get_snapshot(conn, *, mode: str) -> Snapshot:
         now_il = datetime.now(tz)
         target_il = datetime.combine(now_il.date(), time(23, 5)).replace(tzinfo=tz)
         target_utc = target_il.astimezone(UTC)
-        row = fetch_all(conn, _LATEST_PORTFOLIO_TS + " AND ps.ts <= %s", (target_utc,))
-        ts = row[0]["ts"]
+        rows = fetch_all(conn, _LATEST_PER_SYMBOL.format(cutoff=" AND ps.ts <= %s"), (target_utc,))
+        ts = kpis.portfolio_as_of({r["symbol"]: r["ts"] for r in rows}, held,
+                                  {r["symbol"] for r in rows if r.get("benchmark")})
         if ts is None:
             raise RuntimeError(f"No price snapshots found at or before {target_il.isoformat()}")
     else:
@@ -167,7 +198,7 @@ def get_snapshot(conn, *, mode: str) -> Snapshot:
         """
         SELECT symbol, ts, last_price, bid, ask, source
         FROM price_snapshots
-        WHERE ts=%s
+        WHERE ts=%s AND last_price > 0
         """,
         (ts,),
     )
@@ -190,7 +221,7 @@ def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, tuple[datetime, float
           SELECT symbol, ts, last_price,
                  ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
           FROM price_snapshots
-          WHERE ts <= %s
+          WHERE ts <= %s AND last_price > 0
         )
         SELECT symbol, ts, last_price
         FROM ranked
@@ -201,14 +232,16 @@ def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, tuple[datetime, float
     return {r["symbol"]: (r["ts"], float(r["last_price"])) for r in rows if r.get("last_price") is not None}
 
 
-def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int] = (16, 15)) -> tuple[datetime | None, dict[str, float]]:
+def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int] = (16, 15),
+                               held: set[str] | None = None) -> tuple[datetime | None, dict[str, float]]:
     """Return the first snapshot of the IL trading day window and its prices.
 
     We define "day start" as the earliest snapshot on the same IL calendar day
-    with ts >= start_hhmm (default 16:15 IL) that priced something the
-    portfolio can hold. A benchmark-only instant (futures are collected around
-    the clock) quotes no holding, and taking it as the baseline left the day's
-    delta empty or measured from the wrong run (audit F-8).
+    with ts >= start_hhmm (default 16:15 IL) that priced a HELD symbol (the
+    same rule as the report instant; with nothing held, a non-benchmark one).
+    A benchmark-, watchlist- or sold-symbol-only instant quotes no holding, and
+    taking it as the baseline left the day's delta empty or measured from the
+    wrong run (audit F-8; QA of PR #123, B1).
 
     Returns (start_ts, {symbol: last_price}). If none found, (None, {}).
     """
@@ -218,8 +251,9 @@ def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int
     start_il = datetime.combine(day, time(start_hhmm[0], start_hhmm[1])).replace(tzinfo=tz)
     start_utc = start_il.astimezone(UTC)
 
-    row = fetch_all(conn, _FIRST_PORTFOLIO_TS_FROM, (start_utc,))
-    start_ts = row[0]["ts"] if row else None
+    if held is None:
+        held = held_symbols(conn)
+    start_ts = _choose(fetch_all(conn, _FIRST_TS_FROM, (start_utc,)), held, min)
     if start_ts is None:
         return None, {}
 
@@ -228,7 +262,7 @@ def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int
         """
         SELECT symbol, last_price
         FROM price_snapshots
-        WHERE ts=%s
+        WHERE ts=%s AND last_price > 0
         """,
         (start_ts,),
     )
@@ -267,7 +301,7 @@ def get_quotes_at_or_before(conn, ts: datetime) -> dict[str, dict]:
         """
         SELECT DISTINCT ON (symbol) symbol, ts, last_price, bid, ask, source
         FROM price_snapshots
-        WHERE ts <= %s AND last_price IS NOT NULL
+        WHERE ts <= %s AND last_price > 0
         ORDER BY symbol, ts DESC
         """,
         (ts,),
@@ -288,14 +322,16 @@ def main():
     # closing(): psycopg2's own `with conn` leaves the connection open (db.py);
     # this report only reads, so there is nothing to commit (audit R-6).
     with closing(connect(cfg)) as conn:
+        # The holdings decide the report instant and the day-start baseline.
+        held_now = held_symbols(conn)
         # Guard: if too few symbols are priced, try to collect fresh ones first.
-        snap = get_snapshot(conn, mode=args.mode)
+        snap = get_snapshot(conn, mode=args.mode, held=held_now)
         if args.mode == "daily" and len(snap.prices) < MIN_PRICED_SYMBOLS:
             collect_fresh_prices()
-            snap = get_snapshot(conn, mode=args.mode)
+            snap = get_snapshot(conn, mode=args.mode, held=held_now)
 
         prev_raw = get_prev_snapshot_map(conn, snap.ts)
-        day_start_ts, day_start_raw = get_day_start_snapshot_map(conn, ts=snap.ts)
+        day_start_ts, day_start_raw = get_day_start_snapshot_map(conn, ts=snap.ts, held=held_now)
         # The snapshot's own rows win over an older quote of the same symbol.
         quotes = {**get_quotes_at_or_before(conn, snap.ts), **snap.prices}
 

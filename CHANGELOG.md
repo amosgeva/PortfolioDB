@@ -47,7 +47,7 @@ needs a schema step says so under **Upgrading**.
   (including the TWR's dividend term) and listed; an instrument registered in
   another currency stays in the valuation and is flagged. Dashboard
   `currencyWarnings`, Advisor `currency_warnings`, and warning lines in every
-  report.
+  report, the weekly one included for instruments as well as cash.
 - **The reports agree about stale prices** (audit F-8). The daily report
   values each holding at its latest quote at or before the report instant
   instead of dropping one that missed the last run; both it and the executive
@@ -55,8 +55,14 @@ needs a schema step says so under **Upgrading**.
   day's change. The executive report's "as of" and previous session come from
   the holdings' own quotes, not a benchmark's, so a Sunday futures quote no
   longer produces a $0.00 day change, and it says which session the change is
-  ("on Fri, Nov 13"). The daily report's day-start baseline skips
-  benchmark-only snapshots.
+  ("on Fri, Nov 13"). The daily report now takes its instant and its
+  day-start baseline from the same rule — the newest quote of a *held*
+  symbol — so a watchlist symbol, or one sold long ago, quoted on a Sunday no
+  longer moves it either; the weekly report's boundaries follow the symbols
+  held at each end of the week.
+- **A zero quote is not a price.** Every latest-price and price-series read in
+  the dashboard payload, the Advisor and the three reports skips
+  `last_price <= 0` (Yahoo answers 0.0 outside regular hours).
 - **The weekly change says what it is** (audit F-9): a change in securities +
   entered cash, not a return, printed with the flow-adjusted market P&L and the
   week's net trade outlay beside it, and a warning for each account whose cash

@@ -109,11 +109,11 @@ def snapshot_at_or_after(conn, dt_utc: datetime, symbols=None):
     if symbols:
         rows = fetch_all(
             conn,
-            "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s AND symbol = ANY(%s)",
+            "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s AND symbol = ANY(%s) AND last_price > 0",
             (dt_utc, sorted(symbols)),
         )
     else:
-        rows = fetch_all(conn, "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s", (dt_utc,))
+        rows = fetch_all(conn, "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s AND last_price > 0", (dt_utc,))
     return rows[0]["ts"] if rows and rows[0]["ts"] else None
 
 
@@ -121,10 +121,10 @@ def latest_snapshot(conn, symbols=None):
     """Newest snapshot timestamp, restricted like snapshot_at_or_after."""
     if symbols:
         rows = fetch_all(
-            conn, "SELECT MAX(ts) AS ts FROM price_snapshots WHERE symbol = ANY(%s)", (sorted(symbols),)
+            conn, "SELECT MAX(ts) AS ts FROM price_snapshots WHERE symbol = ANY(%s) AND last_price > 0", (sorted(symbols),)
         )
     else:
-        rows = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots")
+        rows = fetch_all(conn, "SELECT MAX(ts) AS ts FROM price_snapshots WHERE last_price > 0")
     return rows[0]["ts"] if rows and rows[0]["ts"] else None
 
 
@@ -138,7 +138,8 @@ def price_map(conn, ts: datetime, ledger: ledger_inputs.PreparedLedger | None = 
     pure split as a 50% loss (1.7.2 re-audit, F03 case A). Without a ledger the
     raw quotes are returned.
     """
-    rows = fetch_all(conn, "SELECT symbol, last_price FROM price_snapshots WHERE ts=%s", (ts,))
+    # A zero quote is Yahoo's off-hours placeholder, not a price.
+    rows = fetch_all(conn, "SELECT symbol, last_price FROM price_snapshots WHERE ts=%s AND last_price > 0", (ts,))
     points = [(ts, r["symbol"], float(r["last_price"])) for r in rows if r.get("last_price") is not None]
     if ledger is not None:
         points = ledger.price_points(points)
@@ -280,13 +281,18 @@ def main():
     # closing(): psycopg2's own `with conn` leaves the connection open (db.py);
     # the report only reads (audit R-6).
     with closing(connect(cfg)) as conn:
-        # The week's boundaries are snapshots that quote something the ledger
-        # has ever held, so a futures-only market-overview run cannot become
-        # the start or the end of the week.
+        # The week's boundaries are snapshots that quote a symbol HELD at that
+        # end of the week, so neither a futures-only market-overview run nor a
+        # quote of a symbol sold long ago (still collected on the watchlist)
+        # can become the start or the end of the week — the same held-symbol
+        # rule the daily and executive reports use (audit F-8; QA of PR #123).
+        # Only when nothing is held at either end does any traded symbol do.
         ledger_all = ledger_inputs.load(conn)
         universe = {lot["symbol"] for lot in ledger_all.lots}
-        start_ts = snapshot_at_or_after(conn, start_utc, universe)
-        end_ts = latest_snapshot(conn, universe)
+        held_start = {sym for (_a, sym) in positions_from(ledger_all.lots, week_start_date)}
+        held_end = {sym for (_a, sym) in positions_from(ledger_all.lots, now_il.date())}
+        start_ts = snapshot_at_or_after(conn, start_utc, held_start or held_end or universe)
+        end_ts = latest_snapshot(conn, held_end or held_start or universe)
         if not start_ts or not end_ts:
             raise RuntimeError("Missing start or end price snapshot")
 
@@ -432,7 +438,16 @@ def main():
             note = (f"; {len(week_lots)} trade(s) this week are not reflected in it, so the weekly "
                     "change counts their cash as a gain or loss") if week_lots else ""
             print(f"⚠️ Cash for {account_label(r['account'])} was last entered {when}, before this week began{note}.")
-        for w in kpis.currency_warnings(cash=end_cash_entries):
+        # Every place a currency is recorded, not just cash: a security
+        # registered in another currency is added to the dollar totals above
+        # unconverted, and says so (audit F-11; QA of PR #123, B2).
+        instruments = fetch_all(conn, "SELECT symbol, currency FROM instruments")
+        for w in kpis.currency_warnings(
+            instruments=instruments,
+            traded_symbols=universe,
+            held_symbols=set(start_qty) | set(end_qty),
+            cash=end_cash_entries,
+        ):
             print(f"⚠️ {w['message']}")
         print()
         print("🏦 ACCOUNT TOTALS")

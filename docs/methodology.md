@@ -412,9 +412,12 @@ The executive and the daily report follow one rule
 (`portfolio_kpis.portfolio_as_of` / `stale_quotes`):
 
 - **As of** is the newest quote of a *held* symbol. Benchmarks (index futures
-  for the Markets strip) are quoted around the clock and never decide it; a
-  futures quote on a Sunday used to make the report's day Sunday and its day
-  change Friday's close minus itself, a false $0.00.
+  for the Markets strip), watchlist symbols and symbols sold earlier never
+  decide it; a Sunday quote of any of them used to make the report's day
+  Sunday and its day change Friday's close minus itself, a false $0.00. The
+  daily report's day-start baseline is the first held quote after 16:15; the
+  weekly report's start and end are the first and last snapshots quoting a
+  symbol held at that end of the week. A zero quote is never a price.
 - Each held symbol is valued at its **latest quote at or before** that instant.
   A quote from an earlier reporting-local day is carried forward and **listed
   as stale**, and the symbol is left out of the day's change (it has no move
@@ -457,4 +460,3 @@ definitions:
 
 The simplest mirror is to call `portfolio_kpis.summary(rows, lot_rows, income)`
 on the rows already built.
-

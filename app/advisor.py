@@ -140,6 +140,7 @@ def _latest_prices(conn) -> dict[str, dict]:
         """
         SELECT DISTINCT ON (symbol) symbol, ts, last_price, bid, ask, source
         FROM price_snapshots
+        WHERE last_price > 0          -- a zero quote is not a price
         ORDER BY symbol, ts DESC
         """,
     )
