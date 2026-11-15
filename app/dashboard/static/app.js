@@ -5,7 +5,7 @@
     return (r || document).querySelector(s);
   }
   function $all(s, r) {
-    return Array.prototype.slice.call((r || document).querySelectorAll(s));
+    return Array.from((r || document).querySelectorAll(s));
   }
   function setText(el3, text) {
     if (el3) el3.textContent = text == null ? "" : String(text);
@@ -121,7 +121,7 @@
     app.cash = Number(app.D.cash) || 0;
   }
   function get(sym) {
-    return Object.prototype.hasOwnProperty.call(app.stocks, sym) ? app.stocks[sym] : void 0;
+    return Object.hasOwn(app.stocks, sym) ? app.stocks[sym] : void 0;
   }
   function list() {
     return Object.keys(app.stocks).map((k) => app.stocks[k]);
@@ -183,19 +183,19 @@
   var TRILLION = BILLION * THOUSAND;
   var DAY_MS = 24 * 60 * 60 * 1e3;
   var opts = { locale: "en-US", currency: "USD", tz: "UTC" };
-  var cache = {};
+  var cache = /* @__PURE__ */ new Map();
   function configureFormat({ locale: locale2, currency, reportingTz } = {}) {
     if (locale2) opts.locale = locale2;
     if (currency) opts.currency = currency;
     if (reportingTz) opts.tz = reportingTz;
-    cache = {};
+    cache = /* @__PURE__ */ new Map();
   }
   function locale() {
     return opts.locale;
   }
   function nf(key, o) {
-    if (!cache[key]) cache[key] = new Intl.NumberFormat(opts.locale, o);
-    return cache[key];
+    if (!cache.has(key)) cache.set(key, new Intl.NumberFormat(opts.locale, o));
+    return cache.get(key);
   }
   function moneyFmt(dp) {
     return nf("m" + dp, { style: "currency", currency: opts.currency, currencyDisplay: "narrowSymbol", minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -270,8 +270,8 @@
     return money(v, dp);
   }
   function dtf(key, o) {
-    if (!cache[key]) cache[key] = new Intl.DateTimeFormat(opts.locale, { timeZone: opts.tz, ...o });
-    return cache[key];
+    if (!cache.has(key)) cache.set(key, new Intl.DateTimeFormat(opts.locale, { timeZone: opts.tz, ...o }));
+    return cache.get(key);
   }
   function fmtDate(ms, kind) {
     const d = new Date(ms);
@@ -314,7 +314,6 @@
     // session, so the unlock and form state survive (the fix for audit N-5).
     navButton: (view) => ".st-key-pdb_nav_" + view + " button"
   };
-  var REGISTRY = "__pdbHostListeners";
   function parentWin() {
     try {
       const p = window.parent;
@@ -333,7 +332,7 @@
   function releaseParentListeners(all) {
     const p = parentWin();
     if (!p) return 0;
-    const list2 = p[REGISTRY] || [];
+    const list2 = p.__pdbHostListeners || [];
     const keep = [];
     let n = 0;
     list2.forEach((l) => {
@@ -347,15 +346,15 @@
       }
       n++;
     });
-    p[REGISTRY] = keep;
+    p.__pdbHostListeners = keep;
     return n;
   }
   function onParent(type, fn) {
     const p = parentWin();
     if (!p) return false;
-    if (!p[REGISTRY]) p[REGISTRY] = [];
+    if (!p.__pdbHostListeners) p.__pdbHostListeners = [];
     p.addEventListener(type, fn);
-    p[REGISTRY].push({ type, fn, owner: MOUNT_ID });
+    p.__pdbHostListeners.push({ type, fn, owner: MOUNT_ID });
     return true;
   }
   function beginMount() {
@@ -509,40 +508,69 @@
   }
 
   // app/dashboard/static/src/core/html.js
-  var SAFE = /* @__PURE__ */ new WeakSet();
-  var SAFE_URL = /* @__PURE__ */ new WeakSet();
-  function mark(s) {
-    const o = Object.freeze({ s });
-    SAFE.add(o);
+  var MARKUP = /* @__PURE__ */ new WeakSet();
+  var URLS = /* @__PURE__ */ new WeakSet();
+  var ATTRS = /* @__PURE__ */ new WeakSet();
+  function brand(set, o) {
+    set.add(Object.freeze(o));
     return o;
   }
   function isSafe(v) {
-    return v !== null && typeof v === "object" && SAFE.has(v);
+    return v !== null && typeof v === "object" && MARKUP.has(v);
   }
   function isSafeUrl(v) {
-    return v !== null && typeof v === "object" && SAFE_URL.has(v);
+    return v !== null && typeof v === "object" && URLS.has(v);
   }
+  function isAttrList(v) {
+    return v !== null && typeof v === "object" && ATTRS.has(v);
+  }
+  var isBranded = (v) => isSafe(v) || isSafeUrl(v) || isAttrList(v);
   var ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" };
   function esc(v) {
     return String(v == null ? "" : v).replace(/[&<>"'`]/g, (c) => ESC[c]);
   }
   var empty = (v) => v === null || v === void 0 || v === false || v === "";
-  function part(v) {
+  function render(v, kind, attr) {
     if (empty(v)) return "";
-    if (isSafe(v)) return v.s;
-    if (isSafeUrl(v)) return esc(v.u);
-    if (Array.isArray(v)) return v.map(part).join("");
-    return esc(v);
+    if (Array.isArray(v)) return v.map((x) => render(x, kind, attr)).join("");
+    switch (kind) {
+      case "text":
+        if (isSafe(v)) return v.s;
+        if (isAttrList(v)) throw new TypeError("html: an attrs() list belongs in a tag, not in text");
+        return esc(isSafeUrl(v) ? v.u : v);
+      case "attr":
+        if (isSafe(v) || isAttrList(v)) throw new TypeError("html: markup may not be interpolated into the " + attr + " attribute");
+        return esc(isSafeUrl(v) ? v.u : v);
+      case "url":
+        if (!isSafeUrl(v)) throw new TypeError("html: " + attr + " needs a safeUrl() value");
+        return esc(v.u);
+      case "tag":
+        if (!isAttrList(v)) throw new TypeError("html: only an attrs() list may be interpolated into a tag");
+        return v.s;
+      default:
+        throw new TypeError("html: unsupported slot");
+    }
   }
   var DENY_LITERAL = [
-    // An event-handler attribute, wherever it is spelled (an attribute-list
-    // fragment like symTrigger's is plain text until it is spliced into a tag).
-    /(^|[\s"'/`])on[a-z]+\s*=/i,
-    // Elements that run script, load documents or rewrite the page.
-    /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|form|style|template|noscript|math|animate|set|foreignobject|handler)\b/i,
-    /javascript:|vbscript:|livescript:|data:text\/html|srcdoc|formaction|xlink:href|<!--/i
+    /(^|[\s"'/`=])on[a-z]+\s*=/i,
+    /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|form|style|template|noscript|math|animate|set|foreignobject|handler|xmp|plaintext)\b/i,
+    /javascript:|vbscript:|livescript:|data:text\/html|srcdoc|formaction|xlink:href|<!--|<!\[cdata\[|<\?/i
   ];
-  var URL_ATTRS = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "srcset", "poster", "background", "cite", "data", "ping", "xlink:href"]);
+  var NAMED_REFS = { colon: ":", tab: "	", newline: "\n", lpar: "(", rpar: ")", sol: "/", equals: "=", lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" };
+  function decoded(s) {
+    return s.replace(/&#x([0-9a-f]+);?/gi, (m, h) => String.fromCodePoint(Number.parseInt(h, 16) || 32)).replace(/&#(\d+);?/g, (m, d) => String.fromCodePoint(Number(d) || 32)).replace(/&([a-z]+);/gi, (m, n) => Object.hasOwn(NAMED_REFS, n.toLowerCase()) ? NAMED_REFS[n.toLowerCase()] : m);
+  }
+  function checkLiteral(literal) {
+    const dec = decoded(literal);
+    const squeezed = Array.from(dec).filter((ch) => ch.codePointAt(0) > 32).join("");
+    const variants = [literal, dec, squeezed];
+    for (const text of variants) {
+      for (const re of DENY_LITERAL) {
+        if (re.test(text)) throw new TypeError("html: template literal text is not allowed (" + re.source.slice(0, 40) + "…)");
+      }
+    }
+  }
+  var URL_ATTRS = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "srcset", "poster", "background", "cite", "data", "ping", "xlink:href", "manifest", "codebase", "longdesc", "usemap"]);
   function classify(strings) {
     const holes = [];
     let st = "text", attr = "";
@@ -552,7 +580,7 @@
         const c = s[j];
         switch (st) {
           case "text":
-            if (c === "<" && (j === s.length - 1 ? i < strings.length - 1 : /[a-zA-Z/!]/.test(s[j + 1]))) st = "tagname";
+            if (c === "<" && (j === s.length - 1 ? i < strings.length - 1 : /[a-zA-Z/!?]/.test(s[j + 1]))) st = "tagname";
             break;
           case "tagname":
             if (c === ">") st = "text";
@@ -560,8 +588,7 @@
             break;
           case "tag":
             if (c === ">") st = "text";
-            else if (c === "/") {
-            } else if (!/\s/.test(c)) {
+            else if (c !== "/" && !/\s/.test(c)) {
               st = "attrname";
               attr = c.toLowerCase();
             }
@@ -607,16 +634,14 @@
         else holes.push({ kind: "bad", why: st === "tagname" ? "a tag name" : st === "attrname" ? "an attribute name" : "an unquoted attribute value" });
       }
     }
+    if (st !== "text") throw new TypeError("html: a template must end outside any tag (it ends inside " + st + ")");
     return holes;
   }
   var PLANS = /* @__PURE__ */ new WeakMap();
   function plan(strings) {
     let p = PLANS.get(strings);
     if (p) return p;
-    const literal = strings.join("\0");
-    for (const re of DENY_LITERAL) {
-      if (re.test(literal)) throw new TypeError("html: template literal text is not allowed (" + re.source.slice(0, 40) + "…)");
-    }
+    checkLiteral(strings.join("\0"));
     p = classify(strings);
     PLANS.set(strings, p);
     return p;
@@ -629,13 +654,23 @@
     const holes = plan(strings);
     let out = strings[0];
     for (let i = 0; i < values.length; i++) {
-      const v = values[i], h = holes[i];
+      const h = holes[i];
       if (h.kind === "bad") throw new TypeError("html: interpolation into " + h.why + " is not supported");
-      if (h.kind === "tag" && !empty(v) && !isSafe(v)) throw new TypeError("html: only html`` output may be interpolated into a tag");
-      if (h.kind === "url" && !empty(v) && !isSafeUrl(v)) throw new TypeError("html: " + h.attr + " needs a safeUrl() value");
-      out += part(v) + strings[i + 1];
+      out += render(values[i], h.kind, h.attr) + strings[i + 1];
     }
-    return mark(out);
+    return brand(MARKUP, { s: out });
+  }
+  var ATTR_NAME = /^(?:(?:data|aria)-[a-z0-9-]+|role|tabindex|class|title|id|opacity|type|name|value|alt|lang|dir|hidden|disabled)$/;
+  function attrs(map) {
+    let s = "";
+    for (const name of Object.keys(map)) {
+      if (!ATTR_NAME.test(name)) throw new TypeError('attrs: attribute "' + name + '" is not allowed');
+      const v = map[name];
+      if (v === null || v === void 0 || v === false) continue;
+      if (isBranded(v) && !isSafeUrl(v)) throw new TypeError("attrs: " + name + " takes text, not markup");
+      s += " " + name + '="' + esc(isSafeUrl(v) ? v.u : v) + '"';
+    }
+    return brand(ATTRS, { s });
   }
   function setHTML(el3, content) {
     if (!el3) return;
@@ -648,11 +683,9 @@
     if (typeof u !== "string") return null;
     const t = u.trim();
     if (!SAFE_SCHEMES.test(t) && !(allowDataImage && DATA_IMAGE.test(t))) return null;
-    const o = Object.freeze({ u: t, toString() {
+    return brand(URLS, { u: t, toString() {
       return t;
     } });
-    SAFE_URL.add(o);
-    return o;
   }
 
   // app/dashboard/static/src/ui/icons.js
@@ -739,6 +772,18 @@
     if (btn) btn.addEventListener("click", toggleTheme);
   }
 
+  // app/dashboard/static/src/core/dict.js
+  var SINK_KEY = /^(__proto__|constructor|prototype)$/;
+  function put(obj, key, value) {
+    const proto = obj !== null && typeof obj === "object" ? Object.getPrototypeOf(obj) : void 0;
+    if (!(proto === Object.prototype || proto === null || Array.isArray(obj))) {
+      throw new TypeError("put: only plain objects and arrays");
+    }
+    if (typeof key === "string" && SINK_KEY.test(key)) throw new TypeError('put: key "' + key + '" is not allowed');
+    obj[key] = value;
+    return value;
+  }
+
   // app/dashboard/static/src/core/market.js
   function ymd(y, m, d) {
     return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
@@ -775,34 +820,30 @@
   }
   function nyseHolidays(year) {
     const out = {};
-    const put = (day, name) => {
-      out[day] = name;
-    };
+    const add = (day, name) => put(out, day, name);
     const y = year;
-    if (dow(y, 1, 1) !== 6) put(observed(y, 1, 1), "New Year’s Day");
-    put(ymd(y, 1, nthWeekday(y, 1, 1, 3)), "Martin Luther King Jr. Day");
-    put(ymd(y, 2, nthWeekday(y, 2, 1, 3)), "Washington’s Birthday");
+    if (dow(y, 1, 1) !== 6) add(observed(y, 1, 1), "New Year’s Day");
+    add(ymd(y, 1, nthWeekday(y, 1, 1, 3)), "Martin Luther King Jr. Day");
+    add(ymd(y, 2, nthWeekday(y, 2, 1, 3)), "Washington’s Birthday");
     const [em, ed] = easter(y);
-    put(shift(y, em, ed, -2), "Good Friday");
-    put(ymd(y, 5, lastWeekday(y, 5, 1)), "Memorial Day");
-    if (y >= 2022) put(observed(y, 6, 19), "Juneteenth");
-    put(observed(y, 7, 4), "Independence Day");
-    put(ymd(y, 9, nthWeekday(y, 9, 1, 1)), "Labor Day");
-    put(ymd(y, 11, nthWeekday(y, 11, 4, 4)), "Thanksgiving Day");
-    put(observed(y, 12, 25), "Christmas Day");
+    add(shift(y, em, ed, -2), "Good Friday");
+    add(ymd(y, 5, lastWeekday(y, 5, 1)), "Memorial Day");
+    if (y >= 2022) add(observed(y, 6, 19), "Juneteenth");
+    add(observed(y, 7, 4), "Independence Day");
+    add(ymd(y, 9, nthWeekday(y, 9, 1, 1)), "Labor Day");
+    add(ymd(y, 11, nthWeekday(y, 11, 4, 4)), "Thanksgiving Day");
+    add(observed(y, 12, 25), "Christmas Day");
     return out;
   }
   function nyseEarlyCloses(year) {
     const out = {};
-    const put = (day, name) => {
-      out[day] = name;
-    };
+    const add = (day, name) => put(out, day, name);
     const y = year;
     const j3 = dow(y, 7, 3);
-    if (j3 >= 1 && j3 <= 4) put(ymd(y, 7, 3), "Independence Day eve");
-    put(ymd(y, 11, nthWeekday(y, 11, 4, 4) + 1), "Day after Thanksgiving");
+    if (j3 >= 1 && j3 <= 4) add(ymd(y, 7, 3), "Independence Day eve");
+    add(ymd(y, 11, nthWeekday(y, 11, 4, 4) + 1), "Day after Thanksgiving");
     const x24 = dow(y, 12, 24);
-    if (x24 >= 1 && x24 <= 4) put(ymd(y, 12, 24), "Christmas Eve");
+    if (x24 >= 1 && x24 <= 4) add(ymd(y, 12, 24), "Christmas Eve");
     return out;
   }
   var MIN = { pre: 4 * 60, open: 9 * 60 + 30, close: 16 * 60, early: 13 * 60, after: 20 * 60, earlyAfter: 17 * 60 };
@@ -818,7 +859,7 @@
       minute: "2-digit",
       hourCycle: "h23"
     }).formatToParts(date).forEach((x) => {
-      p[x.type] = x.value;
+      put(p, x.type, x.value);
     });
     return p;
   }
@@ -870,7 +911,7 @@
     for (let i = 1; i < vals.length - 1; i++) {
       const v = vals[i];
       if (v > 0 && vals[i - 1] > v * SUSPECT_RATIO && vals[i + 1] > v * SUSPECT_RATIO) {
-        bad[i] = 1;
+        put(bad, i, 1);
         n++;
       }
     }
@@ -952,7 +993,7 @@
 
   // app/dashboard/static/src/ui/symbols.js
   function symTrigger(sym, label) {
-    return html`data-sym="${sym}" role="button" tabindex="0" aria-label="${label || "Open " + sym + " details"}"`;
+    return attrs({ "data-sym": sym, role: "button", tabindex: "0", "aria-label": label || "Open " + sym + " details" });
   }
   function symOpenBtn(sym, inner) {
     return html`<button type="button" class="sym-open" aria-label="${"Open " + sym + " details"}">${inner}</button>`;
@@ -1863,7 +1904,7 @@
       const stale = age > STALE_MS;
       if (stale) staleCount++;
       const days = Math.round(age / DAY_MS);
-      return html`<tr ${stale ? html` class="lp-stale" title="${"Last collected " + days + " days before the most recent snapshot"}"` : ""}><td><b>${r.symbol}</b></td><td class="price">${px(r.last)}</td><td class="num" style="color:var(--muted)">${px(r.bid)}</td><td class="num" style="color:var(--muted)">${px(r.ask)}</td><td class="num" style="color:var(--muted)">${r.source}</td><td class="num" style="color:var(--muted)">${stale ? html`${CLOCK} ` : ""}${r.ts}</td></tr>`;
+      return html`<tr ${stale ? attrs({ class: "lp-stale", title: "Last collected " + days + " days before the most recent snapshot" }) : ""}><td><b>${r.symbol}</b></td><td class="price">${px(r.last)}</td><td class="num" style="color:var(--muted)">${px(r.bid)}</td><td class="num" style="color:var(--muted)">${px(r.ask)}</td><td class="num" style="color:var(--muted)">${r.source}</td><td class="num" style="color:var(--muted)">${stale ? html`${CLOCK} ` : ""}${r.ts}</td></tr>`;
     })}`);
     setText($("#lp-sub"), rows.length + " symbols" + (staleCount ? " · " + staleCount + " not refreshed in the last 4 days" : ""));
   }
@@ -1879,7 +1920,9 @@
   }, openFundamentalsFor: () => {
   }, isPaletteOpen: () => false };
   function setDrawerHooks(h) {
-    Object.assign(hooks, h);
+    hooks.switchView = h.switchView;
+    hooks.openFundamentalsFor = h.openFundamentalsFor;
+    hooks.isPaletteOpen = h.isPaletteOpen;
   }
   function isOpen() {
     return Boolean(el2 && el2.classList.contains("open"));
@@ -2054,7 +2097,7 @@
     if (c.label.toLowerCase().indexOf(q) === 0) return 3;
     return hay.indexOf(q) >= 0 ? 2 : 0;
   }
-  function render() {
+  function render2() {
     const q = (input.value || "").trim().toLowerCase();
     items = commandsFor().map((c) => ({ c, s: score(c, q) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 24).map((x) => x.c);
     if (sel >= items.length) sel = 0;
@@ -2073,7 +2116,7 @@
       el3.addEventListener("mousemove", () => {
         if (sel !== i) {
           sel = i;
-          render();
+          render2();
         }
       });
     });
@@ -2093,7 +2136,7 @@
     cmdk.classList.add("open");
     input.value = "";
     sel = 0;
-    render();
+    render2();
     input.focus();
   }
   function closePalette() {
@@ -2129,18 +2172,18 @@
     });
     input.addEventListener("input", () => {
       sel = 0;
-      render();
+      render2();
     });
     input.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         sel = Math.min(sel + 1, items.length - 1);
-        render();
+        render2();
         scrollSel();
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         sel = Math.max(sel - 1, 0);
-        render();
+        render2();
         scrollSel();
       } else if (e.key === "Enter") {
         e.preventDefault();
@@ -2194,7 +2237,7 @@
     $all("[data-fold]").forEach((card2) => {
       const hd2 = card2.querySelector(":scope > .card__hd");
       if (!hd2) return;
-      const bd2 = Array.prototype.find.call(card2.children, (c) => !c.classList.contains("card__hd"));
+      const bd2 = Array.from(card2.children).find((c) => !c.classList.contains("card__hd"));
       if (!bd2) return;
       let btn = card2.querySelector(":scope > .card__hd > .fold-btn");
       if (!on) {
@@ -2311,7 +2354,7 @@
     slices.forEach((s) => {
       const i = sums[0] <= sums[1] ? 0 : 1;
       rows[i].push(s);
-      sums[i] += s.val;
+      put(sums, i, sums[i] + s.val);
     });
     if (!rows[1].length) {
       rows.pop();
@@ -2338,11 +2381,11 @@
       }
       const top = rs.slice(0, 6);
       const otherVal = rs.slice(6).reduce((a, r) => a + r.mktVal, 0);
-      const taken = {};
+      const taken = /* @__PURE__ */ new Set();
       slices = top.map((r) => {
         let c = symColor(r.sym);
-        for (let g = 0; taken[c] && g < 9; g++) c = CAT[(CAT.indexOf(c) + 1) % 9];
-        taken[c] = 1;
+        for (let g = 0; taken.has(c) && g < 9; g++) c = CAT[(CAT.indexOf(c) + 1) % 9];
+        taken.add(c);
         return { label: r.sym, val: r.mktVal, color: c };
       });
       if (otherVal > 0) slices.push({ label: "Other", val: otherVal, color: CAT_OTHER });
@@ -2443,19 +2486,19 @@
   function flashChangedPrices() {
     try {
       const prev = JSON.parse(localStorage.getItem("pdb_prices") || "{}");
-      const cur = {};
+      const cur = /* @__PURE__ */ new Map();
       list().forEach((s) => {
-        cur[s.sym] = s.price;
+        cur.set(s.sym, s.price);
       });
       if (!prefersReducedMotion()) {
-        Object.keys(cur).forEach((sym) => {
-          if (prev[sym] == null || prev[sym] === cur[sym]) return;
+        cur.forEach((price, sym) => {
+          if (prev[sym] == null || prev[sym] === price) return;
           const row = bySym($("#holdings"), "tr[data-sym]", sym);
           const cell = row && row.querySelector("td.price");
-          if (cell) cell.classList.add(cur[sym] > prev[sym] ? "flash-up" : "flash-down");
+          if (cell) cell.classList.add(price > prev[sym] ? "flash-up" : "flash-down");
         });
       }
-      localStorage.setItem("pdb_prices", JSON.stringify(cur));
+      localStorage.setItem("pdb_prices", JSON.stringify(Object.fromEntries(cur)));
     } catch (e) {
     }
   }
@@ -2515,7 +2558,7 @@
       if (vy < 12) vy = yBot + 12;
       const dx = (x - (slot - bw) / 2 + 1).toFixed(1);
       const cy = Y(nd.y1).toFixed(1);
-      return html`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${color}"${nd.net ? "" : html` opacity=".85"`}><title>${nd.label + " " + money(nd.val)}</title></rect>${nd.net ? html`<line x1="${dx}" x2="${dx}" y1="${padT}" y2="${H - padB + 6}" stroke="var(--border-2)" stroke-width="1"/>` : ""}${!nd.net && i < nodes.length - 1 ? html`<line x1="${(x + bw).toFixed(1)}" x2="${((i + 1) * slot + (slot - bw) / 2).toFixed(1)}" y1="${cy}" y2="${cy}" stroke="var(--faint)" stroke-width="1" stroke-dasharray="3 3"/>` : ""}<text x="${(x + bw / 2).toFixed(1)}" y="${vy.toFixed(1)}" text-anchor="middle" font-size="10" class="num" fill="var(--fg-soft)">${(nd.val >= 0 ? "+" : "−") + compact(Math.abs(nd.val))}</text><text x="${(x + bw / 2).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${nd.label}</text>`;
+      return html`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${color}" ${nd.net ? "" : attrs({ opacity: ".85" })}><title>${nd.label + " " + money(nd.val)}</title></rect>${nd.net ? html`<line x1="${dx}" x2="${dx}" y1="${padT}" y2="${H - padB + 6}" stroke="var(--border-2)" stroke-width="1"/>` : ""}${!nd.net && i < nodes.length - 1 ? html`<line x1="${(x + bw).toFixed(1)}" x2="${((i + 1) * slot + (slot - bw) / 2).toFixed(1)}" y1="${cy}" y2="${cy}" stroke="var(--faint)" stroke-width="1" stroke-dasharray="3 3"/>` : ""}<text x="${(x + bw / 2).toFixed(1)}" y="${vy.toFixed(1)}" text-anchor="middle" font-size="10" class="num" fill="var(--fg-soft)">${(nd.val >= 0 ? "+" : "−") + compact(Math.abs(nd.val))}</text><text x="${(x + bw / 2).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${nd.label}</text>`;
     });
     setHTML(host, html`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:220px;display:block" role="img" aria-label="${wfLabel}"><line x1="0" x2="${W}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--border-2)" stroke-width="1"/>${parts}</svg>`);
   }
@@ -2676,12 +2719,11 @@
   }
   var heatState = { sector: "All", query: "" };
   function sectors() {
-    const set = {};
+    const set = /* @__PURE__ */ new Set();
     list().forEach((s) => {
-      const key = s.sector || "Other";
-      set[key] = 1;
+      set.add(s.sector || "Other");
     });
-    return Object.keys(set).sort((a, b) => a.localeCompare(b));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }
   function tileHTML(s) {
     return html`<div class="heat__tile" ${symTrigger(s.sym, s.sym + " " + pct(s.dayPct) + " — open details")} style="background:${heatColor(s.dayPct)}" title="${(s.name || s.sym) + " · " + money(s.price)}"><div><b>${s.sym}</b>${subName(s.sym, s.name, "div")}</div><div class="pc">${pct(s.dayPct)}</div></div>`;

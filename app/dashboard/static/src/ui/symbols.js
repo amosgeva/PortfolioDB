@@ -6,7 +6,7 @@
 // any other payload text. These helpers used to be where it reached the page
 // unescaped (audit A-3).
 
-import { html, safeUrl } from '../core/html.js';
+import { html, attrs, safeUrl } from '../core/html.js';
 import { app } from '../core/state.js';
 import { symColor } from '../charts/common.js';
 
@@ -15,7 +15,7 @@ import { symColor } from '../charts/common.js';
 // and name. Table rows are the exception: a <tr> keeps its row semantics and
 // gets a .sym-open button in its first cell instead.
 export function symTrigger(sym, label) {
-  return html`data-sym="${sym}" role="button" tabindex="0" aria-label="${label || 'Open ' + sym + ' details'}"`;
+  return attrs({ 'data-sym': sym, role: 'button', tabindex: '0', 'aria-label': label || 'Open ' + sym + ' details' });
 }
 
 export function symOpenBtn(sym, inner) {

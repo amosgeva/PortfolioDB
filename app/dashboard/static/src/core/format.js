@@ -15,20 +15,20 @@ export const TRILLION = BILLION * THOUSAND;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
 const opts = { locale: 'en-US', currency: 'USD', tz: 'UTC' };
-let cache = {};
+let cache = new Map();
 
 export function configureFormat({ locale, currency, reportingTz } = {}) {
   if (locale) opts.locale = locale;
   if (currency) opts.currency = currency;
   if (reportingTz) opts.tz = reportingTz;
-  cache = {};
+  cache = new Map();
 }
 export function reportingTz() { return opts.tz; }
 export function locale() { return opts.locale; }
 
 function nf(key, o) {
-  if (!cache[key]) cache[key] = new Intl.NumberFormat(opts.locale, o);
-  return cache[key];
+  if (!cache.has(key)) cache.set(key, new Intl.NumberFormat(opts.locale, o));
+  return cache.get(key);
 }
 function moneyFmt(dp) {
   return nf('m' + dp, { style: 'currency', currency: opts.currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -102,8 +102,8 @@ export function axisMoney(v, step) {
 }
 
 function dtf(key, o) {
-  if (!cache[key]) cache[key] = new Intl.DateTimeFormat(opts.locale, { timeZone: opts.tz, ...o });
-  return cache[key];
+  if (!cache.has(key)) cache.set(key, new Intl.DateTimeFormat(opts.locale, { timeZone: opts.tz, ...o }));
+  return cache.get(key);
 }
 /** A timestamp in the reporting zone. `kind` picks one of a few fixed shapes. */
 export function fmtDate(ms, kind) {

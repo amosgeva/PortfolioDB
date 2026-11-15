@@ -14,7 +14,11 @@ import { spanMs, lotMarkers } from '../views/price-chart.js';
 
 let el, scrim, hd, bd, foot, prevFocus = null;
 const hooks = { switchView: () => {}, openFundamentalsFor: () => {}, isPaletteOpen: () => false };
-export function setDrawerHooks(h) { Object.assign(hooks, h); }
+export function setDrawerHooks(h) {
+  hooks.switchView = h.switchView;
+  hooks.openFundamentalsFor = h.openFundamentalsFor;
+  hooks.isPaletteOpen = h.isPaletteOpen;
+}
 
 export function isOpen() { return Boolean(el && el.classList.contains('open')); }
 

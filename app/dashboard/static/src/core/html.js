@@ -1,44 +1,48 @@
 // The one way markup reaches the page.
 //
-// Every innerHTML in the dashboard goes through setHTML(), and setHTML() only
-// accepts a value produced by the `html` tagged template below. Three layers
-// keep that true, and each is tested to fail without it:
+// setHTML(el, x) is the only innerHTML write in src/, and it accepts only a
+// value produced by the `html` tagged template below. What holds, and why:
 //
-// 1. Static: eslint.config.mjs lets `html` appear ONLY as the tag of a tagged
-//    template (html`...`) imported under its own name - never called, aliased,
-//    namespaced, re-exported, stored or shadowed - so the strings array it
-//    receives is always a template object the engine built from source text.
-//    It also rejects every other markup sink, in dotted and computed form.
-//    Inline eslint-disable comments are not honoured in src/.
-// 2. Runtime, literal text: each template's literal parts are checked once
-//    (cached by identity) against a policy our own templates satisfy - no
-//    event-handler attributes, no script-capable elements, no javascript:,
-//    srcdoc or formaction. A strings array forged from runtime text (frozen,
-//    with a frozen `raw`) that carries an <img onerror> is refused here even
-//    if it got past layer 1.
-// 3. Runtime, interpolation context: each `${}` hole is classified by where
-//    it sits. Text and quoted attribute values are escaped; a hole in a URL
-//    attribute (href, src, ...) needs a safeUrl() value; a hole in tag
-//    position (an attribute list) needs html`` output; a hole in an unquoted
-//    attribute value, an event-handler attribute, a comment or raw text is an
-//    error. Escaping is only a guarantee in the contexts it was designed for,
-//    so the others are refused rather than left to the caller's memory.
+// GUARANTEED AT RUN TIME, for every template object the engine built from
+// source text (a genuine html`...` call site):
+//   * Every interpolated runtime value is either escaped or one of three
+//     branded kinds, and each kind is accepted only in the one slot it was made
+//     for - nothing is promoted by being nested:
+//       - text slot (between tags):   strings (escaped), Markup (html``)
+//       - quoted attribute value:     strings (escaped) - Markup is refused
+//       - URL attribute (href, src):  SafeUrl (safeUrl()) only
+//       - attribute-list slot <a ${}>: AttrList (attrs()) only, whose names
+//         are checked against an allow-list (no on*, no URL attributes)
+//     An unquoted attribute value, a tag or attribute name, a comment or raw
+//     text slot is refused outright.
+//   * Every template must end where it began, outside any tag, so a fragment
+//     cannot leave its parent inside an open tag for the next slot to fill.
+//   * Literal text is checked once per template (cached by identity): no
+//     event-handler attributes, script-capable elements, comments,
+//     javascript:/srcdoc/formaction/xlink:href - also after decoding character
+//     references.
+//
+// GUARANTEED BY LINT AND THE AST GUARD (eslint.config.mjs, tests/guards.test.mjs):
+//   * `html` is used only as a template tag, imported as exactly
+//     `import { html, … } from '…/core/html.js'` - no call, alias, quoted
+//     import name, namespace, re-export, storage or shadowing. This is what
+//     makes "genuine template object" true: at run time a frozen array with a
+//     frozen `raw` cannot be told apart from one, so forging is stopped here.
+//   * No other markup sink, read or written, dotted or computed; no computed
+//     member write or call at all outside core/dict.js; no reflection,
+//     prototype access or Object.assign/defineProperty route to a sink.
+//   * Inline eslint-disable comments are ignored in src/.
 
-const SAFE = new WeakSet();
-const SAFE_URL = new WeakSet();
+const MARKUP = new WeakSet();
+const URLS = new WeakSet();
+const ATTRS = new WeakSet();
 
-function mark(s) {
-  const o = Object.freeze({ s });
-  SAFE.add(o);
-  return o;
-}
+function brand(set, o) { set.add(Object.freeze(o)); return o; }
 
-export function isSafe(v) {
-  return v !== null && typeof v === 'object' && SAFE.has(v);
-}
-export function isSafeUrl(v) {
-  return v !== null && typeof v === 'object' && SAFE_URL.has(v);
-}
+export function isSafe(v) { return v !== null && typeof v === 'object' && MARKUP.has(v); }
+export function isSafeUrl(v) { return v !== null && typeof v === 'object' && URLS.has(v); }
+export function isAttrList(v) { return v !== null && typeof v === 'object' && ATTRS.has(v); }
+const isBranded = (v) => isSafe(v) || isSafeUrl(v) || isAttrList(v);
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
 
@@ -49,32 +53,62 @@ export function esc(v) {
 
 const empty = (v) => v === null || v === undefined || v === false || v === '';
 
-function part(v) {
+/** Render one interpolated value for a slot kind, or throw. */
+function render(v, kind, attr) {
   if (empty(v)) return '';
-  if (isSafe(v)) return v.s;
-  if (isSafeUrl(v)) return esc(v.u);
-  if (Array.isArray(v)) return v.map(part).join('');
-  return esc(v);
+  if (Array.isArray(v)) return v.map((x) => render(x, kind, attr)).join('');
+  switch (kind) {
+    case 'text':
+      if (isSafe(v)) return v.s;
+      if (isAttrList(v)) throw new TypeError('html: an attrs() list belongs in a tag, not in text');
+      return esc(isSafeUrl(v) ? v.u : v);
+    case 'attr':
+      if (isSafe(v) || isAttrList(v)) throw new TypeError('html: markup may not be interpolated into the ' + attr + ' attribute');
+      return esc(isSafeUrl(v) ? v.u : v);
+    case 'url':
+      if (!isSafeUrl(v)) throw new TypeError('html: ' + attr + ' needs a safeUrl() value');
+      return esc(v.u);
+    case 'tag':
+      if (!isAttrList(v)) throw new TypeError('html: only an attrs() list may be interpolated into a tag');
+      return v.s;
+    default:
+      throw new TypeError('html: unsupported slot');
+  }
 }
 
-// ---- layer 2: literal-text policy ----------------------------------------
+// ---- literal-text policy -------------------------------------------------
 const DENY_LITERAL = [
-  // An event-handler attribute, wherever it is spelled (an attribute-list
-  // fragment like symTrigger's is plain text until it is spliced into a tag).
-  /(^|[\s"'/`])on[a-z]+\s*=/i,
-  // Elements that run script, load documents or rewrite the page.
-  /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|form|style|template|noscript|math|animate|set|foreignobject|handler)\b/i,
-  /javascript:|vbscript:|livescript:|data:text\/html|srcdoc|formaction|xlink:href|<!--/i,
+  /(^|[\s"'/`=])on[a-z]+\s*=/i,
+  /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|form|style|template|noscript|math|animate|set|foreignobject|handler|xmp|plaintext)\b/i,
+  /javascript:|vbscript:|livescript:|data:text\/html|srcdoc|formaction|xlink:href|<!--|<!\[cdata\[|<\?/i,
 ];
+const NAMED_REFS = { colon: ':', tab: '\t', newline: '\n', lpar: '(', rpar: ')', sol: '/', equals: '=', lt: '<', gt: '>', quot: '"', apos: '\'', amp: '&' };
+/** Literal text with character references decoded and control/space runs
+ *  removed, so `java&#115;cript:` or `on&#99;lick=` are seen for what they are. */
+function decoded(s) {
+  return s.replace(/&#x([0-9a-f]+);?/gi, (m, h) => String.fromCodePoint(Number.parseInt(h, 16) || 32))
+    .replace(/&#(\d+);?/g, (m, d) => String.fromCodePoint(Number(d) || 32))
+    .replace(/&([a-z]+);/gi, (m, n) => (Object.hasOwn(NAMED_REFS, n.toLowerCase()) ? NAMED_REFS[n.toLowerCase()] : m));
+}
+function checkLiteral(literal) {
+  const dec = decoded(literal);
+  const squeezed = Array.from(dec).filter((ch) => ch.codePointAt(0) > 32).join('');
+  const variants = [literal, dec, squeezed];
+  for (const text of variants) {
+    for (const re of DENY_LITERAL) {
+      if (re.test(text)) throw new TypeError('html: template literal text is not allowed (' + re.source.slice(0, 40) + '…)');
+    }
+  }
+}
 
-// ---- layer 3: interpolation contexts -------------------------------------
-const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'srcset', 'poster', 'background', 'cite', 'data', 'ping', 'xlink:href']);
+// ---- slot classification -------------------------------------------------
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'srcset', 'poster', 'background', 'cite', 'data', 'ping', 'xlink:href', 'manifest', 'codebase', 'longdesc', 'usemap']);
 
 /**
- * Classify every hole of a template by the context the literal text puts it
- * in. A small HTML tokenizer over the literal parts only - the holes are
- * assumed not to change the state, which holds for every allowed value: text
- * is escaped, and an attribute-list fragment is itself a complete html``.
+ * Classify every hole by the context the literal text puts it in, with a
+ * small HTML tokenizer over the literal parts. Holes do not change the state:
+ * escaped text cannot, Markup is only accepted in text slots and is itself a
+ * balanced template, and an AttrList is a complete `name="value"` sequence.
  */
 function classify(strings) {
   const holes = [];
@@ -86,7 +120,7 @@ function classify(strings) {
       switch (st) {
         case 'text':
           // A '<' right before a hole would let the hole name the tag.
-          if (c === '<' && (j === s.length - 1 ? i < strings.length - 1 : /[a-zA-Z/!]/.test(s[j + 1]))) st = 'tagname';
+          if (c === '<' && (j === s.length - 1 ? i < strings.length - 1 : /[a-zA-Z/!?]/.test(s[j + 1]))) st = 'tagname';
           break;
         case 'tagname':
           if (c === '>') st = 'text';
@@ -94,8 +128,7 @@ function classify(strings) {
           break;
         case 'tag':
           if (c === '>') st = 'text';
-          else if (c === '/') { /* self-closing */ }
-          else if (!/\s/.test(c)) { st = 'attrname'; attr = c.toLowerCase(); }
+          else if (c !== '/' && !/\s/.test(c)) { st = 'attrname'; attr = c.toLowerCase(); }
           break;
         case 'attrname':
           if (c === '=') st = 'beforevalue';
@@ -130,6 +163,7 @@ function classify(strings) {
       else holes.push({ kind: 'bad', why: st === 'tagname' ? 'a tag name' : st === 'attrname' ? 'an attribute name' : 'an unquoted attribute value' });
     }
   }
+  if (st !== 'text') throw new TypeError('html: a template must end outside any tag (it ends inside ' + st + ')');
   return holes;
 }
 
@@ -137,10 +171,7 @@ const PLANS = new WeakMap();
 function plan(strings) {
   let p = PLANS.get(strings);
   if (p) return p;
-  const literal = strings.join('\u0000');
-  for (const re of DENY_LITERAL) {
-    if (re.test(literal)) throw new TypeError('html: template literal text is not allowed (' + re.source.slice(0, 40) + '…)');
-  }
+  checkLiteral(strings.join('\u0000'));
   p = classify(strings);
   PLANS.set(strings, p);
   return p;
@@ -153,38 +184,56 @@ function isTemplateStrings(strings) {
 }
 
 /**
- * Tagged template: html`<b>${text}</b>`. See the header for the contexts a
- * hole may sit in. Arrays are joined (each element escaped unless it is
- * html`` output); null, undefined, false and '' render as nothing, so
- * `${cond && html`…`}` works.
+ * Tagged template: html`<b>${text}</b>` returns Markup for a text slot.
+ * Arrays are joined, each element rendered for the slot; null, undefined,
+ * false and '' render as nothing, so `${cond && html`…`}` works.
  */
 export function html(strings, ...values) {
   if (!isTemplateStrings(strings)) throw new TypeError('html must be used as a tagged template');
   const holes = plan(strings);
   let out = strings[0];
   for (let i = 0; i < values.length; i++) {
-    const v = values[i], h = holes[i];
+    const h = holes[i];
     if (h.kind === 'bad') throw new TypeError('html: interpolation into ' + h.why + ' is not supported');
-    if (h.kind === 'tag' && !empty(v) && !isSafe(v)) throw new TypeError('html: only html`` output may be interpolated into a tag');
-    if (h.kind === 'url' && !empty(v) && !isSafeUrl(v)) throw new TypeError('html: ' + h.attr + ' needs a safeUrl() value');
-    out += part(v) + strings[i + 1];
+    out += render(values[i], h.kind, h.attr) + strings[i + 1];
   }
-  return mark(out);
+  return brand(MARKUP, { s: out });
 }
 
-/** Join a list of fragments with a separator (both escaped unless safe). */
+/** Join fragments with a separator, for a text slot. */
 export function join(items, sep) {
-  const s = sep === undefined ? '' : part(sep);
-  return mark(items.map(part).join(s));
+  const s = sep === undefined ? '' : render(sep, 'text');
+  return brand(MARKUP, { s: items.map((x) => render(x, 'text')).join(s) });
+}
+
+// Attribute names attrs() may set. No event handlers (on*), no URL-bearing
+// attributes (href/src/... go in the template literally, with a safeUrl()
+// value), no srcdoc/formaction/style-with-url tricks.
+const ATTR_NAME = /^(?:(?:data|aria)-[a-z0-9-]+|role|tabindex|class|title|id|opacity|type|name|value|alt|lang|dir|hidden|disabled)$/;
+
+/**
+ * An attribute list for a tag slot: attrs({ 'data-sym': s, role: 'button' })
+ * renders ` data-sym="…" role="button"`. Names must be on the allow-list;
+ * values are escaped; null/undefined/false values are omitted.
+ */
+export function attrs(map) {
+  let s = '';
+  for (const name of Object.keys(map)) {
+    if (!ATTR_NAME.test(name)) throw new TypeError('attrs: attribute "' + name + '" is not allowed');
+    const v = map[name];
+    if (v === null || v === undefined || v === false) continue;
+    if (isBranded(v) && !isSafeUrl(v)) throw new TypeError('attrs: ' + name + ' takes text, not markup');
+    s += ' ' + name + '="' + esc(isSafeUrl(v) ? v.u : v) + '"';
+  }
+  return brand(ATTRS, { s });
 }
 
 /** The only innerHTML assignment in the front end. */
 export function setHTML(el, content) {
   if (!el) return;
   if (!isSafe(content)) throw new TypeError('setHTML accepts html`` output only');
-  // The single audited sink: content.s exists only on html`` output, whose
-  // every interpolation was escaped. Static analysers flag the shape, not the
-  // flow; this file alone is exempt from the sink rule (eslint.config.mjs).
+  // The single audited sink: content.s exists only on html`` output.
+  // This file alone is exempt from the sink rule (eslint.config.mjs).
   el.innerHTML = content.s; // nosemgrep
 }
 
@@ -192,17 +241,14 @@ const SAFE_SCHEMES = /^(https?:)\/\//i;
 const DATA_IMAGE = /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,[a-z0-9+/=\s]+$/i;
 
 /**
- * A URL that may become an href or src. Only absolute http(s) URLs pass, plus
- * base64 raster/SVG data images when `allowDataImage` is set (the self-hosted
- * logos). Anything else - javascript:, vbscript:, data:text/html, a relative
- * path - comes back as null and the caller renders no link. The result is a
- * branded value: html`` accepts nothing else in a URL attribute.
+ * A URL that may become an href or src: absolute http(s), plus base64 data
+ * images when `allowDataImage` is set (the self-hosted logos). Anything else
+ * - javascript:, vbscript:, data:text/html, a relative path - is null and the
+ * caller renders no link. The result is branded: a URL slot accepts nothing else.
  */
 export function safeUrl(u, { allowDataImage = false } = {}) {
   if (typeof u !== 'string') return null;
   const t = u.trim();
   if (!SAFE_SCHEMES.test(t) && !(allowDataImage && DATA_IMAGE.test(t))) return null;
-  const o = Object.freeze({ u: t, toString() { return t; } });
-  SAFE_URL.add(o);
-  return o;
+  return brand(URLS, { u: t, toString() { return t; } });
 }

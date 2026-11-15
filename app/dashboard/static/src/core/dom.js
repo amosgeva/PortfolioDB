@@ -2,7 +2,7 @@
 // html.js's job alone.
 
 export function $(s, r) { return (r || document).querySelector(s); }
-export function $all(s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); }
+export function $all(s, r) { return Array.from((r || document).querySelectorAll(s)); }
 
 /** textContent setter that tolerates a missing element. */
 export function setText(el, text) { if (el) el.textContent = text == null ? '' : String(text); }

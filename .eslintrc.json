@@ -22,76 +22,108 @@
     "no-restricted-syntax": [
       "error",
       {
-        "selector": "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML|srcdoc)$/]",
-        "message": "Write markup with setHTML(el, html`...`) from core/html.js; it escapes every interpolation."
+        "selector": "MemberExpression[property.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__)$/]",
+        "message": "Markup sinks are reached only through setHTML(el, html`...`) from core/html.js."
       },
       {
-        "selector": "AssignmentExpression > MemberExpression.left[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|on.*)$/i]",
-        "message": "A computed write to a markup or event-handler property is still a sink."
+        "selector": "MemberExpression[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
+        "message": "A computed reference to a markup or event-handler property is still a sink."
       },
       {
-        "selector": "AssignmentExpression > MemberExpression.left[computed=true][property.type=/^(TemplateLiteral|BinaryExpression|CallExpression|ConditionalExpression|LogicalExpression)$/]",
-        "message": "Computed member writes may not build their key at run time: the key could be innerHTML or on*."
+        "selector": "AssignmentExpression > MemberExpression.left[computed=true]",
+        "message": "No computed member writes: a key held in a variable can be innerHTML or on*. Use put() from core/dict.js."
+      },
+      {
+        "selector": "CallExpression > MemberExpression.callee[computed=true]",
+        "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
       },
       {
         "selector": "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",
         "message": "No on* property handlers; use addEventListener."
       },
       {
-        "selector": "CallExpression > MemberExpression.callee[property.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe)$/]",
-        "message": "This call parses or injects markup without the escaping template."
-      },
-      {
-        "selector": "CallExpression > MemberExpression.callee[computed=true][property.type!='Literal']",
-        "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
-      },
-      {
-        "selector": "CallExpression > MemberExpression.callee[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|setAttribute)$/]",
-        "message": "A computed call to a markup sink is still a sink."
-      },
-      {
-        "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^on/i]",
-        "message": "No inline event-handler attributes; use addEventListener."
-      },
-      {
-        "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(srcdoc|formaction)$/i]",
-        "message": "srcdoc and formaction are markup/navigation sinks."
+        "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(on.*|srcdoc|formaction)$/i]",
+        "message": "No event-handler, srcdoc or formaction attributes."
       },
       {
         "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type!='Literal']",
         "message": "setAttribute with a computed name could set an event handler. Name the attribute literally."
       },
       {
-        "selector": "Property[key.name=/^(innerHTML|outerHTML|srcdoc)$/], Property[key.value=/^(innerHTML|outerHTML|srcdoc|on.*)$/i]",
-        "message": "An object literal can carry a markup property into Object.assign/defineProperty."
+        "selector": "Property[computed=true]",
+        "message": "No computed object keys: { [k]: v } can carry innerHTML into Object.assign or a spread."
       },
       {
-        "selector": "MemberExpression[object.name='Reflect'][property.name=/^(set|apply|defineProperty)$/]",
-        "message": "Reflect.set/apply/defineProperty can reach any sink by name."
+        "selector": "Property[key.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__)$/], Property[key.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
+        "message": "An object key naming a markup sink or handler can be copied onto an element."
       },
       {
-        "selector": "CallExpression[callee.object.name='Object'][callee.property.name=/^(defineProperty|defineProperties)$/]",
-        "message": "Object.defineProperty can install a markup setter or handler."
+        "selector": "Identifier[name='Reflect']",
+        "message": "Reflect can reach any property by name."
+      },
+      {
+        "selector": "MemberExpression[object.name='Object'][property.name=/^(assign|defineProperty|defineProperties|setPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyDescriptors)$/]",
+        "message": "Object.assign/defineProperty/descriptors can copy a markup property or setter onto an element."
+      },
+      {
+        "selector": "MemberExpression[property.name=/^(prototype|constructor)$/]",
+        "message": "No prototype or constructor access: Element.prototype descriptors are a route to innerHTML."
       },
       {
         "selector": "Identifier[name='html']:not(TaggedTemplateExpression > Identifier.tag):not(ImportSpecifier > Identifier)",
         "message": "html may only be used as a tag: html`...`. Calling, storing, passing or shadowing it lets runtime text pose as a template."
       },
       {
-        "selector": "ImportSpecifier[imported.name=/^(html|setHTML)$/][local.name!=/^(html|setHTML)$/]",
-        "message": "Import html and setHTML under their own names, so the tag rule can see every use."
+        "selector": "ImportSpecifier[imported.type='Literal'], ExportSpecifier[local.type='Literal'], ExportSpecifier[exported.type='Literal']",
+        "message": "No string-literal import or export names: they hide which binding is which from every check."
       },
       {
-        "selector": "ImportSpecifier[imported.name='html'][local.name='setHTML'], ImportSpecifier[imported.name='setHTML'][local.name='html']",
-        "message": "Import html and setHTML under their own names."
+        "selector": "ImportSpecifier[imported.name='html'][local.name!='html']",
+        "message": "Import html under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='setHTML'][local.name!='setHTML']",
+        "message": "Import setHTML under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='attrs'][local.name!='attrs']",
+        "message": "Import attrs under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='safeUrl'][local.name!='safeUrl']",
+        "message": "Import safeUrl under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='esc'][local.name!='esc']",
+        "message": "Import esc under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='join'][local.name!='join']",
+        "message": "Import join under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='isSafe'][local.name!='isSafe']",
+        "message": "Import isSafe under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='isSafeUrl'][local.name!='isSafeUrl']",
+        "message": "Import isSafeUrl under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportSpecifier[imported.name='isAttrList'][local.name!='isAttrList']",
+        "message": "Import isAttrList under its own name, so the checks can see every use."
+      },
+      {
+        "selector": "ImportDeclaration[source.value!=/core\\/html(\\.js)?$/] > ImportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]",
+        "message": "html, setHTML, attrs and safeUrl come from core/html.js only."
       },
       {
         "selector": "ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportNamespaceSpecifier, ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportDefaultSpecifier",
         "message": "No namespace or default import of core/html.js: it would allow html to be called as a property."
       },
       {
-        "selector": "ImportExpression, ExportAllDeclaration, ExportSpecifier[local.name=/^(html|setHTML)$/]",
-        "message": "html and setHTML are imported statically from core/html.js and never re-exported."
+        "selector": "ImportExpression, ExportAllDeclaration, ExportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]",
+        "message": "html and friends are imported statically from core/html.js and never re-exported."
       }
     ],
     "no-eval": "error",
@@ -130,52 +162,206 @@
         "no-restricted-syntax": [
           "error",
           {
-            "selector": "AssignmentExpression > MemberExpression.left[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|on.*)$/i]",
-            "message": "A computed write to a markup or event-handler property is still a sink."
+            "selector": "MemberExpression[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
+            "message": "A computed reference to a markup or event-handler property is still a sink."
           },
           {
-            "selector": "AssignmentExpression > MemberExpression.left[computed=true][property.type=/^(TemplateLiteral|BinaryExpression|CallExpression|ConditionalExpression|LogicalExpression)$/]",
-            "message": "Computed member writes may not build their key at run time: the key could be innerHTML or on*."
+            "selector": "AssignmentExpression > MemberExpression.left[computed=true]",
+            "message": "No computed member writes: a key held in a variable can be innerHTML or on*. Use put() from core/dict.js."
+          },
+          {
+            "selector": "CallExpression > MemberExpression.callee[computed=true]",
+            "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
           },
           {
             "selector": "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",
             "message": "No on* property handlers; use addEventListener."
           },
           {
-            "selector": "CallExpression > MemberExpression.callee[property.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe)$/]",
-            "message": "This call parses or injects markup without the escaping template."
-          },
-          {
-            "selector": "CallExpression > MemberExpression.callee[computed=true][property.type!='Literal']",
-            "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
-          },
-          {
-            "selector": "CallExpression > MemberExpression.callee[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|setAttribute)$/]",
-            "message": "A computed call to a markup sink is still a sink."
-          },
-          {
-            "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^on/i]",
-            "message": "No inline event-handler attributes; use addEventListener."
-          },
-          {
-            "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(srcdoc|formaction)$/i]",
-            "message": "srcdoc and formaction are markup/navigation sinks."
+            "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(on.*|srcdoc|formaction)$/i]",
+            "message": "No event-handler, srcdoc or formaction attributes."
           },
           {
             "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type!='Literal']",
             "message": "setAttribute with a computed name could set an event handler. Name the attribute literally."
           },
           {
-            "selector": "Property[key.name=/^(innerHTML|outerHTML|srcdoc)$/], Property[key.value=/^(innerHTML|outerHTML|srcdoc|on.*)$/i]",
-            "message": "An object literal can carry a markup property into Object.assign/defineProperty."
+            "selector": "Property[computed=true]",
+            "message": "No computed object keys: { [k]: v } can carry innerHTML into Object.assign or a spread."
           },
           {
-            "selector": "MemberExpression[object.name='Reflect'][property.name=/^(set|apply|defineProperty)$/]",
-            "message": "Reflect.set/apply/defineProperty can reach any sink by name."
+            "selector": "Property[key.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__)$/], Property[key.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
+            "message": "An object key naming a markup sink or handler can be copied onto an element."
           },
           {
-            "selector": "CallExpression[callee.object.name='Object'][callee.property.name=/^(defineProperty|defineProperties)$/]",
-            "message": "Object.defineProperty can install a markup setter or handler."
+            "selector": "Identifier[name='Reflect']",
+            "message": "Reflect can reach any property by name."
+          },
+          {
+            "selector": "MemberExpression[object.name='Object'][property.name=/^(assign|defineProperty|defineProperties|setPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyDescriptors)$/]",
+            "message": "Object.assign/defineProperty/descriptors can copy a markup property or setter onto an element."
+          },
+          {
+            "selector": "MemberExpression[property.name=/^(prototype|constructor)$/]",
+            "message": "No prototype or constructor access: Element.prototype descriptors are a route to innerHTML."
+          },
+          {
+            "selector": "ImportSpecifier[imported.type='Literal'], ExportSpecifier[local.type='Literal'], ExportSpecifier[exported.type='Literal']",
+            "message": "No string-literal import or export names: they hide which binding is which from every check."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='html'][local.name!='html']",
+            "message": "Import html under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='setHTML'][local.name!='setHTML']",
+            "message": "Import setHTML under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='attrs'][local.name!='attrs']",
+            "message": "Import attrs under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='safeUrl'][local.name!='safeUrl']",
+            "message": "Import safeUrl under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='esc'][local.name!='esc']",
+            "message": "Import esc under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='join'][local.name!='join']",
+            "message": "Import join under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='isSafe'][local.name!='isSafe']",
+            "message": "Import isSafe under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='isSafeUrl'][local.name!='isSafeUrl']",
+            "message": "Import isSafeUrl under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='isAttrList'][local.name!='isAttrList']",
+            "message": "Import isAttrList under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportDeclaration[source.value!=/core\\/html(\\.js)?$/] > ImportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]",
+            "message": "html, setHTML, attrs and safeUrl come from core/html.js only."
+          },
+          {
+            "selector": "ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportNamespaceSpecifier, ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportDefaultSpecifier",
+            "message": "No namespace or default import of core/html.js: it would allow html to be called as a property."
+          },
+          {
+            "selector": "ImportExpression, ExportAllDeclaration, ExportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]",
+            "message": "html and friends are imported statically from core/html.js and never re-exported."
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "app/dashboard/static/src/core/dict.js"
+      ],
+      "rules": {
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "MemberExpression[property.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__)$/]",
+            "message": "Markup sinks are reached only through setHTML(el, html`...`) from core/html.js."
+          },
+          {
+            "selector": "MemberExpression[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
+            "message": "A computed reference to a markup or event-handler property is still a sink."
+          },
+          {
+            "selector": "CallExpression > MemberExpression.callee[computed=true]",
+            "message": "No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write."
+          },
+          {
+            "selector": "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",
+            "message": "No on* property handlers; use addEventListener."
+          },
+          {
+            "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(on.*|srcdoc|formaction)$/i]",
+            "message": "No event-handler, srcdoc or formaction attributes."
+          },
+          {
+            "selector": "CallExpression[callee.property.name='setAttribute'][arguments.0.type!='Literal']",
+            "message": "setAttribute with a computed name could set an event handler. Name the attribute literally."
+          },
+          {
+            "selector": "Property[computed=true]",
+            "message": "No computed object keys: { [k]: v } can carry innerHTML into Object.assign or a spread."
+          },
+          {
+            "selector": "Property[key.name=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__)$/], Property[key.value=/^(innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__|on.*)$/i]",
+            "message": "An object key naming a markup sink or handler can be copied onto an element."
+          },
+          {
+            "selector": "Identifier[name='Reflect']",
+            "message": "Reflect can reach any property by name."
+          },
+          {
+            "selector": "MemberExpression[object.name='Object'][property.name=/^(assign|defineProperty|defineProperties|setPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyDescriptors)$/]",
+            "message": "Object.assign/defineProperty/descriptors can copy a markup property or setter onto an element."
+          },
+          {
+            "selector": "Identifier[name='html']:not(TaggedTemplateExpression > Identifier.tag):not(ImportSpecifier > Identifier)",
+            "message": "html may only be used as a tag: html`...`. Calling, storing, passing or shadowing it lets runtime text pose as a template."
+          },
+          {
+            "selector": "ImportSpecifier[imported.type='Literal'], ExportSpecifier[local.type='Literal'], ExportSpecifier[exported.type='Literal']",
+            "message": "No string-literal import or export names: they hide which binding is which from every check."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='html'][local.name!='html']",
+            "message": "Import html under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='setHTML'][local.name!='setHTML']",
+            "message": "Import setHTML under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='attrs'][local.name!='attrs']",
+            "message": "Import attrs under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='safeUrl'][local.name!='safeUrl']",
+            "message": "Import safeUrl under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='esc'][local.name!='esc']",
+            "message": "Import esc under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='join'][local.name!='join']",
+            "message": "Import join under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='isSafe'][local.name!='isSafe']",
+            "message": "Import isSafe under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='isSafeUrl'][local.name!='isSafeUrl']",
+            "message": "Import isSafeUrl under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportSpecifier[imported.name='isAttrList'][local.name!='isAttrList']",
+            "message": "Import isAttrList under its own name, so the checks can see every use."
+          },
+          {
+            "selector": "ImportDeclaration[source.value!=/core\\/html(\\.js)?$/] > ImportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]",
+            "message": "html, setHTML, attrs and safeUrl come from core/html.js only."
+          },
+          {
+            "selector": "ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportNamespaceSpecifier, ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportDefaultSpecifier",
+            "message": "No namespace or default import of core/html.js: it would allow html to be called as a property."
+          },
+          {
+            "selector": "ImportExpression, ExportAllDeclaration, ExportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]",
+            "message": "html and friends are imported statically from core/html.js and never re-exported."
           }
         ]
       }

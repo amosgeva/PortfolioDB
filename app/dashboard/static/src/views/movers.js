@@ -56,9 +56,9 @@ export function renderMovers() {
 
 const heatState = { sector: 'All', query: '' };
 function sectors() {
-  const set = {};
-  list().forEach((s) => { const key = s.sector || 'Other'; set[key] = 1; });
-  return Object.keys(set).sort((a, b) => a.localeCompare(b));
+  const set = new Set();
+  list().forEach((s) => { set.add(s.sector || 'Other'); });
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 function tileHTML(s) {
   return html`<div class="heat__tile" ${symTrigger(s.sym, s.sym + ' ' + F.pct(s.dayPct) + ' — open details')} style="background:${heatColor(s.dayPct)}" title="${(s.name || s.sym) + ' · ' + F.money(s.price)}"><div><b>${s.sym}</b>${subName(s.sym, s.name, 'div')}</div><div class="pc">${F.pct(s.dayPct)}</div></div>`;

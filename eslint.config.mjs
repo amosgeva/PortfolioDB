@@ -1,62 +1,73 @@
 // ESLint for the dashboard front end (frontend.yml runs it with
-// --max-warnings 0). .eslintrc.json carries the same rules in ESLint 8 form
-// for Codacy; tests/guards.test.mjs fails if the two drift apart.
+// --max-warnings 0). .eslintrc.json is rendered from this file by build.mjs
+// for Codacy (ESLint 8), so the two cannot drift.
 //
-// The no-restricted-syntax rules are the static layer of the XSS guarantee
-// described in app/dashboard/static/src/core/html.js: markup reaches the page
-// only through setHTML(el, html`...`). Every other sink is an error in both
-// its dotted and its computed spelling, `html` may appear only as a template
-// tag, and inline eslint-disable comments are ignored in src/ so a rule cannot
-// be switched off where it matters. tests/guards.test.mjs lints a fixture for
-// every rule and proves each one still fires.
+// The no-restricted-syntax rules are the static half of the guarantee stated
+// at the top of app/dashboard/static/src/core/html.js. They ban SHAPES, not
+// spellings, because spellings can always be rebuilt at run time:
+//   * no computed member write or call anywhere (core/dict.js `put` is the one
+//     audited computed write), so `const k = 'innerHTML'; el[k] = x` and
+//     `el[m](x)` are both impossible to write;
+//   * no reference at all - read, write, call or destructure - to a markup
+//     sink name outside core/html.js, so `const f = el.insertAdjacentHTML`
+//     is caught too;
+//   * no reflection, prototype access or Object.assign/defineProperty route;
+//   * `html` only as a template tag, imported from core/html.js under its own
+//     name with an identifier (not a quoted string) import name.
+// Inline eslint-disable comments are ignored in src/. tests/guards.test.mjs
+// lints a must-fail fixture per rule and runs an independent AST scan.
 
 import js from '@eslint/js';
 import globals from 'globals';
 
-const SINK_PROPS = 'innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe';
+const SINK_NAMES = 'innerHTML|outerHTML|srcdoc|insertAdjacentHTML|insertAdjacentElement|createContextualFragment|parseFromString|' +
+  'write|writeln|setAttributeNS|setAttributeNode|setHTMLUnsafe|execCommand|__defineSetter__|__lookupSetter__|__proto__';
+const HTML_JS = '/core\\/html(\\.js)?$/';
+const OWN_EXPORTS = ['html', 'setHTML', 'attrs', 'safeUrl', 'esc', 'join', 'isSafe', 'isSafeUrl', 'isAttrList'];
 
-/** Markup and handler sinks, dotted or computed. */
+/** Markup and handler sinks, and every shape that could reach one by name. */
 export const SINKS = [
-  { selector: "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML|srcdoc)$/]",
-    message: 'Write markup with setHTML(el, html`...`) from core/html.js; it escapes every interpolation.' },
-  { selector: "AssignmentExpression > MemberExpression.left[computed=true][property.value=/^(innerHTML|outerHTML|srcdoc|on.*)$/i]",
-    message: 'A computed write to a markup or event-handler property is still a sink.' },
-  { selector: "AssignmentExpression > MemberExpression.left[computed=true][property.type=/^(TemplateLiteral|BinaryExpression|CallExpression|ConditionalExpression|LogicalExpression)$/]",
-    message: 'Computed member writes may not build their key at run time: the key could be innerHTML or on*.' },
-  { selector: "AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]",
-    message: 'No on* property handlers; use addEventListener.' },
-  { selector: `CallExpression > MemberExpression.callee[property.name=/^(${SINK_PROPS})$/]`,
-    message: 'This call parses or injects markup without the escaping template.' },
-  { selector: "CallExpression > MemberExpression.callee[computed=true][property.type!='Literal']",
+  { selector: `MemberExpression[property.name=/^(${SINK_NAMES})$/]`,
+    message: 'Markup sinks are reached only through setHTML(el, html`...`) from core/html.js.' },
+  { selector: `MemberExpression[computed=true][property.value=/^(${SINK_NAMES}|on.*)$/i]`,
+    message: 'A computed reference to a markup or event-handler property is still a sink.' },
+  { selector: 'AssignmentExpression > MemberExpression.left[computed=true]',
+    message: 'No computed member writes: a key held in a variable can be innerHTML or on*. Use put() from core/dict.js.' },
+  { selector: 'CallExpression > MemberExpression.callee[computed=true]',
     message: 'No computed method calls: el[name](...) can reach insertAdjacentHTML or document.write.' },
-  { selector: `CallExpression > MemberExpression.callee[computed=true][property.value=/^(${SINK_PROPS}|setAttribute)$/]`,
-    message: 'A computed call to a markup sink is still a sink.' },
-  { selector: "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^on/i]",
-    message: 'No inline event-handler attributes; use addEventListener.' },
-  { selector: "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(srcdoc|formaction)$/i]",
-    message: 'srcdoc and formaction are markup/navigation sinks.' },
+  { selector: 'AssignmentExpression > MemberExpression.left[property.name=/^on[a-z]+$/i]',
+    message: 'No on* property handlers; use addEventListener.' },
+  { selector: "CallExpression[callee.property.name='setAttribute'][arguments.0.type='Literal'][arguments.0.value=/^(on.*|srcdoc|formaction)$/i]",
+    message: 'No event-handler, srcdoc or formaction attributes.' },
   { selector: "CallExpression[callee.property.name='setAttribute'][arguments.0.type!='Literal']",
     message: 'setAttribute with a computed name could set an event handler. Name the attribute literally.' },
-  { selector: "Property[key.name=/^(innerHTML|outerHTML|srcdoc)$/], Property[key.value=/^(innerHTML|outerHTML|srcdoc|on.*)$/i]",
-    message: 'An object literal can carry a markup property into Object.assign/defineProperty.' },
-  { selector: "MemberExpression[object.name='Reflect'][property.name=/^(set|apply|defineProperty)$/]",
-    message: 'Reflect.set/apply/defineProperty can reach any sink by name.' },
-  { selector: "CallExpression[callee.object.name='Object'][callee.property.name=/^(defineProperty|defineProperties)$/]",
-    message: 'Object.defineProperty can install a markup setter or handler.' },
+  { selector: 'Property[computed=true]',
+    message: 'No computed object keys: { [k]: v } can carry innerHTML into Object.assign or a spread.' },
+  { selector: `Property[key.name=/^(${SINK_NAMES})$/], Property[key.value=/^(${SINK_NAMES}|on.*)$/i]`,
+    message: 'An object key naming a markup sink or handler can be copied onto an element.' },
+  { selector: "Identifier[name='Reflect']",
+    message: 'Reflect can reach any property by name.' },
+  { selector: "MemberExpression[object.name='Object'][property.name=/^(assign|defineProperty|defineProperties|setPrototypeOf|getOwnPropertyDescriptor|getOwnPropertyDescriptors)$/]",
+    message: 'Object.assign/defineProperty/descriptors can copy a markup property or setter onto an element.' },
+  { selector: "MemberExpression[property.name=/^(prototype|constructor)$/]",
+    message: 'No prototype or constructor access: Element.prototype descriptors are a route to innerHTML.' },
 ];
 
-/** `html` is a template tag and nothing else. */
+/** `html` is a template tag, imported plainly from core/html.js. */
 export const HTML_USAGE = [
   { selector: "Identifier[name='html']:not(TaggedTemplateExpression > Identifier.tag):not(ImportSpecifier > Identifier)",
     message: 'html may only be used as a tag: html`...`. Calling, storing, passing or shadowing it lets runtime text pose as a template.' },
-  { selector: "ImportSpecifier[imported.name=/^(html|setHTML)$/][local.name!=/^(html|setHTML)$/]",
-    message: 'Import html and setHTML under their own names, so the tag rule can see every use.' },
-  { selector: "ImportSpecifier[imported.name='html'][local.name='setHTML'], ImportSpecifier[imported.name='setHTML'][local.name='html']",
-    message: 'Import html and setHTML under their own names.' },
-  { selector: "ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportNamespaceSpecifier, ImportDeclaration[source.value=/core\\/html(\\.js)?$/] > ImportDefaultSpecifier",
+  { selector: "ImportSpecifier[imported.type='Literal'], ExportSpecifier[local.type='Literal'], ExportSpecifier[exported.type='Literal']",
+    message: 'No string-literal import or export names: they hide which binding is which from every check.' },
+  ...OWN_EXPORTS.map((name) => ({
+    selector: `ImportSpecifier[imported.name='${name}'][local.name!='${name}']`,
+    message: 'Import ' + name + ' under its own name, so the checks can see every use.' })),
+  { selector: `ImportDeclaration[source.value!=${HTML_JS}] > ImportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]`,
+    message: 'html, setHTML, attrs and safeUrl come from core/html.js only.' },
+  { selector: `ImportDeclaration[source.value=${HTML_JS}] > ImportNamespaceSpecifier, ImportDeclaration[source.value=${HTML_JS}] > ImportDefaultSpecifier`,
     message: 'No namespace or default import of core/html.js: it would allow html to be called as a property.' },
-  { selector: "ImportExpression, ExportAllDeclaration, ExportSpecifier[local.name=/^(html|setHTML)$/]",
-    message: 'html and setHTML are imported statically from core/html.js and never re-exported.' },
+  { selector: 'ImportExpression, ExportAllDeclaration, ExportSpecifier[local.name=/^(html|setHTML|attrs|safeUrl)$/]',
+    message: 'html and friends are imported statically from core/html.js and never re-exported.' },
 ];
 
 export const SRC_RULES = {
@@ -72,9 +83,12 @@ export const SRC_RULES = {
   eqeqeq: ['error', 'always', { null: 'ignore' }],
 };
 
-// core/html.js defines `html` and holds the one sanctioned innerHTML write;
-// it is exempt from exactly those two rules and from nothing else.
-export const HTML_JS_SINKS = SINKS.filter((s) => !s.selector.startsWith('AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML'));
+// core/html.js holds the one innerHTML write and defines `html`; core/dict.js
+// holds the one computed write and checks prototypes. Each is exempt from
+// exactly the rules it exists to implement, and from nothing else.
+const without = (list, ...starts) => list.filter((r) => !starts.some((s) => r.selector.startsWith(s)));
+export const HTML_JS_RULES = [...without(SINKS, 'MemberExpression[property.name=/^(innerHTML'), ...without(HTML_USAGE, "Identifier[name='html']")];
+export const DICT_JS_RULES = [...without(SINKS, 'AssignmentExpression > MemberExpression.left[computed=true]', 'MemberExpression[property.name=/^(prototype'), ...HTML_USAGE];
 
 export default [
   {
@@ -88,8 +102,6 @@ export default [
   js.configs.recommended,
   {
     files: ['app/dashboard/static/src/**/*.js'],
-    // An inline eslint-disable could switch off the sink rules where it
-    // matters; in src/ such comments are ignored.
     linterOptions: { noInlineConfig: true, reportUnusedDisableDirectives: 'off' },
     languageOptions: {
       ecmaVersion: 2022,
@@ -98,10 +110,8 @@ export default [
     },
     rules: SRC_RULES,
   },
-  {
-    files: ['app/dashboard/static/src/core/html.js'],
-    rules: { 'no-restricted-syntax': ['error', ...HTML_JS_SINKS] },
-  },
+  { files: ['app/dashboard/static/src/core/html.js'], rules: { 'no-restricted-syntax': ['error', ...HTML_JS_RULES] } },
+  { files: ['app/dashboard/static/src/core/dict.js'], rules: { 'no-restricted-syntax': ['error', ...DICT_JS_RULES] } },
   {
     files: ['app/dashboard/static/build.mjs', 'app/dashboard/static/tools/**/*.mjs', 'app/dashboard/static/tests/**/*.mjs', 'eslint.config.mjs'],
     languageOptions: {

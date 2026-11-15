@@ -3,6 +3,7 @@
 
 import { html } from '../core/html.js';
 import { THOUSAND, MILLION } from '../core/format.js';
+import { put } from '../core/dict.js';
 
 // Ticks are stepped by repeated addition, so the last one can land a float
 // hair above the maximum; this is the tolerance that keeps it.
@@ -46,7 +47,7 @@ export function suspectIdx(vals) {
   let n = 0;
   for (let i = 1; i < vals.length - 1; i++) {
     const v = vals[i];
-    if (v > 0 && vals[i - 1] > v * SUSPECT_RATIO && vals[i + 1] > v * SUSPECT_RATIO) { bad[i] = 1; n++; }
+    if (v > 0 && vals[i - 1] > v * SUSPECT_RATIO && vals[i + 1] > v * SUSPECT_RATIO) { put(bad, i, 1); n++; }
   }
   bad.count = n;
   return bad;

@@ -31,7 +31,7 @@ export function initState(D) {
 }
 
 export function get(sym) {
-  return Object.prototype.hasOwnProperty.call(app.stocks, sym) ? app.stocks[sym] : undefined;
+  return Object.hasOwn(app.stocks, sym) ? app.stocks[sym] : undefined;
 }
 export function list() { return Object.keys(app.stocks).map((k) => app.stocks[k]); }
 

@@ -28,7 +28,6 @@ export const STREAMLIT = {
   navButton: (view) => '.st-key-pdb_nav_' + view + ' button',
 };
 
-const REGISTRY = '__pdbHostListeners';
 
 /** The embedding window, or null when there is none we may touch. */
 export function parentWin() {
@@ -49,7 +48,7 @@ const MOUNT_ID = {};
 export function releaseParentListeners(all) {
   const p = parentWin();
   if (!p) return 0;
-  const list = p[REGISTRY] || [];
+  const list = p.__pdbHostListeners || [];
   const keep = [];
   let n = 0;
   list.forEach((l) => {
@@ -57,7 +56,7 @@ export function releaseParentListeners(all) {
     try { p.removeEventListener(l.type, l.fn); } catch (e) { /* parent gone */ }
     n++;
   });
-  p[REGISTRY] = keep;
+  p.__pdbHostListeners = keep;
   return n;
 }
 
@@ -65,9 +64,9 @@ export function releaseParentListeners(all) {
 export function onParent(type, fn) {
   const p = parentWin();
   if (!p) return false;
-  if (!p[REGISTRY]) p[REGISTRY] = [];
+  if (!p.__pdbHostListeners) p.__pdbHostListeners = [];
   p.addEventListener(type, fn);
-  p[REGISTRY].push({ type, fn, owner: MOUNT_ID });
+  p.__pdbHostListeners.push({ type, fn, owner: MOUNT_ID });
   return true;
 }
 

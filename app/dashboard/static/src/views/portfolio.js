@@ -2,7 +2,8 @@
 // attribution and the net P&L waterfall.
 
 import { $, $all, activate, bySym, clickable, setText, prefersReducedMotion } from '../core/dom.js';
-import { html, setHTML } from '../core/html.js';
+import { html, attrs, setHTML } from '../core/html.js';
+import { put } from '../core/dict.js';
 import { app, list, holdingRows, totals } from '../core/state.js';
 import * as F from '../core/format.js';
 import { sparkSVG, symColor, onFill, CAT, CAT_OTHER, CAT_CASH } from '../charts/common.js';
@@ -82,7 +83,7 @@ const ALLOC_PALETTE = CAT.slice(0, 9);
 function treemapHTML(slices, total) {
   // weight-proportional treemap (two greedy strips): tile area = weight
   const rows = [[], []], sums = [0, 0];
-  slices.forEach((s) => { const i = sums[0] <= sums[1] ? 0 : 1; rows[i].push(s); sums[i] += s.val; });
+  slices.forEach((s) => { const i = sums[0] <= sums[1] ? 0 : 1; rows[i].push(s); put(sums, i, sums[i] + s.val); });
   if (!rows[1].length) { rows.pop(); sums.pop(); }
   return html`<div style="display:flex;flex-direction:column;gap:4px;width:100%" role="img" aria-label="Allocation treemap, tile size is portfolio weight">${rows.map((row, ri) => {
     const h = Math.max(64, Math.round(176 * sums[ri] / total));
@@ -105,11 +106,11 @@ export function renderAlloc() {
     const otherVal = rs.slice(6).reduce((a, r) => a + r.mktVal, 0);
     // symColor keeps a symbol's colour stable across views, but six symbols in
     // nine buckets collide often: walk to the next free step when they do.
-    const taken = {};
+    const taken = new Set();
     slices = top.map((r) => {
       let c = symColor(r.sym);
-      for (let g = 0; taken[c] && g < 9; g++) c = CAT[(CAT.indexOf(c) + 1) % 9];
-      taken[c] = 1;
+      for (let g = 0; taken.has(c) && g < 9; g++) c = CAT[(CAT.indexOf(c) + 1) % 9];
+      taken.add(c);
       return { label: r.sym, val: r.mktVal, color: c };
     });
     if (otherVal > 0) slices.push({ label: 'Other', val: otherVal, color: CAT_OTHER });
@@ -202,17 +203,17 @@ export function initHoldings() {
 export function flashChangedPrices() {
   try {
     const prev = JSON.parse(localStorage.getItem('pdb_prices') || '{}');
-    const cur = {};
-    list().forEach((s) => { cur[s.sym] = s.price; });
+    const cur = new Map();
+    list().forEach((s) => { cur.set(s.sym, s.price); });
     if (!prefersReducedMotion()) {
-      Object.keys(cur).forEach((sym) => {
-        if (prev[sym] == null || prev[sym] === cur[sym]) return;
+      cur.forEach((price, sym) => {
+        if (prev[sym] == null || prev[sym] === price) return;
         const row = bySym($('#holdings'), 'tr[data-sym]', sym);
         const cell = row && row.querySelector('td.price');
-        if (cell) cell.classList.add(cur[sym] > prev[sym] ? 'flash-up' : 'flash-down');
+        if (cell) cell.classList.add(price > prev[sym] ? 'flash-up' : 'flash-down');
       });
     }
-    localStorage.setItem('pdb_prices', JSON.stringify(cur));
+    localStorage.setItem('pdb_prices', JSON.stringify(Object.fromEntries(cur)));
   } catch (e) { /* storage unavailable: no flash on the next load */ }
 }
 
@@ -264,7 +265,7 @@ export function renderWaterfall() {
     let vy = yTop - 5; if (vy < 12) vy = yBot + 12;
     const dx = (x - (slot - bw) / 2 + 1).toFixed(1);
     const cy = Y(nd.y1).toFixed(1);
-    return html`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${color}"${nd.net ? '' : html` opacity=".85"`}><title>${nd.label + ' ' + F.money(nd.val)}</title></rect>${nd.net ? html`<line x1="${dx}" x2="${dx}" y1="${padT}" y2="${H - padB + 6}" stroke="var(--border-2)" stroke-width="1"/>` : ''}${!nd.net && i < nodes.length - 1 ? html`<line x1="${(x + bw).toFixed(1)}" x2="${((i + 1) * slot + (slot - bw) / 2).toFixed(1)}" y1="${cy}" y2="${cy}" stroke="var(--faint)" stroke-width="1" stroke-dasharray="3 3"/>` : ''}<text x="${(x + bw / 2).toFixed(1)}" y="${vy.toFixed(1)}" text-anchor="middle" font-size="10" class="num" fill="var(--fg-soft)">${(nd.val >= 0 ? '+' : '−') + F.compact(Math.abs(nd.val))}</text><text x="${(x + bw / 2).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${nd.label}</text>`;
+    return html`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${hgt.toFixed(1)}" rx="3" fill="${color}" ${nd.net ? '' : attrs({ opacity: '.85' })}><title>${nd.label + ' ' + F.money(nd.val)}</title></rect>${nd.net ? html`<line x1="${dx}" x2="${dx}" y1="${padT}" y2="${H - padB + 6}" stroke="var(--border-2)" stroke-width="1"/>` : ''}${!nd.net && i < nodes.length - 1 ? html`<line x1="${(x + bw).toFixed(1)}" x2="${((i + 1) * slot + (slot - bw) / 2).toFixed(1)}" y1="${cy}" y2="${cy}" stroke="var(--faint)" stroke-width="1" stroke-dasharray="3 3"/>` : ''}<text x="${(x + bw / 2).toFixed(1)}" y="${vy.toFixed(1)}" text-anchor="middle" font-size="10" class="num" fill="var(--fg-soft)">${(nd.val >= 0 ? '+' : '−') + F.compact(Math.abs(nd.val))}</text><text x="${(x + bw / 2).toFixed(1)}" y="${H - 12}" text-anchor="middle" font-size="10.5" fill="var(--muted)">${nd.label}</text>`;
   });
   setHTML(host, html`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:220px;display:block" role="img" aria-label="${wfLabel}"><line x1="0" x2="${W}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--border-2)" stroke-width="1"/>${parts}</svg>`);
 }

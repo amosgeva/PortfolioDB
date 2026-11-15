@@ -30,7 +30,7 @@ export function wireFolds() {
     const hd = card.querySelector(':scope > .card__hd');
     if (!hd) return;
     // The body is whatever is not the heading; aria-controls names what hides.
-    const bd = Array.prototype.find.call(card.children, (c) => !c.classList.contains('card__hd'));
+    const bd = Array.from(card.children).find((c) => !c.classList.contains('card__hd'));
     if (!bd) return;
     let btn = card.querySelector(':scope > .card__hd > .fold-btn');
     if (!on) {
