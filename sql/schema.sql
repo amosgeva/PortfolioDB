@@ -15,21 +15,19 @@
 
 BEGIN;
 
--- The account-name fold (app/account_names.py, which defines it): NFKC, then
--- every character in account_names.IGNORED_RANGES removed (Unicode
--- White_Space, U+001C-U+001F, invisible format characters), then A-Z
--- lowercased and nothing else (COLLATE "C"). No locale decides the answer:
--- [[:space:]] would (and disagreed with Python on NBSP, QA of PR #133). The
--- class below is rendered by account_names.sql_char_class() and a test holds
--- them together, as it does this definition and migration 007's copy of it.
--- The '(none)' CHECKs on lots, income and cash_snapshots use it. Needs a UTF8
--- database (normalize() does), which is what the official image creates.
+-- The account-name fold, defined in app/account_names.py: delete every
+-- character that is not an ASCII letter or ( or ), then lowercase A-Z and
+-- nothing else. It uses no Unicode data and no locale (code points, COLLATE
+-- "C", translate), so Python and PostgreSQL compute it identically whatever
+-- their versions; two earlier drafts ([[:space:]], then NFKC) did not (QA of
+-- PR #133, B1/B2). A test holds this definition to the Python and to
+-- migration 007's copy, and runs both over every code point. The '(none)'
+-- CHECKs on lots, income and cash_snapshots use it.
 CREATE OR REPLACE FUNCTION pdb_account_fold(account_name text) RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
   AS $fold$
-    SELECT lower(regexp_replace(normalize(account_name, NFKC),
-                                '[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u00AD\u1680\u180E\u2000-\u200D\u2028-\u2029\u202F\u205F-\u2060\u3000\uFEFF]',
-                                '', 'g') COLLATE "C")
+    SELECT translate(regexp_replace(account_name COLLATE "C", '[^A-Za-z()]', '', 'g'),
+                     'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
   $fold$;
 
 CREATE TABLE IF NOT EXISTS instruments (

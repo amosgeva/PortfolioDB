@@ -21,12 +21,13 @@ needs a schema step says so under **Upgrading**.
 - Apply `sql/migrations/007_reserved_account_names.sql` (`make schema`, or
   `docker compose run --rm dashboard python app/apply_schema.py`, which
   records it in `schema_migrations`). It adds a CHECK to `lots`, `income` and
-  `cash_snapshots`: no account may be named `(none)`, in any case or spacing —
-  including no-break, figure and other Unicode spaces, zero-width characters
-  and fullwidth letters — through one SQL function, `pdb_account_fold`, which
-  `sql/schema.sql` creates. The schema version is now 0.7 (`sql/schema.sql`
-  header and the MCP's `schema_version`). The database must be UTF8, as the
-  official image creates it; the migration refuses otherwise.
+  `cash_snapshots`: no account may read as `(none)`. Only the ASCII letters
+  and parentheses of a name are compared, case-insensitively, so `(NONE)`,
+  `( none )`, a `(none)` padded with no-break or zero-width spaces, and
+  `(none 2)` all count; a name spelled with other letters (fullwidth,
+  mathematical) is an ordinary name. The rule is one SQL function,
+  `pdb_account_fold`, which `sql/schema.sql` creates. The schema version is
+  now 0.7 (`sql/schema.sql` header and the MCP's `schema_version`).
 - **If any row already uses that name, the migration refuses and changes
   nothing** — it does not rewrite your data. The error lists each table, how
   many rows, and the account's code points (so a no-break space is visible);
@@ -48,10 +49,11 @@ needs a schema step says so under **Upgrading**.
   unassigned bucket's. The Manage page (lots and cash), `add_lot`,
   `sell_lot`, `set_cash`, `add_income` and `import_csv_history` now refuse
   it, and the database refuses it from any other writer (migration 007). Both
-  compare a folded name — NFKC, every Unicode whitespace and invisible format
-  character removed, A–Z lowercased — defined once in
-  `app/account_names.py` and implemented identically in SQL; tests run both
-  over the same strings, including every BMP character around `(none)`.
+  compare a folded name — every character but A–Z, a–z, `(` and `)` deleted,
+  then A–Z lowercased — defined once in `app/account_names.py` and
+  implemented the same way in SQL. The fold uses no Unicode tables or locale,
+  so Python and PostgreSQL agree whatever their versions; tests run both over
+  every code point.
 - The MCP treats the label as `account IS NULL` and nothing else, in every
   reader and in any spelling (`(NONE)` included): `list_accounts` groups by
   the stored account before labelling it, allocation by account filters with

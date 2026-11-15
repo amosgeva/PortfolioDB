@@ -38,9 +38,15 @@ SYM_A, SYM_B, SYM_PROBE = f"{PREFIX}A", f"{PREFIX}B", f"{PREFIX}P"
 SYMS = (SYM_A, SYM_B, SYM_PROBE)
 NAMED = f"{PREFIX} Named"
 CASH_ONLY = f"{PREFIX} Cash only"
-RESERVED = ["(none)", "(NONE)", " ( none ) ",
+# QA of PR #133, B2: Python 3.14's NFKC mapped U+1CCDA OUTLINED LATIN CAPITAL
+# LETTER E to 'E' and PostgreSQL 16's did not. With a fold that uses no Unicode
+# data this is an ordinary, distinct account on both sides, and must reconcile
+# as its own bucket.
+OUTLINED = "(non" + chr(0x1CCDA) + ")"
+OUTLINED_MV, OUTLINED_CASH = 2 * 10, 50.0
+RESERVED = ["(none)", "(NONE)", " ( none ) ", "(none 2)", "(no" + chr(0x200B) + "ne)",
             # QA of PR #133, B1: no-break, figure and narrow no-break spaces.
-            "(\u00a0none\u00a0)", "(\u2007NONE)", "(none\u202f)", "\uff08\uff4e\uff4f\uff4e\uff45\uff09"]
+            "(\u00a0none\u00a0)", "(\u2007NONE)", "(none\u202f)"]
 
 # What the fixture holds, by bucket.
 NONE_MV = 1 * 10 + 3 * 25      # A: 1 @ $10 quote; B: 3 @ $25 quote
@@ -81,8 +87,8 @@ def _wipe(conn) -> None:
         cur.execute("DELETE FROM income WHERE symbol = ANY(%s)", (list(SYMS),))
         cur.execute("DELETE FROM price_snapshots WHERE symbol = ANY(%s)", (list(SYMS),))
         # '(none)' only exists here if a writer let it through (the probe below).
-        cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s, '(none)')",
-                    (NAMED, CASH_ONLY))
+        cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s, %s, '(none)')",
+                    (NAMED, CASH_ONLY, OUTLINED))
         cur.execute("DELETE FROM instruments WHERE symbol = ANY(%s)", (list(SYMS),))
     conn.commit()
 
@@ -115,10 +121,12 @@ def ledger(admin):
         _lot(NAMED, SYM_A, "BUY", 2, 10, day),
         _lot(NAMED, SYM_B, "BUY", 4, 22, day),
         _lot(NAMED, SYM_B, "SELL", 1, 24, day + timedelta(days=5)),
+        _lot(OUTLINED, SYM_A, "BUY", 2, 10, day),       # accepted: not the label
     ):
         assert nw.add_lot(admin, lot)
     nw.record_cash(admin, NAMED, Decimal("200"), "identity test")
     nw.record_cash(admin, CASH_ONLY, Decimal("500"), "identity test")
+    nw.record_cash(admin, OUTLINED, Decimal("50"), "identity test")
     pay = date.today() - timedelta(days=10)
     for account, symbol, amount in ((None, SYM_A, 3), (NAMED, SYM_B, 7)):
         assert add_income._insert_income(
@@ -238,6 +246,14 @@ def test_every_bucket_is_listed_once(admin, accounts):
                             "has_cash": False, "latest_cash_ts": None}
     assert by[NAMED]["position_lot_count"] == 3 and by[NAMED]["has_cash"]
     assert by[CASH_ONLY]["position_lot_count"] == 0 and by[CASH_ONLY]["has_cash"]
+    assert by[OUTLINED]["position_lot_count"] == 1 and by[OUTLINED]["has_cash"]
+
+
+def test_an_outlined_letter_name_selects_its_own_lots(server):
+    """B2: the listed label must select its own stored account, not NULL."""
+    lots = _call(server, "get_lots", {"account": OUTLINED, "symbol": SYM_A, "limit": 50})
+    rows = lots["lots"] if isinstance(lots, dict) else lots
+    assert [(r["account"], r["quantity"]) for r in rows] == [(OUTLINED, 2.0)]
 
 
 @pytest.mark.parametrize("label", ["(none)", "(NONE)"])
@@ -269,6 +285,7 @@ def test_allocation_by_account_reconciles_with_the_whole_book(server, accounts):
     assert rows["(none)"] == pytest.approx(BASE["none_mv"] + NONE_MV)
     assert rows[NAMED] == pytest.approx(NAMED_MV)
     assert CASH_ONLY not in rows
+    assert rows[OUTLINED] == pytest.approx(OUTLINED_MV)
     for a in accounts:
         mv = positions.positions_summary("fifo", account=a["account"],
                                          include_income=False)["market_value"]
@@ -286,6 +303,7 @@ def test_cash_reconciles_and_the_unassigned_bucket_has_none(server, accounts):
     assert per["(none)"]["cash"] == 0.0
     assert per[NAMED]["cash"] == pytest.approx(NAMED_CASH)
     assert per[CASH_ONLY]["cash"] == pytest.approx(CASH_ONLY_CASH)
+    assert per[OUTLINED]["cash"] == pytest.approx(OUTLINED_CASH)
     assert _call(server, "get_cash_balance", {"account": "(NONE)"})["cash"] == 0.0
 
 
@@ -306,6 +324,9 @@ def test_the_review_reconciles_bucket_by_bucket(server, accounts):
     assert named["realized_pnl"] == pytest.approx(1 * 24 - 1 - (22 + 1 / 4))
     assert cash_only["portfolio_value"] == pytest.approx(CASH_ONLY_CASH)
     assert cash_only["invested_market_value"] == 0.0
+    outlined = per[OUTLINED]
+    assert outlined["invested_market_value"] == pytest.approx(OUTLINED_MV)
+    assert outlined["cash"] == pytest.approx(OUTLINED_CASH)
 
 
 # ── the rescore's probe, step by step (last: it adds and removes its own rows) ──

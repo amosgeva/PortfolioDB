@@ -30,7 +30,7 @@ def test_the_mcp_label_is_the_one_the_writers_reserve():
 
 
 @pytest.mark.parametrize("label", ["(none)", "(NONE)", " ( none ) ", "(\u00a0none\u202f)",
-                                   "\uff08none\uff09"])
+                                   "(none 2)", "(no\u200bne)"])
 def test_every_spelling_of_the_label_filters_to_null(label):
     from psycopg2 import sql
 
@@ -41,6 +41,20 @@ def test_every_spelling_of_the_label_filters_to_null(label):
     assert render_sql(query).endswith("AND account IS NULL") and params == []
     assert common.account_matches(None, label)
     assert not common.account_matches("(none)", label)  # a stored name never matches the label
+
+
+@pytest.mark.parametrize("name", ["\uff08none\uff09", "(non\U0001ccda)"])
+def test_other_letters_are_a_name_not_the_label(name):
+    """QA of PR #133, B2: these folded to '(none)' under Python 3.14's NFKC
+    and not under PostgreSQL's. Without Unicode data in the fold they are an
+    ordinary name on both sides, bound as one."""
+    from psycopg2 import sql
+
+    from app.mcp.services import common
+
+    query, params = common.add_account_filter(sql.SQL("SELECT 1 FROM lots WHERE 1=1"), [], name)
+    assert params == [name] and not common.is_none_account(name)
+    assert common.account_matches(name, name) and not common.account_matches(None, name)
 
 
 @pytest.mark.parametrize("label", ["(none)", "(None)"])

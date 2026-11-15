@@ -8,10 +8,12 @@ allocation by account and lent its cash to that bucket. Here:
 
 * the rule itself (app/account_names.py) and its SQL mirror, the one
   ``pdb_account_fold`` function in sql/schema.sql and migration 007: same
-  definition in both files, its character class rendered from the Python
-  list, and — run against the database — the same fold as Python over a
-  corpus and the same verdict for every BMP character placed in and around
-  '(none)' (QA of PR #133, B1: [[:space:]] missed NBSP and friends);
+  definition in both files, spelling the same two table-free steps as the
+  Python, and — run against the database — the same fold as Python for every
+  Unicode scalar on its own, and for every BMP character plus a
+  supplementary sample placed in and around '(none)' (QA of PR #133: B1,
+  [[:space:]] missed NBSP; B2, NFKC tables differ between Python 3.14 and
+  PostgreSQL 16);
 * every writer refuses the name — the Manage page parser and cash writer, the
   shared lot writer, add_lot / sell_lot / set_cash / add_income through their
   argument parsers, the CSV importer per row and up front, and the income
@@ -68,12 +70,19 @@ RESERVED_SPELLINGS = [
     # QA of PR #133, B1: whitespace PostgreSQL's [[:space:]] did not fold.
     "(\u00a0none\u00a0)", "(\u2007none)", "(none\u202f)", "\u00a0(none)\u00a0",
     "(\u3000NONE)", "(\u2028none)", "(no\u200bne)", "\ufeff(none)", "(n\u00adone)",
-    "(\x1cnone\x1f)", "(\x85none)",
-    # NFKC: fullwidth letters and brackets.
-    "\uff08\uff4e\uff4f\uff4e\uff45\uff09", "\uff08NONE\uff09",
+    "(\x1cnone\x1f)", "(\x85none)", "(\u200dn\u2060o\u180en\ufe0fe)",
+    # Only ASCII letters and parentheses count, so added punctuation, digits
+    # or combining marks do not make it another name.
+    "(none 2)", "(no-ne)", "(n.o.n.e)", "1(none)", "(no\u0308ne)",
 ]
 ALLOWED = ["IBKR", "none", "None", "(merged)", "Broker (none of them)", "(nonexistent)",
-           "(nöne)", "(none)x", "(non e1)", "[none]", "(nоne)"]  # the last: Cyrillic о
+           "(n\u00f6ne)", "(none)x", "[none]", "(n\u043ene)",  # precomposed o-umlaut; Cyrillic o
+           # Other letters are other names, on both sides (QA of PR #133, B2):
+           # fullwidth, mathematical bold, outlined (Unicode 16, which Python
+           # 3.14's NFKC maps to ASCII and PostgreSQL 16's does not).
+           "\uff08\uff4e\uff4f\uff4e\uff45\uff09", "\uff08NONE\uff09", "(none\uff09",
+           "(\U0001d427\U0001d428\U0001d427\U0001d41e)",
+           "(non\U0001ccda)", "(\U0001cce3one)", "(n\U0001cce4ne)"]
 TABLES = ("lots", "income", "cash_snapshots")
 
 
@@ -120,26 +129,26 @@ def _fold_function(text: str) -> str:
 def test_one_fold_function_in_schema_and_migration_007():
     in_schema = _fold_function(SCHEMA.read_text(encoding="utf-8"))
     assert in_schema == _fold_function(MIGRATION.read_text(encoding="utf-8"))
-    for fragment in ("IMMUTABLE STRICT", "normalize(account_name, NFKC)", 'COLLATE "C"'):
-        assert fragment in in_schema
+    assert "IMMUTABLE STRICT" in in_schema
 
 
-def test_the_sql_character_class_is_rendered_from_the_python_list():
-    """The class the function removes is exactly account_names.IGNORED_RANGES —
-    explicit code points, not the locale-dependent [[:space:]]."""
+def test_the_sql_function_spells_the_python_fold():
+    """Same two table-free steps: delete by FOLD_DELETE (code points, COLLATE
+    "C"), then translate A-Z to a-z. No normalize(), lower() or character
+    class whose meaning depends on Unicode data or a locale (B1, B2)."""
     fn = _fold_function(SCHEMA.read_text(encoding="utf-8"))
-    classes = re.findall(r"'(\[[^']*\])'", fn)
-    assert classes == [account_names.sql_char_class()]
-    assert "[[:space:]]" not in fn
+    assert f"regexp_replace(account_name COLLATE \"C\", '{account_names.FOLD_DELETE}', '', 'g')" in fn
+    assert f"'{account_names.ASCII_UPPER}', '{account_names.ASCII_LOWER}')" in fn
+    for banned in ("normalize", "lower(", "upper(", "[[:", "\\u", "\\s"):
+        assert banned not in fn, banned
+    assert account_names.FOLD_DELETE == "[^A-Za-z()]"
 
 
-def test_python_ignores_every_unicode_white_space_character():
-    # The Unicode White_Space property (PropList.txt), and everything Python's
-    # own str.split() treats as whitespace.
-    white_space = {*range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B),
-                   0x2028, 0x2029, 0x202F, 0x205F, 0x3000}
-    split_ws = {c for c in range(0x110000) if chr(c).isspace() and len(f"a{chr(c)}b".split()) == 2}
-    assert {chr(c) for c in white_space | split_ws} <= account_names.IGNORED
+def test_the_python_fold_uses_no_unicode_tables():
+    src = (REPO / "app" / "account_names.py").read_text(encoding="utf-8")
+    code = re.sub(r'""".*?"""', "", src, flags=re.S)
+    for banned in ("unicodedata", "casefold", ".lower(", ".upper(", "re.I", "IGNORECASE"):
+        assert banned not in code, banned
 
 
 def test_schema_and_migration_007_carry_the_same_three_checks():
@@ -343,14 +352,24 @@ def test_the_database_refuses_the_label_as_an_account(conn, table, name):
 
 # Run both implementations of the fold over the same strings: the SQL function
 # the CHECKs use and account_names.fold the writers and the MCP readers use.
+# The fold uses no Unicode data, so they must agree on every code point, on any
+# Python (CI's live-database job runs this on 3.14, the application image's
+# version) and any PostgreSQL.
 _CORPUS = [
     *RESERVED_SPELLINGS, *ALLOWED,
-    "\U0001d427\U0001d428\U0001d427\U0001d41e",           # mathematical bold 'none'
-    "(\U0001d427\U0001d428\U0001d427\U0001d41e)",
-    "(ÉNONE)", "(NONÉ)", "(İnone)", "(ǅ)", "Kelvin K", "(ß)", "(ﬁ)",
+    "(\u00c9NONE)", "(NON\u00c9)", "(\u0130none)", "(\u01c5)", "Kelvin \u212a", "(\u00df)", "(\ufb01)",
     "(\u180enone)", "(\u2060none)", "(none\u200d)", "(\u205fnone)", "(\u1680none)",
-    "(\u200anone)", "(\u000bnone\u000c)", "( ( none ) )", "", " ", "\u00a0", "\u200b",
-    "IBKR\u00a0Roth", "Broker\u2007A", "é", "(noné)",
+    "(\u200anone)", "(\x0bnone\x0c)", "( ( none ) )", "", " ", "\u00a0", "\u200b",
+    "IBKR\u00a0Roth", "Broker\u2007A", "e\u0301", "(none\u0301)", "((none))", "(none",
+]
+
+# Supplementary-plane sample: the outlined Latin letters B2 turned on, the
+# mathematical alphanumerics, enclosed alphanumerics, tags, private use, and
+# the last scalar values.
+_SUPPLEMENTARY = [
+    *range(0x1CC00, 0x1CEB0), *range(0x1D400, 0x1D800), *range(0x1F100, 0x1F200),
+    *range(0xE0000, 0xE0080), *range(0xE0100, 0xE01F0), 0x10000, 0x1F600, 0xF0000,
+    0x10FFFD, 0x10FFFF,
 ]
 
 
@@ -366,24 +385,42 @@ def _sql_folds(conn, names):
     return rows
 
 
-def test_sql_and_python_fold_identically_over_the_corpus(conn):
-    corpus = _CORPUS + [f"(N{ch}one)" for ch in sorted(account_names.IGNORED)]
-    for name, (sql_fold, sql_reserved) in zip(corpus, _sql_folds(conn, corpus)):
-        assert sql_fold == account_names.fold(name), repr(name)
-        assert sql_reserved == account_names.is_reserved(name), repr(name)
-
-
-def test_sql_and_python_agree_on_every_bmp_character_around_the_label(conn):
-    """Every Basic Multilingual Plane character (bar NUL and the surrogates,
-    which text cannot hold) inside, beside and around '(none)': the database
-    and Python must give the same reserved/not-reserved verdict for each."""
-    chars = [chr(c) for c in range(1, 0x10000) if not 0xD800 <= c <= 0xDFFF]
-    names = [s for ch in chars for s in (f"({ch}none)", f"(NONE{ch})", f"{ch}(none){ch}")]
+def _assert_identical(conn, names):
+    names = list(names)
     sql = _sql_folds(conn, names)
-    mismatched = [n for n, (_f, r) in zip(names, sql) if r != account_names.is_reserved(n)]
+    assert len(sql) == len(names)
+    mismatched = [
+        n for n, (f, r) in zip(names, sql)
+        if f != account_names.fold(n) or r != account_names.is_reserved(n)
+    ]
     assert mismatched == [], [ascii(n) for n in mismatched[:20]]
-    # Every ignored character, in all three positions, is reserved on both sides.
-    assert sum(r for _f, r in sql) >= 3 * len(account_names.IGNORED)
+    return sql
+
+
+def test_sql_and_python_fold_identically_over_the_corpus(conn):
+    _assert_identical(conn, _CORPUS)
+
+
+def test_sql_and_python_fold_every_code_point_identically(conn):
+    """Every Unicode scalar value (bar NUL, which text cannot hold) on its own,
+    in batches: the SQL fold and the Python fold give the same string."""
+    scalars = [c for c in range(1, 0x110000) if not 0xD800 <= c <= 0xDFFF]
+    for start in range(0, len(scalars), 100_000):
+        _assert_identical(conn, (chr(c) for c in scalars[start:start + 100_000]))
+
+
+def test_sql_and_python_agree_around_the_label_on_the_bmp_and_beyond(conn):
+    """Every BMP character, and the supplementary sample, inside, beside and
+    around '(none)': same fold and same verdict from the database and Python."""
+    codes = [c for c in range(1, 0x10000) if not 0xD800 <= c <= 0xDFFF] + _SUPPLEMENTARY
+    names = [s for c in codes
+             for s in (f"({chr(c)}none)", f"(NON{chr(c)}E)", f"{chr(c)}(none){chr(c)}")]
+    sql = _assert_identical(conn, names)
+    # Reserved exactly when the character is not an ASCII letter or bracket.
+    expected = sum(3 for c in codes if not (chr(c).isascii() and (chr(c).isalpha() or chr(c) in "()")))
+    assert sum(r for _f, r in sql) == expected
+    for c in (0x1CCDA, 0x1CCE3, 0x1CCE4):  # B2's outlined E, N, O
+        assert not account_names.is_reserved(f"(non{chr(c)})")
 
 
 @pytest.mark.parametrize("table", ["lots", "income"])
@@ -449,7 +486,7 @@ def test_migration_007_refuses_while_a_row_uses_the_name_and_changes_nothing(scr
     assert "migration 007 refused, nothing changed" in msg
     assert "lots: 2 row(s) with account '(none)'" in msg
     assert "cash_snapshots: 1 row(s) with account ' (NONE) '" in msg
-    assert "income" not in msg.split("spacing counts):")[1].split(".")[0]
+    assert "income" not in msg.split("punctuation counts):")[1].split(".")[0]
     assert _constraints(scratch) == set()
     with scratch.cursor() as cur:
         cur.execute("SELECT count(*) FROM lots WHERE account = '(none)'")
@@ -542,6 +579,33 @@ def test_migration_007_replaces_a_draft_constraint_that_used_space_classes(scrat
         assert "pdb_account_fold" in definition and "space" not in definition
         with pytest.raises(pg_errors.CheckViolation):
             cur.execute("INSERT INTO lots(account) VALUES (%s)", (NBSP_NAME,))
+
+
+def test_migration_007_refuses_a_row_an_earlier_fold_let_through(scratch):
+    """The preflight runs with the current function, so a name the earlier
+    drafts' folds accepted ('(none 2)', '(n.o.n.e)') is found too, with its
+    code points listed in full."""
+    with scratch.cursor() as cur:
+        cur.execute("INSERT INTO lots(account) VALUES ('(none 2)'), ('(n.o.n.e)'), ('Broker A')")
+    with pytest.raises(pg_errors.CheckViolation) as exc:
+        _migrate(scratch)
+    with scratch.cursor() as cur:
+        cur.execute("ROLLBACK")
+    msg = str(exc.value)
+    assert "'(none 2)' (U+0028 U+006E U+006F U+006E U+0065 U+0020 U+0032 U+0029)" in msg
+    assert "'(n.o.n.e)'" in msg and "Broker A" not in msg
+
+
+def test_migration_007_lists_supplementary_code_points_in_full(scratch):
+    """QA of PR #133, N1: lpad(.., 4) truncated U+1D427 to U+1D42."""
+    name = "(" + chr(0x1D427) + "none)"
+    with scratch.cursor() as cur:
+        cur.execute("INSERT INTO cash_snapshots(account) VALUES (%s)", (name,))
+    with pytest.raises(pg_errors.CheckViolation) as exc:
+        _migrate(scratch)
+    with scratch.cursor() as cur:
+        cur.execute("ROLLBACK")
+    assert "U+0028 U+1D427 U+006E" in str(exc.value)
 
 
 def test_apply_schema_reports_a_failing_files_own_error(conn, tmp_path, monkeypatch):
