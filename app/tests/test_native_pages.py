@@ -25,22 +25,51 @@ APP = Path(__file__).resolve().parents[1]
 # ── R-3: one source for the design tokens ────────────────────────────────
 
 
+STATIC = APP / "dashboard" / "static"
+
+
 def test_native_css_defines_no_design_token_of_its_own():
     # The hand-copied token set drifted from app.css; the page now carries the
-    # front end's blocks instead. Only tokens app.css lacks may be defined here.
+    # front end's blocks instead. Only layout variables may be defined here.
     defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", m2.NATIVE_CSS))
-    assert defined <= {"--warn-soft", "--tabbar-h"}, defined
+    assert defined <= {"--tabbar-h"}, defined
 
 
-def test_page_css_carries_the_front_ends_token_blocks_verbatim():
-    app_css = (APP / "dashboard" / "static" / "app.css").read_text(encoding="utf-8")
-    css = m2.page_css("manage")
+def test_tokens_come_from_the_shared_tokens_file():
+    assert m2._TOKENS_SOURCE == STATIC / "tokens.css"
+    tokens_css = (STATIC / "tokens.css").read_text(encoding="utf-8")
+    app_css = (STATIC / "app.css").read_text(encoding="utf-8")
     tokens = m2.design_tokens_css()
-    assert tokens in css
     assert tokens.split("\n", 1)[0].startswith(":root{")
     assert '[data-theme="dark"]{' in tokens
+    # Verbatim from tokens.css, which build.mjs also puts into the front end's
+    # app.css: one definition reaches both halves of the UI.
     for line in tokens.splitlines():
+        assert line in tokens_css
         assert line in app_css
+
+
+def test_page_css_carries_the_token_blocks_and_every_token_it_uses():
+    css = m2.page_css("manage")
+    assert m2.design_tokens_css() in css
+    defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", css))
+    used = set(re.findall(r"var\((--[a-z0-9-]+)", css))
+    assert used <= defined, used - defined
+    light, dark = m2.design_tokens_css().split('[data-theme="dark"]', 1)
+    assert "--warn-soft:" in light and "--warn-soft:" in dark
+
+
+def test_native_pages_load_self_hosted_fonts_only():
+    # Audit A-5: no request to Google Fonts (or anywhere) from the native pages.
+    css = m2.page_css("manage")
+    assert "fonts.googleapis" not in css and "fonts.gstatic" not in css
+    assert "@import" not in css
+    assert css.startswith((STATIC / "fonts" / "fonts.css").read_text(encoding="utf-8"))
+    for family in ("Space Grotesk", "JetBrains Mono"):
+        assert re.search(rf"@font-face\{{font-family:'{family}'[^}}]*src:url\(data:font/woff2;base64,", css), family
+    external = [u for u in re.findall(r"url\(([^)]*)\)", css)
+                if not u.strip("'\"").startswith(("data:", "#"))]
+    assert external == []
 
 
 # ── N-4: the theme ships in config.toml ──────────────────────────────────

@@ -55,6 +55,10 @@ try{var _t=localStorage.getItem('pdb_theme')||
          and a page that looks complete while a query died is the failure
          this names. Filled by app.js from DATA.degraded. -->
     <div class="degraded" id="degraded" role="status" hidden></div>
+    <!-- Amounts recorded in a currency other than the reporting one: totals
+         are single-currency, so each says what was done with it (added
+         unconverted, or left out). Filled by app.js from DATA.currencyWarnings. -->
+    <div class="degraded currency-warn" id="currency-warn" role="status" hidden></div>
     <header class="topbar">
       <button class="iconbtn menu-btn" aria-label="Menu">__SVG_MENU__</button>
       <div class="topbar__title"><h1 data-title>Portfolio</h1><p data-subtitle>Real-time overview of your holdings</p></div>
@@ -81,9 +85,9 @@ try{var _t=localStorage.getItem('pdb_theme')||
           </div>
           <div class="card kpi" data-kpi="marketValue" role="button" tabindex="0" aria-label="Market value — show how this is calculated"><div class="kpi__label">Market value</div><div class="kpi__val" id="kpi-mktval">—</div><div class="kpi__sub"><span style="color:var(--muted)">Positions at market price</span></div></div>
           <div class="card kpi" data-kpi="unrealized" role="button" tabindex="0" aria-label="Unrealized P and L — show how this is calculated"><div class="kpi__label">Unrealized P&amp;L</div><div class="kpi__val" id="kpi-gl">—</div><div class="kpi__sub" id="kpi-gl-sub"></div></div>
-          <div class="card kpi" data-kpi="cash" role="button" tabindex="0" aria-label="Buying power — show how this is calculated"><div class="kpi__label">Buying power</div><div class="kpi__val" id="kpi-cash">—</div><div class="kpi__sub"><span style="color:var(--muted)">Settled cash · ready to invest</span></div></div>
+          <div class="card kpi" data-kpi="cash" role="button" tabindex="0" aria-label="Cash as entered — show how this is calculated"><div class="kpi__label">Cash (as entered)</div><div class="kpi__val" id="kpi-cash">—</div><div class="kpi__sub"><span style="color:var(--muted)" id="kpi-cash-sub">balance you recorded</span></div></div>
           <div class="card kpi" data-kpi="realized" role="button" tabindex="0" aria-label="Realized P and L — show how this is calculated"><div class="kpi__label">Realized P&amp;L</div><div class="kpi__val" id="kpi-realized">—</div><div class="kpi__sub"><span style="color:var(--muted)">Closed positions</span></div></div>
-          <div class="card kpi" data-kpi="totalReturn" role="button" tabindex="0" aria-label="Total return — show how this is calculated"><div class="kpi__label">Total return</div><div class="kpi__val" id="kpi-return">—</div><div class="kpi__sub"><span style="color:var(--muted)">Realized + unrealized</span></div></div>
+          <div class="card kpi" data-kpi="totalReturn" role="button" tabindex="0" aria-label="Total return — show how this is calculated"><div class="kpi__label">Total return</div><div class="kpi__val" id="kpi-return">—</div><div class="kpi__sub"><span style="color:var(--muted)" id="kpi-return-sub">Realized + unrealized</span></div></div>
           <div class="card kpi" data-kpi="costBasis" role="button" tabindex="0" aria-label="Cost basis — show how this is calculated"><div class="kpi__label">Cost basis</div><div class="kpi__val" id="kpi-cost">—</div><div class="kpi__sub" id="kpi-cost-sub"></div></div>
           <div class="card kpi" data-kpi="deltaLast" role="button" tabindex="0" aria-label="Change since last snapshot — show how this is calculated"><div class="kpi__label">Δ last snapshot</div><div class="kpi__val" id="kpi-delta">—</div><div class="kpi__sub" id="kpi-delta-sub"></div></div>
           <div class="card kpi" data-kpi="dividends" role="button" tabindex="0" aria-label="Dividends — show how this is calculated"><div class="kpi__label">Dividends</div><div class="kpi__val" id="kpi-div">—</div><div class="kpi__sub" id="kpi-div-sub"></div></div>
@@ -97,7 +101,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="card__bd"><div id="markets-strip"></div></div>
         </section>
         <section class="card" id="returns-card" data-fold>
-          <div class="card__hd"><h2>Returns</h2><span class="sub" id="returns-sub">vs SPY</span></div>
+          <div class="card__hd"><h2>Returns</h2><span class="sub" id="returns-sub">vs benchmark</span></div>
           <div class="card__bd"><div id="returns-strip"></div></div>
         </section>
         <section class="row2" id="pv-row">
@@ -142,7 +146,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           </div>
         </section>
         <section class="card" id="risk-card" data-fold style="margin-bottom:20px">
-          <div class="card__hd"><h2>Risk &amp; analytics</h2><span class="sub" id="risk-sub">1Y daily closes · SPY benchmark</span></div>
+          <div class="card__hd"><h2>Risk &amp; analytics</h2><span class="sub" id="risk-sub">1Y daily closes</span></div>
           <div class="card__bd" id="risk-body">
             <div class="stat-row" id="risk-stats" style="flex-wrap:wrap"></div>
             <div class="row2" style="margin-bottom:0">
@@ -185,7 +189,7 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div class="card__hd"><h2>Price history</h2><span class="sub">per holding · your trades marked</span>
             <span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <select id="ph-symbol" class="chip" style="cursor:pointer" aria-label="Symbol for the price-history chart"></select>
-              <label class="chip" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="ph-spy" style="margin:0;accent-color:var(--accent)"/> SPY</label>
+              <label class="chip" style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="ph-spy" style="margin:0;accent-color:var(--accent)"/> <span data-bench-label>Benchmark</span></label>
               <span style="display:flex;gap:6px" id="ph-chips">
                 <button class="chip" data-phr="1M">1M</button>
                 <button class="chip is-active" data-phr="3M">3M</button>
@@ -261,33 +265,25 @@ try{var _t=localStorage.getItem('pdb_theme')||
           <div>
             <div class="stat-row">
               <div class="card stat-mini"><div class="v" id="unread-count">0</div><div class="l">Unread</div></div>
-              <div class="card stat-mini"><div class="v" id="armed-count">0</div><div class="l">Armed alerts</div></div>
+              <div class="card stat-mini"><div class="v" id="triggered-count">0</div><div class="l">Triggered</div></div>
+              <div class="card stat-mini"><div class="v" id="armed-count">0</div><div class="l">Watching</div></div>
             </div>
-            <div class="card"><div class="card__hd"><h2>Create price alert</h2></div>
+            <!-- Alerts are stored rows, created and switched off on Manage →
+                 Alerts. This view lists them; it has no form, because a form
+                 here could only ever hold an alert in memory until the next
+                 refresh. -->
+            <div class="card"><div class="card__hd"><h2>Price alerts</h2></div>
               <div class="card__bd">
-                <form id="alert-form" novalidate>
-                  <div class="field"><label for="a-sym">Symbol</label>
-                    <input id="a-sym" class="mono-in" type="text" placeholder="e.g. NVDA" autocomplete="off" maxlength="6" aria-describedby="a-sym-err"/>
-                    <div class="err" id="a-sym-err" role="alert"></div>
-                    <div style="font-size:var(--fs-meta);color:var(--muted);margin-top:-8px" id="a-hint"></div></div>
-                  <div class="field-row">
-                    <div class="field"><label for="a-cond">Condition</label>
-                      <select id="a-cond"><option value="above">Rises above</option><option value="below">Falls below</option></select></div>
-                    <div class="field"><label for="a-price">Target price</label>
-                      <input id="a-price" class="mono-in" type="number" step="0.01" min="0" placeholder="0.00" aria-describedby="a-price-err"/>
-                      <div class="err" id="a-price-err" role="alert"></div></div>
-                  </div>
-                  <button class="btn" type="submit" style="width:100%">Arm alert</button>
-                </form>
-                <p style="font-size:var(--fs-meta);color:var(--muted);margin-top:12px;line-height:1.5">
-                  Alerts are checked against the latest snapshot price the moment you arm them. Refresh to re-evaluate against new prices.</p>
+                <div id="alert-list"></div>
+                <button class="btn" type="button" data-manage-alerts style="width:100%;margin-top:12px">Create or edit alerts in Manage</button>
+                <p class="alerts-note">Alerts are stored with your ledger and compared with the latest collected price each time this page loads, so a refresh keeps them.</p>
               </div></div>
           </div>
           <div class="card"><div class="card__hd"><h2>Activity</h2>
             <div class="toolbar" style="margin:0 0 0 auto">
               <button class="chip is-active" data-filter="all">All</button>
               <button class="chip" data-filter="triggered">Triggered</button>
-              <button class="chip" data-filter="armed">Armed</button>
+              <button class="chip" data-filter="armed">Watching</button>
               <button class="chip" data-filter="news">News</button>
               <button class="btn btn--ghost" id="mark-all">Mark all read</button></div></div>
             <div class="feed" id="feed"></div></div>

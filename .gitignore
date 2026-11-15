@@ -119,3 +119,6 @@ DESIGN.md
 # .github/skills/impeccable/ that this repo does not carry. The detector that
 # actually runs is wired through the gitignored .claude/ settings.
 .github/hooks/
+
+# Front-end tooling (package.json at the repo root; see app/dashboard/static/build.mjs).
+node_modules/
