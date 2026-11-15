@@ -44,12 +44,12 @@ on:
 permissions:
   contents: read
 
-# Third-party actions below are pinned to full commit SHAs, with the release
-# they correspond to in a trailing comment. A tag like @v3 is mutable: this job
-# can push to the registry and sign as this repository, so an action that
-# silently changed under a moved tag could push or sign whatever it liked.
-# Update a pin by bumping the SHA *and* the comment together. GitHub-owned
-# actions/* are left on tags.
+# Every action below is pinned to a full commit SHA, with the release it
+# corresponds to in a trailing comment — GitHub's own actions/* included since
+# 1.8.0 (audit C-6), because this job can push to the registry and sign as this
+# repository, and a tag like @v3 is mutable: an action that silently changed
+# under a moved tag could push or sign whatever it liked. Dependabot bumps the
+# SHA and the comment together.
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -75,7 +75,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       any: ${{ steps.plan.outputs.any }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0             # tags, for the rebuild's "newest release"
 
@@ -160,7 +160,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ matrix.ref }}
           fetch-depth: 0             # tags, so a rebuilt release's stamp names it
@@ -307,7 +307,7 @@ jobs:
         run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-name: ${{ steps.img.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}

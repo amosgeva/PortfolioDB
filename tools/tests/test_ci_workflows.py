@@ -180,15 +180,20 @@ def test_a_failing_scheduled_scan_opens_a_tracking_issue():
 # ── supply-chain hygiene across every workflow ───────────────────────────────
 
 
-def test_third_party_actions_are_pinned_to_a_commit():
+def test_every_action_is_pinned_to_a_commit():
+    """Third-party actions always were; GitHub's own actions/* since 1.8.0 (C-6).
+
+    A tag is mutable, and the publish job can push and sign as this repository.
+    Only a local reusable workflow (./...) is exempt: it is this repo's code.
+    """
     for name, doc in _workflows().items():
         for job_id, job in doc["jobs"].items():
             for step in _steps(job):
                 uses = step.get("uses")
-                if not uses or uses.startswith(("actions/", "./")):
+                if not uses or uses.startswith("./"):
                     continue
                 assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", uses), (
-                    f"{name}:{job_id} uses {uses!r}; pin third-party actions to a full SHA"
+                    f"{name}:{job_id} uses {uses!r}; pin every action to a full commit SHA"
                 )
 
 
