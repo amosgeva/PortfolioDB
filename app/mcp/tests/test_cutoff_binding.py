@@ -54,7 +54,7 @@ class TestPositionsBinding:
 
         captured = {}
 
-        def fake_fetch(conn, *, account=None, symbol=None, as_of=None):
+        def fake_fetch(conn, *, account=None, symbol=None, as_of=None, actions=None):
             captured["as_of"] = as_of
             return []
 

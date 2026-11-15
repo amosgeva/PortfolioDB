@@ -29,9 +29,9 @@ def _sell(day, qty, price):
 def _patch(monkeypatch, lots, prices):
     from app.mcp.services import returns as returns_service
 
-    monkeypatch.setattr(returns_service, "_fetch_lots", lambda cutoff=None: lots)
+    monkeypatch.setattr(returns_service, "_fetch_lots", lambda cutoff=None, **kw: lots)
     monkeypatch.setattr(returns_service, "_price_by_day", lambda cutoff=None: prices)
-    monkeypatch.setattr(returns_service, "_fetch_dividends", lambda cutoff=None: [])
+    monkeypatch.setattr(returns_service, "_fetch_dividends", lambda cutoff=None, **kw: [])
 
 
 def test_a_withdrawal_is_not_a_drawdown(env_token, fake_db, monkeypatch):

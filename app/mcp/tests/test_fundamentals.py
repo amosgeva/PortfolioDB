@@ -33,7 +33,11 @@ def test_company_facts_scrubs_dates_and_decimals(env_token, fake_db, monkeypatch
     out = fundamentals.company_facts("nvda")
     assert out["symbol"] == "NVDA"
     assert isinstance(out["fetched_at"], str)
-    assert out["raw"] == {"any": "json"}
+    # The vendor's raw payload is never returned wholesale (audit M-6), and
+    # its free-text columns come back marked as untrusted data.
+    assert "raw" not in out
+    assert out["name"] == {"untrusted_text": "Nvidia", "truncated": False}
+    assert out["sector"] == "Information Technology"
 
 
 def test_financial_statements_rejects_bad_type(env_token):

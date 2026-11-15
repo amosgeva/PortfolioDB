@@ -44,7 +44,7 @@ from pathlib import Path
 
 import psycopg2
 
-from db import load_config
+from db import connect_params, load_config
 
 # app/apply_schema.py → repo root (or /app in the image), then sql/
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
@@ -126,10 +126,8 @@ def pending_reviews(conn) -> list[tuple]:
 
 def _connect():
     cfg = load_config()
-    return psycopg2.connect(
-        host=cfg.host, port=cfg.port, dbname=cfg.dbname,
-        user=cfg.user, password=cfg.password,
-    )
+    # connect_params carries the connect timeout (audit A-6 / E-4).
+    return psycopg2.connect(**connect_params(cfg))
 
 
 def _execute_file(conn, path: Path) -> None:

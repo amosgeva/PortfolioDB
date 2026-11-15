@@ -27,6 +27,10 @@ from datetime import date, datetime
 from typing import Any
 
 from app.mcp.deps import get_conn
+# Aliased: this module's own entry point is also called portfolio_kpis.
+import portfolio_kpis as kpi_defs
+
+from app.mcp.services import cash as cash_service
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import income as income_service
 from app.mcp.services import positions as positions_service
@@ -58,24 +62,26 @@ def portfolio_kpis(
     if df.empty:
         return _empty_kpis(method, cutoff)
 
-    # Replicate streamlit_app.py:524-536 exactly.
-    market_value = float(df["market_value"].sum(skipna=True))
-    cost_basis = float(df["open_cost"].sum())
-    unrealized_pnl = float(df["unrealized_pnl"].sum(skipna=True))
-    unrealized_pct = _ratio_pct(unrealized_pnl, cost_basis)
-    realized_pnl = float(df["realized_pnl"].sum()) if "realized_pnl" in df.columns else 0.0
-    active_symbols = int((df["qty"] > 0).sum())
+    # The dashboard's definitions, through the same module it uses
+    # (app/portfolio_kpis.py via positions_summary): priced/unpriced split,
+    # unrealized % over priced cost, total return over peak net invested,
+    # USD-only income and cash (docs/methodology.md §12, §14).
+    totals = positions_service.positions_summary(method, cutoff=cutoff, include_income=False)
+    market_value = totals["market_value"]
+    cost_basis = totals["cost_basis"]
+    unrealized_pnl = totals["unrealized_pnl"]
+    realized_pnl = totals["realized_pnl"]
+    active_symbols = totals["active_symbols"]
+    income_total = _income_total(cutoff)
+    d = kpi_defs.to_dec
+    total_return_with_income_pct = kpi_defs.as_float(kpi_defs.total_return_pct(
+        d(realized_pnl), d(unrealized_pnl),
+        d(totals["invested_capital"]) or kpi_defs.ZERO, d(income_total),
+    ))
 
     cash, by_account = _cash_totals(cutoff)
     aum = market_value + cash
     watchlist_count = _watchlist_count()
-    total_return_pct = _ratio_pct(realized_pnl + unrealized_pnl, cost_basis)
-    # Income (dividends/interest) is a SEPARATE, additive return term — the
-    # existing total_return_pct above is intentionally left unchanged.
-    income_total = _income_total(cutoff)
-    total_return_with_income_pct = _ratio_pct(
-        realized_pnl + unrealized_pnl + income_total, cost_basis
-    )
 
     # Daily change vs the prior day's EOD (reporting timezone) — only counts symbols
     # that have a snapshot from before the cutoff's day. Both comparison maps
@@ -105,20 +111,30 @@ def portfolio_kpis(
         # same instant and is what a composing caller should read.
         "as_of": cutoff.ts.isoformat(),
         "meta": cutoff_service.meta(cutoff, method=method),
-        "null_reasons": _null_reasons(
-            cost_basis=cost_basis, prev_total_value=prev_total_value
-        ),
+        "null_reasons": {
+            **totals["null_reasons"],
+            **({} if total_return_with_income_pct is not None
+               else {"total_return_with_income_pct": "no_invested_capital"}),
+            **({} if prev_total_value else {"daily_change_pct": "no_prior_price"}),
+        },
         "aum": aum,
         "market_value": market_value,
         "cost_basis": cost_basis,
+        "priced_cost_basis": totals["priced_cost_basis"],
+        "unpriced_cost_basis": totals["unpriced_cost_basis"],
+        "unpriced_symbols": totals["unpriced_symbols"],
         "cash": cash,
         "cash_by_account": by_account,
         "unrealized_pnl": unrealized_pnl,
-        "unrealized_pct": unrealized_pct,
+        "unrealized_pct": totals["unrealized_pct"],
         "realized_pnl": realized_pnl,
-        "total_return_pct": total_return_pct,
+        "invested_capital": totals["invested_capital"],
+        "total_return_pct": totals["total_return_pct"],
+        "total_return_partial": totals["total_return_partial"],
+        "total_return_basis": totals["total_return_basis"],
         "income_total": income_total,
         "total_return_with_income_pct": total_return_with_income_pct,
+        "excluded_non_usd": _excluded_non_usd(cutoff, by_account),
         "daily_change_usd": daily_change_usd,
         "daily_change_pct": daily_change_pct,
         "delta_last_snapshot_usd": delta_last_snapshot_usd,
@@ -170,6 +186,12 @@ def _empty_kpis(method: str, cutoff: Cutoff) -> dict[str, Any]:
         "aum": cash,
         "market_value": 0.0,
         "cost_basis": 0.0,
+        "priced_cost_basis": 0.0,
+        "unpriced_cost_basis": 0.0,
+        "unpriced_symbols": [],
+        "invested_capital": 0.0,
+        "total_return_partial": False,
+        "excluded_non_usd": _excluded_non_usd(cutoff, by_account),
         "cash": cash,
         "cash_by_account": by_account,
         "unrealized_pnl": 0.0,
@@ -187,42 +209,35 @@ def _empty_kpis(method: str, cutoff: Cutoff) -> dict[str, Any]:
 
 
 def _income_total(cutoff: Cutoff | None = None) -> float:
-    """Income (dividends/interest/distributions) received up to the cutoff.
+    """USD income (dividends/interest/distributions) received up to the cutoff.
 
-    A separate, additive return term — never part of cost basis.
+    A separate, additive return term — never part of cost basis. Income in
+    another currency is excluded (see _excluded_non_usd).
     """
-    return float(
-        income_service.income_summary(
-            group_by="none",
-            until=cutoff.trade_date if cutoff else None,
-        )["total_income"]
+    total, _excluded = income_service.usd_income_total(
+        until=cutoff.trade_date if cutoff else None, account=None
     )
+    return total
 
 
 def _cash_totals(cutoff: Cutoff | None = None) -> tuple[float, list[dict[str, Any]]]:
-    """Σ cash per account as at the cutoff — mirrors streamlit_app.py:539-551."""
-    as_of_ts = cutoff.ts if cutoff else None
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                # Latest row per account — a global ORDER BY ts LIMIT N would
-                # drop accounts whose newest snapshot falls outside the N rows.
-                """
-                SELECT DISTINCT ON (account) account, cash, ts
-                FROM cash_snapshots
-                WHERE (%s::timestamptz IS NULL OR ts <= %s)
-                ORDER BY account, ts DESC
-                """,
-                (as_of_ts, as_of_ts),
-            )
-            rows = cur.fetchall()
-    latest: dict[str, dict[str, Any]] = {}
-    for acct, cash, ts in rows:
-        key = acct or "(merged)"
-        if key not in latest:
-            latest[key] = {"account": key, "cash": float(cash), "ts": ts.isoformat() if ts else None}
-    total = sum(r["cash"] for r in latest.values())
-    return total, list(latest.values())
+    """USD cash at the cutoff, and every account's latest balance (services/cash.py)."""
+    info = cash_service.latest_cash(cutoff.ts if cutoff else None)
+    return info["total"], info["by_account"]
+
+
+def _excluded_non_usd(
+    cutoff: Cutoff | None, by_account: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """What the dollar totals leave out: non-USD income and cash (methodology §14)."""
+    _total, income_excluded = income_service.usd_income_total(
+        until=cutoff.trade_date if cutoff else None, account=None
+    )
+    other_cash = [
+        {"account": r.get("account"), "currency": r.get("currency"), "cash": r.get("cash")}
+        for r in by_account if r.get("included") is False
+    ]
+    return list(income_excluded) + kpi_defs.currency_warnings(cash=other_cash)
 
 
 def _watchlist_count() -> int:

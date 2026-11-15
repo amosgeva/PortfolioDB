@@ -2,12 +2,39 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from psycopg2 import sql
 
+import portfolio_kpis
+
 from app.mcp.deps import get_conn
+from app.mcp.services import cash as cash_service
+from app.mcp.services import common
+from app.mcp.services.cutoff import LOCAL_TZ
+
+# Largest page a caller may ask for. The ledger is personal-scale; a request
+# for more is a mistake or an attempt to make the server do a lot of work.
+MAX_ROWS = 1000
+
+
+def _day_bounds(since: date | None, until: date | None) -> tuple[datetime | None, datetime | None]:
+    """[since 00:00, until+1 00:00) in the reporting timezone, as instants.
+
+    A bare date compared with a timestamptz is midnight at the *start* of that
+    day in the server's zone, so ``until=2026-08-01`` used to stop at the first
+    instant of the 1st and drop the whole day it named (audit X-10). Both ends
+    are now whole reporting-timezone days, ``until`` inclusive.
+    """
+    if since is not None and until is not None and since > until:
+        raise ValueError(f"since ({since}) is after until ({until})")
+    lo = datetime.combine(since, time.min, tzinfo=LOCAL_TZ) if since is not None else None
+    hi = (
+        datetime.combine(until + timedelta(days=1), time.min, tzinfo=LOCAL_TZ)
+        if until is not None else None
+    )
+    return lo, hi
 
 
 # ────────────────────────── lots ──────────────────────────
@@ -23,6 +50,11 @@ def lots(
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """Raw lot rows filtered by any combination of fields."""
+    common.check_limit("limit", limit, MAX_ROWS)
+    if since is not None and until is not None and since > until:
+        raise ValueError(f"since ({since}) is after until ({until})")
+    if side is not None and side.upper() not in ("BUY", "SELL"):
+        raise ValueError("side must be 'BUY' or 'SELL'")
     # Build the statement from psycopg2.sql fragments so the query is never a
     # formatted/concatenated raw string. Every user value is still bound via %s.
     query = sql.SQL(
@@ -33,9 +65,7 @@ def lots(
     if symbol is not None:
         query += sql.SQL(" AND symbol = %s")
         params.append(symbol.upper())
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     if side is not None:
         query += sql.SQL(" AND side = %s")
         params.append(side.upper())
@@ -137,35 +167,27 @@ def trading_activity(
 
 
 def cash_balance(account: str | None = None) -> dict[str, Any]:
-    """Current cash. None = merged across all accounts (sum of latest per account)."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                # Latest row per account — a global ORDER BY ts LIMIT N would
-                # drop accounts whose newest snapshot falls outside the N rows.
-                """
-                SELECT DISTINCT ON (account) account, cash, ts
-                FROM cash_snapshots
-                ORDER BY account, ts DESC
-                """,
-            )
-            rows = cur.fetchall()
+    """Current cash. None = merged across all accounts (sum of latest per account).
 
-    latest: dict[str, dict[str, Any]] = {}
-    for acct, cash, ts in rows:
-        key = acct or "(merged)"
-        if key not in latest:
-            latest[key] = {"account": key, "cash": float(cash), "ts": ts.isoformat() if ts else None}
-
+    Through the shared reader (services/cash.py) the KPIs and the review use,
+    so the totals agree: USD balances only. A balance entered in another
+    currency is listed with its currency and ``included: false`` and described
+    in ``excluded_non_usd``; it is never added to the dollar total (audit Q-8 —
+    this tool used to sum USD 50 and EUR 500 as 550).
+    """
+    info = cash_service.latest_cash(None, account=account)
     if account is not None:
-        rec = latest.get(account)
-        return rec or {"account": account, "cash": 0.0, "ts": None}
-
-    total = sum(r["cash"] for r in latest.values())
+        rec = info["by_account"][0] if info["by_account"] else None
+        if rec is None:
+            return {"account": account, "cash": 0.0, "currency": None, "included": True,
+                    "ts": None, "excluded_non_usd": []}
+        return {**rec, "excluded_non_usd": info["excluded_non_usd"]}
     return {
         "account": None,  # merged
-        "total_cash": float(total),
-        "by_account": list(latest.values()),
+        "total_cash": float(info["total"]),
+        "currency": "USD",
+        "by_account": info["by_account"],
+        "excluded_non_usd": info["excluded_non_usd"],
     }
 
 
@@ -179,28 +201,32 @@ def cash_history(
     # cash_snapshots in production has columns (ts, account, cash, currency,
     # note) — there is no `id` (the schema.sql file in the repo is drifted).
     # Query only what exists.
-    query = sql.SQL("SELECT ts, account, cash, note FROM cash_snapshots WHERE 1=1")
+    common.check_limit("limit", limit, MAX_ROWS)
+    lo, hi = _day_bounds(since, until)
+    query = sql.SQL("SELECT ts, account, cash, note, currency FROM cash_snapshots WHERE 1=1")
     params: list[Any] = []
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
-    if since is not None:
+    query, params = common.add_account_filter(query, params, account)
+    if lo is not None:
         query += sql.SQL(" AND ts >= %s")
-        params.append(since)
-    if until is not None:
-        query += sql.SQL(" AND ts <= %s")
-        params.append(until)
+        params.append(lo)
+    if hi is not None:
+        query += sql.SQL(" AND ts < %s")
+        params.append(hi)
     query += sql.SQL(" ORDER BY ts DESC LIMIT %s")
     params.append(limit)
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
-            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     return [{
-        "ts": r[0].isoformat() if r[0] else None,
-        "account": r[1],
-        "cash": float(r[2]),
-        "note": r[3],
+        "ts": r["ts"].isoformat() if r.get("ts") else None,
+        "account": r["account"],
+        "cash": float(r["cash"]),
+        # Raw history, unconverted: the currency says what the number is in.
+        "currency": portfolio_kpis.currency_of(r),
+        # Free text typed by the operator (audit M-6).
+        "note": common.untrusted(r.get("note")),
     } for r in rows]
 
 
@@ -217,7 +243,8 @@ def _lot_row(r: dict[str, Any]) -> dict[str, Any]:
         "quantity": float(r["quantity"]) if r.get("quantity") is not None else None,
         "price": float(r["price"]) if r.get("price") is not None else None,
         "fees": float(r["fees"]) if r.get("fees") is not None else 0.0,
-        "notes": r.get("notes"),
+        # Free text: typed by the operator or carried in from a broker CSV.
+        "notes": common.untrusted(r.get("notes")),
         "created_at": (
             r["created_at"].isoformat()
             if isinstance(r.get("created_at"), datetime)

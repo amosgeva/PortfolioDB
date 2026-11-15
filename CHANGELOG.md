@@ -334,6 +334,101 @@ needs a schema step says so under **Upgrading**.
 - `fifo.Lot` and `avg_cost.Lot` are one class (`ledger_core.Lot`), with one Decimal
   helper; `corporate_actions` and `holdings` no longer read settings at import.
 
+### MCP server — security (W3)
+
+- **Deadlines everywhere.** Every MCP connection carries a connect timeout
+  (`PORTFOLIODB_CONNECT_TIMEOUT`, default 10 s), a statement timeout
+  (`PORTFOLIODB_MCP_STATEMENT_TIMEOUT_MS`, 30 s) and an idle-in-transaction
+  timeout (`PORTFOLIODB_MCP_IDLE_TX_TIMEOUT_MS`, 60 s); the read-only role
+  carries the same server-side. `db.connect()` and the dashboard's pool now
+  pass the connect timeout too (`db.connect_params`). (M-2, A-6, E-4)
+- **`/healthz` no longer blocks the event loop**: the probe runs in a worker
+  thread, single-flight, cached for 2 s, and answers `db: "timeout"` (503)
+  after 3 s. (M-1)
+- **One request's failure no longer tears down the pool.** A cancelled or
+  failed query costs that request its connection at most; dead pooled
+  connections are replaced one at a time at checkout; pool construction is
+  locked. (M-3)
+- **Errors are masked.** Unexpected exceptions reach the client as
+  "Error calling tool …"; argument validation passes through, and database
+  failures become a category ("Could not reach the database server …"), never
+  the driver's text with the host and role. `get_health` and the error
+  explanation shown on Data Health no longer echo psycopg2's message. (M-7)
+- **Host header validated on every request.** FastMCP 4.2 ships its guard
+  off; it is now on, with `PORTFOLIODB_MCP_ALLOWED_HOSTS` naming any non-loopback
+  host clients use. (M-12)
+- **Token hardening.** A non-ASCII bearer token is a 401, not a 500 (M-8); a
+  token shorter than 32 characters or with fewer than 10 distinct characters
+  refuses to start unless `PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN=1`; ten failed
+  authentications from one address in 60 s get 429 for the rest of the
+  window. (M-9)
+- **Sizes are bounded** in the tool schemas and the services: row limits,
+  top-N, movers, symbol lists (the correlation matrix takes at most 60), and
+  price/value history refuses a request past its cap and says how to narrow
+  it. `limit=0` is rejected instead of returning every loser. (M-5)
+- **Untrusted text is marked.** Lot and cash notes, collector error text and
+  vendor fields come back as `{"untrusted_text": …}`, capped and stripped of
+  control characters; the vendor `raw` JSON is no longer returned (statements
+  keep their numeric line items). (M-6)
+- **Read-only role narrowed**: SELECT on exactly the tables the MCP reads
+  (now including `settings`, and the ledger core's `corporate_actions_in_effect`
+  view plus EXECUTE on `lot_open_quantities()` where they exist), not
+  `chat_log`, and no default grant on future tables. `create_ro_role` revokes and re-grants, so re-running it upgrades
+  an existing install. (M-10)
+- `server.json` requires the read-only role and no longer asks for the
+  application's write password; stale "clear the RO variables to fall back"
+  guidance removed. (M-4, K-2, M-11)
+
+### MCP server — correctness (W3)
+
+- **Account scoping**: an account-scoped review computes every section for
+  that account (TWR, XIRR from that account's lots *and income*, benchmark,
+  drawdown, volatility, concentration, allocation, scenarios); data quality
+  stays portfolio-wide and every section says which in `scope`. (X-1, Q-3,
+  X-2)
+- `'(none)'` — the label for lots without an account — works as an account
+  filter everywhere (X-8); allocation by account no longer double-counts when
+  such lots exist (X-3).
+- The review is one consistent read: one REPEATABLE READ snapshot for every
+  section, the positions cache bypassed inside it. (Q-6)
+- The MCP reads the reporting timezone and the saved one-pager from the
+  `settings` table through its read-only role (X-4, Q-5); nothing reads
+  settings at import any more (R-5: `reporting_tz.lazy_tzinfo()`).
+- `orphan_sell` is judged by the FIFO engine on the split-restated ledger
+  (X-5). Benchmark comparison answers 1D and WTD (floor 2 observations,
+  overridable) (X-6). Top movers: a gainer went up, a loser went down (X-7).
+  `get_schema` and `portfolio://schema` are built from the live catalog
+  (X-9). Correlation windows anchor to the cutoff; `get_cash_history(until=)`
+  includes that whole day; `method` is case-insensitive everywhere; the
+  positions cache is locked (X-10).
+- **KPI definitions mirror the dashboard's** (`app/portfolio_kpis.py`):
+  unrealized % over *priced* cost with `priced_cost_basis` /
+  `unpriced_cost_basis` / `unpriced_symbols`; `total_return_pct`,
+  `total_return_with_income_pct`, the review's `return_on_cost_pct` and
+  `fee_drag_pct` over peak net invested capital; income and cash USD-only,
+  others listed under `excluded_non_usd` and flagged by data quality
+  (`get_cash_balance` too: USD 50 + EUR 500 reads 50 with the euros listed;
+  `get_cash_history` carries each row's currency);
+  benchmark symbol through `app/benchmark.py`. (F-5/Q-4, F-12/Q-2, Q-8, U-3)
+
+### Infrastructure (W3)
+
+- `.env` values are read the way compose reads them: surrounding quotes
+  stripped, inline ` #` comments dropped. (A-7)
+- `settings` is lazy and its refresh no longer holds the module lock across
+  a connect; a process can register its own connection source
+  (`settings.use_connection_source`); `settings.refresh()` forces a re-read.
+
+**Upgrading (MCP)**
+
+- Re-run `make ro-role` (or `python app/create_ro_role.py --password <current>`
+  to keep the password): it narrows the grants and adds `settings`, which the
+  MCP now needs for the timezone and the one-pager.
+- If other machines reach the MCP, set `PORTFOLIODB_MCP_ALLOWED_HOSTS` to the
+  names/addresses they use, or they get 421.
+- A `PORTFOLIODB_MCP_TOKEN` under 32 characters now refuses to start;
+  `make init` generates 40.
+
 ## [1.7.7] — 2026-11-15
 
 A maintenance release, a month after 1.7.6. The image scan had started failing

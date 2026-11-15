@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from fastmcp import FastMCP
 
 from app.mcp.services import prices as prices_service
+
+
+Symbols = Annotated[list[str] | None, Field(max_length=prices_service.MAX_SYMBOLS)]
 
 
 def register(mcp: FastMCP) -> None:
@@ -23,7 +28,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     def get_latest_prices(
-        symbols: list[str] | None = None,
+        symbols: Symbols = None,
     ) -> list[dict[str, Any]]:
         """Latest snapshot per symbol.
 
@@ -64,7 +69,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool
     def get_top_movers(
         window: str = "snapshot",
-        limit: int = 5,
+        limit: Annotated[int, Field(ge=1, le=prices_service.MAX_MOVERS)] = 5,
         direction: str = "both",
     ) -> dict[str, Any]:
         """Top gainers/losers by portfolio dollar impact.
@@ -73,7 +78,8 @@ def register(mcp: FastMCP) -> None:
             window: 'snapshot' (since the second-latest snapshot — same as
                 the dashboard's "Top Movers" table) or '1d' (vs yesterday's
                 reporting-local EOD).
-            limit: number of rows per direction.
+            limit: number of rows per direction (1-100). A gainer moved up and a
+                loser moved down; a symbol is never in both lists.
             direction: 'both' | 'up' | 'down'.
         """
         return prices_service.top_movers(window, limit, direction)

@@ -23,7 +23,8 @@ def register(mcp: FastMCP) -> None:
 
         Fees are already folded into cost basis (BUY) and proceeds (SELL), so
         this is a reporting view — it changes no P&L number. ``fee_drag_pct``
-        is total fees as a percentage of current cost basis.
+        is total fees as a percentage of peak net invested capital (the
+        dashboard's definition; null when nothing was ever invested).
 
         Args:
             since/until: filter lots by trade date (inclusive).
