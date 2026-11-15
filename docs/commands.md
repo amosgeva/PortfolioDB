@@ -60,7 +60,14 @@ instead.
 | `snapshot` | `docker compose run --rm dashboard python app/snapshot_prices.py --ignore-window` |
 | `brief` | `docker compose run --rm dashboard python app/advisor.py brief` |
 | `ask ARGS="…"` | `docker compose run --rm dashboard python app/advisor.py ask "…"` |
-| `report` | `docker compose run --rm dashboard python app/report_portfolio_db.py` |
+| `report` | `docker compose run --rm dashboard python app/report_portfolio_db.py --mode eod` |
+| `report ARGS="--mode daily"` | `docker compose run --rm dashboard python app/report_portfolio_db.py --mode daily` |
+
+`ask` passes the whole question as one argument, so
+`make ask ARGS="what's my concentration risk?"` works as written; in the compose
+form, quote the question yourself. The flag-taking targets above do the
+opposite on purpose: their `ARGS` is split into words by the shell, which is
+what keeps `--note 'manual update'` together.
 
 ## Development
 
@@ -69,12 +76,22 @@ instead.
 | `shell` | `docker compose run --rm --entrypoint sh dashboard` |
 | `build` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build` |
 | `dev-up` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` |
-| `lock` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps dashboard pip freeze --all --exclude-editable` written into `app/constraints.txt` below its comment header. Regenerates the tested dependency lock after a `requirements.txt` change; run it in the image, never from a host interpreter, or CI rejects the result. On Windows PowerShell 5.1 redirect with `\| Out-File -Encoding utf8`, not `>`, which writes UTF-16. |
-| `test` | `docker compose run --rm dashboard sh -c 'pip install --user --quiet pytest && export PATH=$PATH:/home/appuser/.local/bin && cd /app/app && python -m pytest tests/ -q && cd /app && python -m pytest app/mcp/tests/ -m "not slow" -q'` |
+| `lock` | Four steps. `docker compose -f docker-compose.yml -f docker-compose.dev.yml build --build-arg PIP_LOCK=refresh dashboard`; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps -T dashboard pip freeze --all --exclude-editable` written into `app/constraints.txt` below its comment header; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps -T dashboard python /app/tools/hash_lock.py - < app/constraints.txt > app/requirements.lock`; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, which proves the new hashed lock installs. Regenerates the tested dependency lock after a `requirements.txt` change; run it in the image, never from a host interpreter, or CI rejects the result. On Windows PowerShell 5.1 redirect with `\| Out-File -Encoding utf8`, not `>`, which writes UTF-16, and feed the third step with `Get-Content app/constraints.txt \|` instead of `<`. |
+| `test` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps -e PORTFOLIODB_PASSWORD= dashboard sh -c 'pip install --user --quiet pytest && export PATH=$PATH:/home/appuser/.local/bin && echo "── app suite ──" && cd /app/app && python -m pytest -p no:cacheprovider tests/ -q && echo "── MCP suite ──" && cd /app && python -m pytest -p no:cacheprovider app/mcp/tests/ -m "not slow" -q'` |
+
+`make test` builds the image from your working tree first, so it tests your
+edits rather than the published image, and it runs with a blank database
+password so no test can reach whatever database the stack holds. The
+database-backed tests run in CI; [CONTRIBUTING.md](../CONTRIBUTING.md#tests)
+shows how to run them against a throwaway Postgres.
 
 `make build` also stamps the image with your short commit SHA
 (`PORTFOLIODB_VERSION`); without it a locally built image reports its version as
 `dev`, which is cosmetic.
+
+These tables are checked: `tools/tests/test_runner_parity.py` expands every
+row's target with `make -n` and fails unless the `docker compose` commands it
+runs are the ones written here, argument for argument.
 
 ---
 

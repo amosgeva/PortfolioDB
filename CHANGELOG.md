@@ -16,13 +16,13 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
-**Upgrading**
+**Upgrading (dashboard write pages, migration 006)**
 
 - **The dashboard's write pages now need a password.** Set
-  `PORTFOLIODB_DASHBOARD_PASSWORD` to a long random string in the repo-root
-  `.env` and restart the dashboard. An existing `.env` is never rewritten, so
-  an upgrade needs the line added by hand; from this release, `make init` /
-  `pdb.ps1 init` write one for a new install. Until it is set,
+  `PORTFOLIODB_DASHBOARD_PASSWORD` in the repo-root `.env` — run `make init`
+  (or `.\pdb.ps1 init`), which adds a random one to an existing `.env` without
+  touching the other secrets, or add a long random string by hand — and
+  restart the dashboard. Until it is set,
   Manage, Advisor and Settings stay visible but **read-only**: nothing can be
   recorded, deleted, saved or sent to your model from the browser. The
   read-only views (Portfolio … History, Data Health) are unchanged and need no
@@ -107,8 +107,168 @@ needs a schema step says so under **Upgrading**.
   stylesheet instead of a hand-copied set (R-3), and use words in tinted
   wells for status instead of emoji (N-8). Manage is organised in tabs:
   Trades, Watchlist, Cash, Alerts, Settings, Export.
-- CI's database job runs the whole app suite with the database required, so
-  the Streamlit page tests can no longer be skipped there (T-1).
+- Streamlit page tests (AppTest) now drive Manage, Advisor, Data Health and
+  Settings through the real script against Postgres, including the password
+  gate; they run in CI's database job (T-1).
+
+**Upgrading (CI, supply chain, containers)**
+
+- **The dashboard and Postgres now listen on `127.0.0.1` only.** Before, they
+  were published on every interface. If you open the dashboard from another
+  machine, choose how: an SSH tunnel or `tailscale serve` (no port opened), or
+  the LAN opt-in override in `docker-compose.override.yml.example` /
+  [docs/exposure.md](docs/exposure.md#reaching-it-from-your-lan). Host tools and
+  host-run Python still reach Postgres at `127.0.0.1:54320`.
+- Run `make init` (or `.\pdb.ps1 init`) once: it adds
+  `PORTFOLIODB_DASHBOARD_PASSWORD` to an existing `.env` without touching the
+  other secrets.
+- The containers start with tighter defaults (see below). If you run a
+  `docker-compose.override.yml` that writes inside an app container's
+  filesystem, it now needs a volume or tmpfs for that path.
+- pgAdmin (`--profile tools`) moves from tag 8 to 9.19 and now listens on 8080
+  inside its container; the host port stays `127.0.0.1:58080`.
+- Postgres moves from the floating `postgres:16` to `16.16` pinned by digest — a
+  minor update within 16, no dump and restore.
+
+**Changed**
+
+- `docker-compose.yml`: every published port is loopback-only (audit A-1); LAN
+  exposure is documented as an explicit opt-in with a tested override.
+- Container hardening (audit O-1/O-2): the dashboard, scheduler and MCP server
+  run with no Linux capabilities, `no-new-privileges` and a read-only root
+  filesystem (tmpfs `/tmp` and home); Postgres keeps only the five capabilities
+  its entrypoint needs and is not read-only because `docker compose cp`, which
+  the Windows backup and restore use, refuses a read-only container; pgAdmin
+  runs with no capabilities. The dashboard and scheduler gained healthchecks
+  (Streamlit's `/_stcore/health`; supercronic's own `/health` on the
+  container's loopback).
+- Environment scoping (audit O-3): the dashboard and scheduler no longer receive
+  the MCP token and role password or pgAdmin's login; the scheduler also does
+  not receive the dashboard password. The scheduler keeps the LLM and Financial
+  Datasets keys its jobs use. The MCP server now receives `PORTFOLIODB_TZ`.
+- The image installs its Python packages from `app/requirements.lock` with
+  `--require-hashes` (audit O-2): pip refuses any wheel whose sha256 differs from
+  the recorded one. `make lock` regenerates the lock and its hashes together.
+  The Dockerfile now runs `apt-get upgrade`, replacing the hand-maintained
+  `zlib1g` line. pip stays in the runtime image: `make lock`, `make test` and
+  CI's lock check all run it there.
+- `publish.yml` (audit C-1, C-5): both architectures are scanned with Trivy
+  *before* anything is pushed, so an image with a fixable HIGH/CRITICAL finding
+  is never published; published images carry an SBOM and SLSA provenance, a
+  signed GitHub provenance attestation that names both the workflow's commit
+  and the commit the image was built from (they differ for a rebuild), and a
+  keyless cosign signature (SECURITY.md shows how to verify them); the
+  pre-publish scans refuse an expired `.trivyignore` exception just as the
+  scheduled scan does; a weekly rebuild moves `latest` and
+  the floating `X`/`X.Y` tags onto new Debian fixes; `[skip publish]` in a
+  merge commit skips publishing that push (tags always publish).
+- `security-scan.yml`: a weekly scan of the published `latest` and `1` images by
+  digest, both architectures (audit C-1); a failing scheduled scan opens a
+  tracking issue that the next clean run closes; `.trivyignore` entries are
+  dated and fail the scan past their review date (audit C-6).
+- CI (audit C-3, T-1, C-6): the test jobs run on the image's Python (3.14) with
+  the locked package set; the database job runs the whole app suite and the
+  whole MCP fast suite with the database required, so every database-backed
+  test — the Streamlit AppTest included — runs; coverage is measured and
+  printed; a `Lint (ruff)` job runs a conservative rule set
+  (`tools/ruff.toml`); every job has a timeout. Test tools are pinned in
+  `tools/requirements-ci.txt`.
+- Dependabot (audit P-2): base-image updates are digest and patch only, never a
+  new Python minor or major; Postgres and pgAdmin in `docker-compose.yml` are
+  now tracked too, never proposing a Postgres major.
+- `make test` builds the image from the working tree and tests that, and never
+  touches the stack's database (audit C-4). `make ask` passes the question as
+  one argument, so `make ask ARGS="what's my concentration risk?"` works (audit
+  E-7); backup and restore paths are quoted the same way. `make report` passes
+  `--mode eod` by default instead of failing with a usage error.
+- `tools/tests/test_runner_parity.py` now checks that every command in
+  `docs/commands.md` is the one the Makefile runs, argument for argument
+  (audit K-5).
+- Every GitHub Action in every workflow, GitHub's own `actions/*` included, is
+  pinned to a commit SHA (audit C-6); before, only third-party actions were.
+- `.codacy.yaml` no longer lists another project's paths.
+
+### Changed — figures computed differently (reports, dashboard payload, Advisor)
+
+- **Total return is over invested capital** (audit F-5, Q-4). It was lifetime
+  realized + unrealized P&L divided by the cost still *open*, so it exploded
+  after a large sale (900% on a book that made 90%) and read 0% after a full
+  one. It is now divided by peak net invested capital — the most of your money
+  the ledger ever had committed — on the dashboard (`kpi.totalReturnPct`,
+  `totalReturnWithIncomePct`, new `investedCapital`), in the executive report
+  and in the Advisor snapshot. Fee drag moves to the same denominator. See
+  `docs/methodology.md` §12. The MCP follows in its own change.
+- **An unpriced position is not a loss** (audit F-12, Q-2). The dashboard and
+  the Advisor subtracted its whole cost from the value of the priced positions.
+  Market value and unrealized P&L now cover priced positions only, unrealized %
+  is over their cost, and the unpriced cost is reported on its own
+  (`kpi.pricedCostBasis`, `unpricedCostBasis`, `unpricedSymbols`). All four
+  owned surfaces call one module, `app/portfolio_kpis.py`, and a parity test
+  runs them over a priced + unpriced pair, with fakes and against Postgres.
+  An unpriced holding also counts as active: the dashboard's `activeCount` and
+  the daily report's "Active Positions" are every open quantity > 0, as the
+  MCP's `active_symbols` is, and `kpi.dayChangePct` is null rather than 0.0
+  when no holding has a priced previous close.
+- **1Y is "n/a" without a year of history** instead of quietly showing the
+  since-inception figure, like WTD/MTD/YTD (audit F-14). This is the shared
+  TWR engine, so the MCP's period returns change too. The first week/month of
+  the period statistics is complete when coverage began before it. A 1Y value
+  chart that falls back to the whole history says so in `pvBasis`.
+- **The dashboard computes against the configured benchmark** (audit U-3):
+  `PORTFOLIODB_BENCHMARK_SYMBOL` now drives the returns strip, the risk beta and
+  the chart universe, resolved by `app/benchmark.py`, which the MCP now uses
+  too. `PORTFOLIODB_BENCHMARK_LABEL` names it on screen.
+- **Money in another currency is not summed as dollars** (audit F-11, Q-8).
+  Income and cash recorded in a non-USD currency are left out of every total
+  (including the TWR's dividend term) and listed; an instrument registered in
+  another currency stays in the valuation and is flagged. Dashboard
+  `currencyWarnings`, Advisor `currency_warnings`, and warning lines in every
+  report, the weekly one included for instruments as well as cash.
+- **The reports agree about stale prices** (audit F-8). The daily report
+  values each holding at its latest quote at or before the report instant
+  instead of dropping one that missed the last run; both it and the executive
+  report list a quote from an earlier day as stale and keep it out of the
+  day's change. The executive report's "as of" and previous session come from
+  the holdings' own quotes, not a benchmark's, so a Sunday futures quote no
+  longer produces a $0.00 day change, and it says which session the change is
+  ("on Fri, Nov 13"). The daily report now takes its instant and its
+  day-start baseline from the same rule — the newest quote of a *held*
+  symbol — so a watchlist symbol, or one sold long ago, quoted on a Sunday no
+  longer moves it either; the weekly report's boundaries follow the symbols
+  held at each end of the week.
+- **A zero quote is not a price.** Every latest-price and price-series read in
+  the dashboard payload, the Advisor and the three reports skips
+  `last_price <= 0` (Yahoo answers 0.0 outside regular hours).
+- **The weekly change says what it is** (audit F-9): a change in securities +
+  entered cash, not a return, printed with the flow-adjusted market P&L and the
+  week's net trade outlay beside it, and a warning for each account whose cash
+  was not re-entered during the week.
+
+### Added
+
+- Dashboard payload: `config` (`benchmark_symbol`, `benchmark_label`,
+  `reporting_tz`, `currency`, `logo_cdn` from `PORTFOLIODB_LOGO_CDN`);
+  `alerts`, the active rows of `price_alerts` evaluated on read against the
+  split-restated latest price (an empty list until that table exists, and no
+  other error is absorbed); `as_of` and `currency` on every cash entry;
+  `returns.benchmarkSymbol` / `benchmarkAvailable`; `risk.benchmark`.
+- The executive report lists unpriced positions, stale quotes and currency
+  warnings, and shows each cash balance with the date it was entered.
+- The Advisor snapshot carries the same totals as the dashboard, the date of
+  each cash entry, and notes telling the model what the figures cover. Its
+  latest quotes are now restated through the prepared ledger like every other
+  reader's.
+
+### Internal
+
+- `exec_report.py` (1,055 lines) is split into `exec_report_queries`,
+  `exec_report_analytics` and `exec_report_render` (audit R-4). Its output is
+  unchanged, proved by a golden-output test over the demo ledger captured
+  before the split.
+- `reporting_utils` and the reports no longer resolve the reporting timezone —
+  and so possibly open a database connection — at import (audit R-5).
+- The positions CLI, both text reports and the Advisor close their
+  connections instead of leaving them to the garbage collector (audit R-6).
 
 ## [1.7.7] — 2026-11-15
 

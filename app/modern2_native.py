@@ -538,10 +538,10 @@ def render_gate() -> bool:
     if not native_auth.configured():
         st.html(
             f'<div class="m2-gate">{_tag("read-only", "warn")}'
-            f"<span>Changes are disabled until a dashboard password is set: add "
-            f"<code>{var}</code> with a long random value to the repo-root <code>.env</code> "
-            "and restart the dashboard. (A new install set up with <code>make init</code> or "
-            "<code>pdb.ps1 init</code> from 1.8.0 on already has one.)</span></div>"
+            f"<span>Changes are disabled until a dashboard password is set: run "
+            "<code>make init</code> (or <code>pdb.ps1 init</code>), which adds "
+            f"<code>{var}</code> to the repo-root <code>.env</code>, or add a long random value "
+            "by hand; then restart the dashboard.</span></div>"
         )
         return False
     if native_auth.is_unlocked(st.session_state):
@@ -1240,9 +1240,9 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
             "the dashboard: recording, selling and deleting lots, the watchlist, cash, alerts, these "
             "settings, the one-pager, and every brief or chat that calls your model. The read-only "
             "views stay open.\n\n"
-            "- To set it by hand, add a long random string to `.env` and restart the dashboard. "
-            "From 1.8.0, `make init` (or `pdb.ps1 init`) writes a random one for a new install; an "
-            "existing `.env` is never rewritten, so an upgrade needs the line added by hand.\n"
+            "- `make init` (or `pdb.ps1 init`) adds a random one, also to an existing `.env`, "
+            "without touching the other secrets. To set it by hand, add a long random string to "
+            "`.env`. Either way, restart the dashboard.\n"
             "- Not set means read-only, never open: the forms stay visible but disabled.\n"
             "- Unlocking lasts for one browser session, and relocks after "
             f"{int(native_auth.IDLE_TIMEOUT_S // 60)} minutes idle or when you press **Lock**.\n"

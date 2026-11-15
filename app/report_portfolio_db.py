@@ -17,17 +17,19 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
 
 import ledger_inputs
+import portfolio_kpis as kpis
 from db import connect, fetch_all, load_config
 from portfolio import compute_fifo_merged, compute_avg_cost_merged
-from reporting_utils import IL_TZ, money as fmt_money, utf8_stdout
+from reporting_utils import local_tz, money as fmt_money, utf8_stdout
 
 UTC = timezone.utc
 
@@ -121,32 +123,71 @@ def unrealized_pct(pnl, cost):
 # Benchmarks for the Markets strip (index futures, added in 1.1.0) are collected
 # around the clock on their own cadence, while the held symbols stop after the
 # US close — so for most of the day MAX(ts) names a benchmark-only instant at
-# which nothing in the portfolio has a price. Joining instruments and excluding
-# benchmarks asks the question this report actually means: when were the
-# *holdings* last priced. The FK on price_snapshots.symbol guarantees the join
-# never drops a row.
-_LATEST_PORTFOLIO_TS = """
-    SELECT MAX(ps.ts) AS ts
+# which nothing in the portfolio has a price. Excluding benchmarks was not
+# enough either: a watchlist symbol, or one sold last month that is still
+# collected, can be quoted after the holdings stopped, and its instant made the
+# report's day a Sunday, labelled every holding stale and printed a $0.00 delta
+# (QA of PR #123, B1). The instant is now the executive report's rule,
+# portfolio_kpis.portfolio_as_of: the newest quote of a HELD symbol, with the
+# newest non-benchmark quote only when nothing is held. A zero quote (Yahoo's
+# placeholder outside regular hours) is not a price and never decides it.
+_LATEST_PER_SYMBOL = """
+    SELECT ps.symbol, MAX(ps.ts) AS ts, i.benchmark
     FROM price_snapshots ps
     JOIN instruments i ON i.symbol = ps.symbol
-    WHERE NOT i.benchmark
+    WHERE ps.last_price > 0{cutoff}
+    GROUP BY ps.symbol, i.benchmark
+"""
+
+_FIRST_TS_FROM = """
+    SELECT ps.symbol, MIN(ps.ts) AS ts, i.benchmark
+    FROM price_snapshots ps
+    JOIN instruments i ON i.symbol = ps.symbol
+    WHERE ps.last_price > 0 AND ps.ts >= %s
+    GROUP BY ps.symbol, i.benchmark
 """
 
 
-def get_snapshot(conn, *, mode: str) -> Snapshot:
+def held_symbols(conn) -> set[str]:
+    """Symbols with an open position, by the engines' rules (prepared ledger)."""
+    fifo = compute_fifo_merged(ledger_inputs.load(conn).lots)
+    return set(fifo[fifo["qty"] > 0]["symbol"]) if not fifo.empty else set()
+
+
+def _choose(rows, held: set[str], pick) -> object | None:
+    """Apply portfolio_kpis' held-symbol rule to per-symbol timestamps."""
+    stamps = {r["symbol"]: r["ts"] for r in rows if r.get("ts") is not None}
+    held_stamps = [ts for s, ts in stamps.items() if s in held]
+    if held_stamps:
+        return pick(held_stamps)
+    bench = {r["symbol"] for r in rows if r.get("benchmark")}
+    rest = [ts for s, ts in stamps.items() if s not in bench]
+    return pick(rest) if rest else None
+
+
+def get_snapshot(conn, *, mode: str, held: set[str] | None = None) -> Snapshot:
+    """The snapshot the report is read at: when the holdings were last priced.
+
+    ``held`` defaults to the ledger's open positions; main() passes the set it
+    already computed.
+    """
+    if held is None:
+        held = held_symbols(conn)
     if mode == "daily":
-        # Latest snapshot that priced something the portfolio can hold.
-        row = fetch_all(conn, _LATEST_PORTFOLIO_TS)
-        ts = row[0]["ts"]
+        rows = fetch_all(conn, _LATEST_PER_SYMBOL.format(cutoff=""))
+        ts = kpis.portfolio_as_of({r["symbol"]: r["ts"] for r in rows}, held,
+                                  {r["symbol"] for r in rows if r.get("benchmark")})
         if ts is None:
             raise RuntimeError("No price snapshots found")
     elif mode == "eod":
         # Snapshot <= today 23:05 IL time
-        now_il = datetime.now(IL_TZ)
-        target_il = datetime.combine(now_il.date(), time(23, 5)).replace(tzinfo=IL_TZ)
+        tz = local_tz()
+        now_il = datetime.now(tz)
+        target_il = datetime.combine(now_il.date(), time(23, 5)).replace(tzinfo=tz)
         target_utc = target_il.astimezone(UTC)
-        row = fetch_all(conn, _LATEST_PORTFOLIO_TS + " AND ps.ts <= %s", (target_utc,))
-        ts = row[0]["ts"]
+        rows = fetch_all(conn, _LATEST_PER_SYMBOL.format(cutoff=" AND ps.ts <= %s"), (target_utc,))
+        ts = kpis.portfolio_as_of({r["symbol"]: r["ts"] for r in rows}, held,
+                                  {r["symbol"] for r in rows if r.get("benchmark")})
         if ts is None:
             raise RuntimeError(f"No price snapshots found at or before {target_il.isoformat()}")
     else:
@@ -157,7 +198,7 @@ def get_snapshot(conn, *, mode: str) -> Snapshot:
         """
         SELECT symbol, ts, last_price, bid, ask, source
         FROM price_snapshots
-        WHERE ts=%s
+        WHERE ts=%s AND last_price > 0
         """,
         (ts,),
     )
@@ -180,7 +221,7 @@ def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, tuple[datetime, float
           SELECT symbol, ts, last_price,
                  ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
           FROM price_snapshots
-          WHERE ts <= %s
+          WHERE ts <= %s AND last_price > 0
         )
         SELECT symbol, ts, last_price
         FROM ranked
@@ -191,21 +232,28 @@ def get_prev_snapshot_map(conn, ts: datetime) -> dict[str, tuple[datetime, float
     return {r["symbol"]: (r["ts"], float(r["last_price"])) for r in rows if r.get("last_price") is not None}
 
 
-def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int] = (16, 15)) -> tuple[datetime | None, dict[str, float]]:
+def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int] = (16, 15),
+                               held: set[str] | None = None) -> tuple[datetime | None, dict[str, float]]:
     """Return the first snapshot of the IL trading day window and its prices.
 
     We define "day start" as the earliest snapshot on the same IL calendar day
-    with ts >= start_hhmm (default 16:15 IL).
+    with ts >= start_hhmm (default 16:15 IL) that priced a HELD symbol (the
+    same rule as the report instant; with nothing held, a non-benchmark one).
+    A benchmark-, watchlist- or sold-symbol-only instant quotes no holding, and
+    taking it as the baseline left the day's delta empty or measured from the
+    wrong run (audit F-8; QA of PR #123, B1).
 
     Returns (start_ts, {symbol: last_price}). If none found, (None, {}).
     """
-    ts_il = ts.astimezone(IL_TZ)
+    tz = local_tz()
+    ts_il = ts.astimezone(tz)
     day = ts_il.date()
-    start_il = datetime.combine(day, time(start_hhmm[0], start_hhmm[1])).replace(tzinfo=IL_TZ)
+    start_il = datetime.combine(day, time(start_hhmm[0], start_hhmm[1])).replace(tzinfo=tz)
     start_utc = start_il.astimezone(UTC)
 
-    row = fetch_all(conn, "SELECT MIN(ts) AS ts FROM price_snapshots WHERE ts >= %s", (start_utc,))
-    start_ts = row[0]["ts"] if row else None
+    if held is None:
+        held = held_symbols(conn)
+    start_ts = _choose(fetch_all(conn, _FIRST_TS_FROM, (start_utc,)), held, min)
     if start_ts is None:
         return None, {}
 
@@ -214,7 +262,7 @@ def get_day_start_snapshot_map(conn, *, ts: datetime, start_hhmm: tuple[int, int
         """
         SELECT symbol, last_price
         FROM price_snapshots
-        WHERE ts=%s
+        WHERE ts=%s AND last_price > 0
         """,
         (start_ts,),
     )
@@ -238,6 +286,29 @@ def _fmt_line(label: str, value: str) -> str:
     return f"{label:<18} {value}"
 
 
+def get_quotes_at_or_before(conn, ts: datetime) -> dict[str, dict]:
+    """Each symbol's latest quote at or before ``ts`` — the price it is valued at.
+
+    The daily report used to value only the symbols present in the one
+    snapshot it picked, so a holding that missed that collector run vanished
+    from the value without a word, while the executive report valued it at its
+    last quote (audit F-8). Both now follow one rule (portfolio_kpis): latest
+    quote at or before the report instant, and a quote from an earlier day is
+    listed as stale.
+    """
+    rows = fetch_all(
+        conn,
+        """
+        SELECT DISTINCT ON (symbol) symbol, ts, last_price, bid, ask, source
+        FROM price_snapshots
+        WHERE ts <= %s AND last_price > 0
+        ORDER BY symbol, ts DESC
+        """,
+        (ts,),
+    )
+    return {r["symbol"]: r for r in rows}
+
+
 def main():
     utf8_stdout()
 
@@ -246,16 +317,23 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config()
+    tz = local_tz()
 
-    with connect(cfg) as conn:
+    # closing(): psycopg2's own `with conn` leaves the connection open (db.py);
+    # this report only reads, so there is nothing to commit (audit R-6).
+    with closing(connect(cfg)) as conn:
+        # The holdings decide the report instant and the day-start baseline.
+        held_now = held_symbols(conn)
         # Guard: if too few symbols are priced, try to collect fresh ones first.
-        snap = get_snapshot(conn, mode=args.mode)
+        snap = get_snapshot(conn, mode=args.mode, held=held_now)
         if args.mode == "daily" and len(snap.prices) < MIN_PRICED_SYMBOLS:
             collect_fresh_prices()
-            snap = get_snapshot(conn, mode=args.mode)
+            snap = get_snapshot(conn, mode=args.mode, held=held_now)
 
         prev_raw = get_prev_snapshot_map(conn, snap.ts)
-        day_start_ts, day_start_raw = get_day_start_snapshot_map(conn, ts=snap.ts)
+        day_start_ts, day_start_raw = get_day_start_snapshot_map(conn, ts=snap.ts, held=held_now)
+        # The snapshot's own rows win over an older quote of the same symbol.
+        quotes = {**get_quotes_at_or_before(conn, snap.ts), **snap.prices}
 
         # Restated through the prepared ledger, like every other reader, so a
         # recorded split shows up here as a share count and not as a loss —
@@ -268,6 +346,7 @@ def main():
         snap = Snapshot(ts=snap.ts, prices={
             r["symbol"]: r for r in ledger.price_rows(list(snap.prices.values()))
         })
+        quotes = {r["symbol"]: r for r in ledger.price_rows(list(quotes.values()))}
         prev_map = {
             sym: price for _ts, sym, price in ledger.price_points(
                 [(ts, sym, price) for sym, (ts, price) in prev_raw.items()]
@@ -282,56 +361,86 @@ def main():
         fifo_all = _compute_fifo_merged(lot_rows)
         avg_all = _compute_avg_cost_merged(lot_rows)
 
-        # Realized P&L must include closed symbols even if we don't have a current price snapshot for them.
-        realized_fifo = float(fifo_all["realized_pnl"].sum()) if not fifo_all.empty else 0.0
-        realized_avg = float(avg_all["realized_pnl"].sum()) if not avg_all.empty else 0.0
-
         # Fees paid (already in basis/proceeds — reporting only) + income.
-        from datetime import timedelta
         total_fees = sum(float(r["fees"]) for r in lot_rows if r.get("fees") is not None)
-        income_rows = fetch_all(conn, "SELECT pay_date, amount FROM income")
-        total_income = sum(float(r["amount"]) for r in income_rows if r.get("amount") is not None)
-        ttm_cut = snap.ts.astimezone(IL_TZ).date() - timedelta(days=365)
+        income_rows = fetch_all(conn, "SELECT symbol, pay_date, amount, currency FROM income")
+        instruments = fetch_all(conn, "SELECT symbol, currency FROM instruments")
+        cash_rows = fetch_all(
+            conn,
+            "SELECT DISTINCT ON (account) account, cash, ts, currency "
+            "FROM cash_snapshots ORDER BY account, ts DESC",
+        )
+        # Income in another currency is not dollars (audit Q-8).
+        usd_income, _foreign = kpis.split_by_currency(income_rows)
+        total_income = sum(float(r["amount"]) for r in usd_income if r.get("amount") is not None)
+        ttm_cut = snap.ts.astimezone(tz).date() - timedelta(days=365)
         ttm_income = sum(
-            float(r["amount"]) for r in income_rows
+            float(r["amount"]) for r in usd_income
             if r.get("amount") is not None and r.get("pay_date") and r["pay_date"] >= ttm_cut
         )
 
-        # Attach prices (for market value / unrealized only)
         def price_of(sym: str):
-            r = snap.prices.get(sym)
+            r = quotes.get(sym)
             return float(r["last_price"]) if r and r.get("last_price") is not None else None
 
-        fifo = fifo_all.copy()
-        fifo["last_price"] = fifo["symbol"].map(price_of)
-        fifo["market_value"] = fifo["qty"] * fifo["last_price"]
-        fifo["unrealized_pnl"] = fifo["market_value"] - fifo["open_cost"]
-        fifo["unrealized_pct"] = unrealized_pct(fifo["unrealized_pnl"], fifo["open_cost"])
+        def priced(frame: pd.DataFrame) -> pd.DataFrame:
+            out = frame.copy()
+            out["last_price"] = out["symbol"].map(price_of)
+            out["market_value"] = out["qty"] * out["last_price"]
+            out["unrealized_pnl"] = out["market_value"] - out["open_cost"]
+            out["unrealized_pct"] = unrealized_pct(out["unrealized_pnl"], out["open_cost"])
+            return out
 
-        avg = avg_all.copy()
-        avg["last_price"] = avg["symbol"].map(price_of)
-        avg["market_value"] = avg["qty"] * avg["last_price"]
-        avg["unrealized_pnl"] = avg["market_value"] - avg["open_cost"]
-        avg["unrealized_pct"] = unrealized_pct(avg["unrealized_pnl"], avg["open_cost"])
+        fifo_full = priced(fifo_all)
+        avg_full = priced(avg_all)
+
+        # The roll-up every surface uses (portfolio_kpis): value and P&L over
+        # priced rows, the cost of an unpriced holding reported, not lost.
+        def rollup(frame: pd.DataFrame) -> dict:
+            return kpis.rollup(
+                {"symbol": r["symbol"], "qty": r["qty"], "open_cost": r["open_cost"],
+                 "realized_pnl": r["realized_pnl"],
+                 "last_price": r["last_price"] if pd.notna(r["last_price"]) else None}
+                for _, r in frame.iterrows()
+            )
+
+        r_fifo = rollup(fifo_full)
+        r_avg = rollup(avg_full)
+        realized_fifo = float(r_fifo["realized_pnl"])
+        realized_avg = float(r_avg["realized_pnl"])
 
         # Only rows with prices contribute to market value/unrealized
-        fifo = fifo.dropna(subset=["last_price"]).copy()
-        avg = avg.dropna(subset=["last_price"]).copy()
+        fifo = fifo_full.dropna(subset=["last_price"]).copy()
 
-        total_value = float(fifo["market_value"].sum())
-        total_cost_fifo = float(fifo["open_cost"].sum())
-        total_cost_avg = float(avg["open_cost"].sum())
-        unrl_fifo = float(fifo["unrealized_pnl"].sum())
-        unrl_avg = float(avg["unrealized_pnl"].sum())
-        unrl_pct_fifo = (unrl_fifo / total_cost_fifo * 100) if total_cost_fifo else 0.0
-        unrl_pct_avg = (unrl_avg / total_cost_avg * 100) if total_cost_avg else 0.0
-        active = int((fifo["qty"] > 0).sum())
+        total_value = float(r_fifo["market_value"])
+        total_cost_fifo = float(r_fifo["priced_cost_basis"])
+        total_cost_avg = float(r_avg["priced_cost_basis"])
+        unrl_fifo = float(r_fifo["unrealized_pnl"])
+        unrl_avg = float(r_avg["unrealized_pnl"])
+        unrl_pct_fifo = kpis.as_float(r_fifo["unrealized_pct"]) or 0.0
+        unrl_pct_avg = kpis.as_float(r_avg["unrealized_pct"]) or 0.0
+        # Open positions, priced or not (the dashboard's activeCount and the
+        # MCP's active_symbols); an unpriced one is listed on its own line.
+        active = int((fifo_full["qty"] > 0).sum())
 
-        def compute_deltas(price_map: dict[str, float]) -> tuple[float, list[tuple[str, float]]]:
+        held = fifo_full[fifo_full["qty"] > 0]["symbol"].tolist()
+        stale = kpis.stale_quotes({s: q.get("ts") for s, q in quotes.items()}, held, snap.ts, tz)
+        stale_syms = {e["symbol"] for e in stale}
+        warnings = kpis.currency_warnings(
+            instruments=instruments,
+            traded_symbols={r["symbol"] for r in lot_rows},
+            held_symbols=held,
+            income=income_rows,
+            cash=cash_rows,
+        )
+
+        def compute_deltas(price_map: dict[str, float], only: set[str] | None = None) -> tuple[float, list[tuple[str, float]]]:
             deltas: list[tuple[str, float]] = []
             total = 0.0
             for _, r in fifo.iterrows():
                 sym = r["symbol"]
+                if only is not None and sym not in only:
+                    continue
                 qty = float(r["qty"])
                 lastp = float(r["last_price"])
                 basep = price_map.get(sym)
@@ -343,18 +452,21 @@ def main():
             deltas_sorted = sorted(deltas, key=lambda x: x[1], reverse=True)
             return total, deltas_sorted
 
-        # Delta vs prev snapshot (10-minute tape)
-        tape_delta, tape_sorted = compute_deltas(prev_map)
+        # Delta vs prev snapshot (10-minute tape): only symbols quoted in THIS
+        # snapshot — a carried-forward quote did not move since the last one.
+        tape_delta, tape_sorted = compute_deltas(prev_map, set(snap.prices))
 
-        # Delta vs start-of-day window (16:15 IL)
-        sod_delta, sod_sorted = compute_deltas(day_start_map) if day_start_map else (0.0, [])
+        # Delta vs start-of-day window (16:15 IL); a stale symbol has no move
+        # today that anyone observed.
+        fresh = {s for s in held if s not in stale_syms}
+        sod_delta, sod_sorted = compute_deltas(day_start_map, fresh) if day_start_map else (0.0, [])
 
         tape_top = tape_sorted[:5]
         tape_bot = list(reversed(tape_sorted[-5:]))
         sod_top = sod_sorted[:5]
         sod_bot = list(reversed(sod_sorted[-5:]))
 
-        ts_il = snap.ts.astimezone(IL_TZ)
+        ts_il = snap.ts.astimezone(tz)
 
         title = "📊 DAILY PORTFOLIO BRIEFING (DB)" if args.mode == "daily" else "🌙 END-OF-DAY PORTFOLIO REPORT (DB)"
 
@@ -366,6 +478,18 @@ def main():
         lines.append("💰 Summary")
         lines.append(_fmt_line("Portfolio Value:", fmt_money(total_value)))
         lines.append(_fmt_line("Active Positions:", str(active)))
+        if r_fifo["unpriced_symbols"]:
+            lines.append(_fmt_line(
+                "Unpriced:",
+                f"{', '.join(r_fifo['unpriced_symbols'])} — cost {fmt_money(r_fifo['unpriced_cost_basis'])}, "
+                "no quote on file; not in value or P&L",
+            ))
+        if stale:
+            lines.append(_fmt_line(
+                "Stale prices:",
+                ", ".join(f"{e['symbol']} ({e['ts'].astimezone(tz).strftime('%Y-%m-%d')})" for e in stale)
+                + " — valued at last quote; not in the day's deltas",
+            ))
         lines.append("")
 
         lines.append("🧾 P&L (FIFO vs AVG)")
@@ -399,7 +523,7 @@ def main():
 
         # Movers: since day start
         if day_start_ts is not None and sod_sorted:
-            sod_il = day_start_ts.astimezone(IL_TZ)
+            sod_il = day_start_ts.astimezone(tz)
             lines.append(f"📅 Since day start (from {sod_il.strftime('%H:%M')} IL)")
             lines.append(_fmt_line("Delta:", fmt_money(sod_delta)))
             if sod_top:
@@ -412,6 +536,12 @@ def main():
                     lines.append(f"  {sym:<5} {fmt_money(d)}")
         else:
             lines.append("📅 Since day start: N/A (no baseline snapshot found for 16:15 IL window)")
+
+        if warnings:
+            lines.append("")
+            lines.append("💱 Currency")
+            for w in warnings:
+                lines.append(f"  ⚠️ {w['message']}")
 
         print("\n".join(lines))
 

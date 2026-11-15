@@ -5,10 +5,11 @@ never mistaken for a good week. The curve is the same one `app/twr.py` produces
 for the returns strip and the MCP endpoints, so these figures agree with those
 by construction instead of being a second opinion.
 
-**Partial periods are excluded from the records.** Price coverage starts
-mid-week and mid-month, and the current week and month are still running. A
-half-month is not comparable to a full one, so the first and last groups are
-marked `partial` and kept out of best/worst — they still appear in the monthly
+**Partial periods are excluded from the records.** Price coverage usually
+starts mid-week and mid-month, and the current week and month are still
+running. A half-month is not comparable to a full one, so a first group that
+coverage entered part-way through, and a last group still running, are marked
+`partial` and kept out of best/worst — they still appear in the monthly
 table, because a gap there would be more confusing than a labelled part-month.
 A finished period is released as soon as `today` (passed by the caller) has
 moved past it, so a complete month is not held back until the next month has
@@ -60,13 +61,21 @@ def _compound(returns: Iterable[float]) -> float:
 
 
 def _group(
-    dailies: Sequence[tuple[date, float]], keyfn, today: date | None = None
+    dailies: Sequence[tuple[date, float]], keyfn, today: date | None = None,
+    base_day: date | None = None,
 ) -> list[dict[str, Any]]:
     """Compound daily returns into ordered groups, flagging the partial ends.
 
     The last group is still running while `today` falls inside its period.
     Without `today` it is assumed to be running, which is the conservative
     reading: the curve normally ends at the latest snapshot.
+
+    The first group is complete when `base_day` (the curve's first point, the
+    close every later return is measured from) falls in an EARLIER period:
+    then the group's returns chain from the close before the period began to
+    its end. It used to be marked partial unconditionally, so a curve that
+    starts on the last day of August still threw away a fully covered
+    September (audit F-14). Without `base_day` it stays partial.
     """
     buckets: OrderedDict[Any, list[tuple[date, float]]] = OrderedDict()
     for day, r in dailies:
@@ -87,7 +96,9 @@ def _group(
             # The first group began before coverage did; the last is excluded
             # while its period is still running. Neither is comparable with a
             # complete period.
-            "partial": idx == 0 or (
+            "partial": (
+                idx == 0 and (base_day is None or keyfn(base_day) >= key)
+            ) or (
                 idx == last and (running is None or running <= key)
             ),
         })
@@ -249,8 +260,9 @@ def build(
             "observations": len(curve),
         }
 
-    weeks = _group(dailies, _week_key, today)
-    months = _group(dailies, _month_key, today)
+    base_day = curve[0][0]
+    weeks = _group(dailies, _week_key, today, base_day)
+    months = _group(dailies, _month_key, today, base_day)
     # Days have no partial concept — every observation is a whole day — so they
     # are grouped by themselves and never excluded.
     day_groups = [
