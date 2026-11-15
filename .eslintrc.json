@@ -364,6 +364,19 @@
       "rules": {
         "no-restricted-syntax": "off"
       }
+    },
+    {
+      "files": [
+        "app/dashboard/static/e2e/**/*.mjs",
+        "playwright.config.mjs"
+      ],
+      "env": {
+        "browser": true,
+        "node": true
+      },
+      "rules": {
+        "no-restricted-syntax": "off"
+      }
     }
   ]
 }

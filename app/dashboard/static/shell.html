@@ -17,25 +17,9 @@ try{var _t=localStorage.getItem('pdb_theme')||
       <span><div class="rail__name">Portfolio<b>DB</b></div><div class="rail__tag">Live markets</div></span>
       <button class="iconbtn rail__close" data-rail-close aria-label="Close navigation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     </div>
-    <div class="rail__sect">
-      <div class="rail__label">Workspace</div>
-      <nav class="nav">
-        <a data-view="portfolio" class="is-active" role="link" tabindex="0" aria-current="page">__SVG_GRID__ Portfolio</a>
-        <a data-view="movers" role="link" tabindex="0">__SVG_TREND__ Market Movers</a>
-        <a data-view="stats" role="link" tabindex="0">__SVG_STATS__ Statistics</a>
-        <a data-view="alerts" role="link" tabindex="0">__SVG_BELL__ Alerts &amp; News <span class="badge">0</span></a>
-        <a data-view="fundamentals" role="link" tabindex="0">__SVG_BOOK__ Fundamentals</a>
-        <a data-view="history" role="link" tabindex="0">__SVG_CLOCK__ History</a>
-      </nav>
-    </div>
-    <div class="rail__sect">
-      <div class="rail__label">Account</div>
-      <nav class="nav">
-        <a data-nav="manage" role="link" tabindex="0">__SVG_SLIDERS__ Manage</a>
-        <a data-nav="advisor" role="link" tabindex="0">__SVG_SPARK__ Advisor</a>
-        <a data-nav="health" role="link" tabindex="0">__SVG_PULSE__ Data Health</a>
-      </nav>
-    </div>
+    <!-- One .rail__sect per nav.json group (Workspace, Account), drawn by
+         src/ui/nav.js from the file the native pages' rail uses too. -->
+    <div class="rail__nav" data-rail-nav></div>
     <div class="rail__div"></div>
     <div class="rail__sect">
       <div class="rail__label">Watchlist</div>
@@ -309,13 +293,8 @@ try{var _t=localStorage.getItem('pdb_theme')||
   </main>
 </div>
 
-<nav class="tabbar" aria-label="Primary">
-  <button data-tab="portfolio" class="is-active">__SVG_GRID__<span>Portfolio</span></button>
-  <button data-tab="movers">__SVG_TREND__<span>Movers</span></button>
-  <button data-tab="alerts">__SVG_BELL__<span>Alerts</span></button>
-  <button data-tab="fundamentals">__SVG_BOOK__<span>Fund.</span></button>
-  <button data-tab="history">__SVG_CLOCK__<span>History</span></button>
-</nav>
+<!-- nav.json's tabbar.frame, drawn by src/ui/nav.js. -->
+<nav class="tabbar" aria-label="Primary" data-tabbar></nav>
 
 <div class="drawer-scrim" data-drawer-scrim></div>
 <aside class="drawer" data-drawer role="dialog" aria-modal="true" aria-label="Details" tabindex="-1">

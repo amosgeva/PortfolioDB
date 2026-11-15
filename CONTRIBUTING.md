@@ -103,6 +103,15 @@ docker stop pdb-test
 Or just `make test`, which runs the fast suites in an image built from your
 working tree.
 
+The dashboard's front end (`app/dashboard/static/`) has two more, both in Node
+from the repo root: `npm run ci` (bundle check, ESLint, jsdom tests) and
+`npm run e2e`, which starts the real Streamlit app on 127.0.0.1:18521 against
+the database in your `PORTFOLIODB_*` variables — the same throwaway one as
+above, demo-seeded, with the read-only role exported — and drives it in
+Chromium at three widths. Run `npx playwright install chromium` once first,
+and set `PDB_E2E_PYTHON` if the Python with the app's requirements is not
+`python`. CI runs it as *Browser integration (Streamlit + Postgres)*.
+
 ## What the code expects of you
 
 - **Money is `Decimal`** end to end inside the engines. Convert to `float` only

@@ -98,6 +98,30 @@ def test_ci_postgres_is_the_image_compose_runs():
     )
 
 
+# ── U-9: the dashboard is tested in a real browser against the real stack ────
+
+
+def test_browser_job_runs_the_embedding_against_a_real_server_and_database():
+    job = _workflows()["frontend.yml"]["jobs"]["browser"]
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    assert job["services"]["postgres"]["image"] == compose["services"]["postgres"]["image"], (
+        "the browser job tests a different Postgres than docker-compose.yml runs"
+    )
+    pythons = [s["with"]["python-version"] for s in _steps(job) if "setup-python" in str(s.get("uses", ""))]
+    assert pythons == [_image_python()], f"browser job runs Python {pythons}, the image runs {_image_python()}"
+    run = _run_text(job)
+    installs = [line for line in run.splitlines() if "pip install" in line and "requirements.txt" in line]
+    assert installs and all("-c app/constraints.txt" in x and "--only-binary :all:" in x for x in installs)
+    order = ["app/apply_schema.py", "app/demo_seed.py --yes", "npm ci", "playwright install --with-deps chromium", "npm run e2e"]
+    positions = [run.find(s) for s in order]
+    assert -1 not in positions and positions == sorted(positions), f"browser job steps out of order or missing: {order}"
+    assert job.get("permissions") is None, "the browser job needs no permissions beyond the workflow's contents: read"
+    config = (ROOT / "playwright.config.mjs").read_text(encoding="utf-8")
+    for width in ("360", "768", "1440"):
+        assert f"width: {width}" in config, f"playwright.config.mjs no longer tests {width}px"
+    assert "retries: 0" in config, "a flaky embedding must fail, not be retried into green"
+
+
 def test_lint_job_runs_the_in_repo_ruff_config():
     job = _workflows()["ci.yml"]["jobs"]["lint"]
     assert "ruff check --config tools/ruff.toml" in _run_text(job)

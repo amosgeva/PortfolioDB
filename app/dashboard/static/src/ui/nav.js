@@ -1,20 +1,52 @@
-// Client-side navigation between the six read-only views, and the jump out to
-// the native Streamlit pages (Manage, Advisor, Data Health).
+// Client-side navigation between the read-only views, and the jump out to the
+// native Streamlit pages (Manage, Advisor, Data Health).
+//
+// What the rail and the phone tab bar contain - ids, labels, groups, glyphs -
+// is nav.json, the file the native pages' rail is drawn from as well
+// (app/dashboard/nav.py, audit R-3). This module draws both from it; the
+// contract tests (tests/nav.test.mjs, app/tests/test_nav_contract.py) fail if
+// either half stops following it.
 
 import { $, $all, clickable, setText } from '../core/dom.js';
+import { html, setHTML } from '../core/html.js';
 import { syncUrl, nativeNav, onParent, parentQueryView, session } from '../core/host.js';
 import { app } from '../core/state.js';
 import { openRail } from './shell.js';
+import { icon } from './icons.js';
 import { item } from '../core/dict.js';
+import NAV from '../../nav.json';
 
-export const TITLES = {
-  portfolio: ['Portfolio', 'Real-time overview of your holdings'],
-  movers: ['Market Movers', 'Biggest moves across your tracked symbols'],
-  stats: ['Statistics', 'Best and worst periods, consistency and streaks'],
-  alerts: ['Alerts & News', 'Price alerts and market headlines'],
-  fundamentals: ['Fundamentals', 'Company profile, financials, filings and ownership'],
-  history: ['History', 'Every recorded lot and snapshot run'],
-};
+const RENDERER = new Map(NAV.groups.map((g) => [g.id, g.renderer]));
+
+/** Every view in rail order, each with `native`: drawn by Streamlit, not here. */
+export const VIEWS = NAV.views.map((v) => ({ ...v, native: RENDERER.get(v.group) === 'native' }));
+
+/** The panes this front end draws: id -> [title, subtitle]. */
+export const TITLES = Object.fromEntries(VIEWS.filter((v) => !v.native).map((v) => [v.id, [v.label, v.subtitle]]));
+const FIRST = VIEWS.find((v) => !v.native).id;
+
+function railEntry(v) {
+  const badge = v.badge ? html` <span class="badge">0</span>` : '';
+  return v.native
+    ? html`<a data-nav="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}</a>`
+    : html`<a data-view="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}${badge}</a>`;
+}
+
+/** Draw the rail's groups and the tab bar from nav.json. */
+export function renderNav() {
+  const rail = $('[data-rail-nav]');
+  if (rail) {
+    setHTML(rail, html`${NAV.groups.map((g) => html`<div class="rail__sect" data-rail-group="${g.id}"><div class="rail__label">${g.label}</div><nav class="nav" aria-label="${g.label}">${VIEWS.filter((v) => v.group === g.id).map(railEntry)}</nav></div>`)}`);
+  }
+  const bar = $('[data-tabbar]');
+  if (bar) {
+    const byId = new Map(VIEWS.map((v) => [v.id, v]));
+    setHTML(bar, html`${NAV.tabbar.frame.map((id) => {
+      const v = byId.get(id);
+      return html`<button type="button" data-tab="${v.id}">${icon(v.icon)}<span>${v.short}</span></button>`;
+    })}`);
+  }
+}
 
 const firstShow = new Map();
 /** Run `fn` the first time `view` is opened (lazy, expensive renders). */
@@ -22,11 +54,11 @@ export function onFirstShow(view, fn) { firstShow.set(view, fn); }
 
 export function currentView() {
   const p = $('.view.is-active');
-  return p ? p.dataset.viewPane : 'portfolio';
+  return p ? p.dataset.viewPane : FIRST;
 }
 
 export function switchView(name, skipHistory) {
-  const view = item(TITLES, name) ? name : 'portfolio';
+  const view = item(TITLES, name) ? name : FIRST;
   $all('.nav a[data-view]').forEach((a) => {
     const on = a.dataset.view === view;
     a.classList.toggle('is-active', on);
@@ -51,7 +83,16 @@ export function switchView(name, skipHistory) {
 /** Open one of the native pages (Manage, Advisor, Data Health). */
 export function goNative(view) { nativeNav(view); }
 
+/** Go to any nav.json view, whichever half draws it. */
+export function goTo(id) {
+  const v = VIEWS.find((x) => x.id === id);
+  if (v && v.native) goNative(id); else switchView(id);
+}
+
 export function initNav() {
+  renderNav();
+  // The pane the first paint shows, before restoreView() picks the real one.
+  switchView(FIRST, true);
   $all('.nav a[data-view]').forEach((a) => clickable(a, () => switchView(a.dataset.view)));
   $all('.nav a[data-nav]').forEach((a) => clickable(a, () => goNative(a.dataset.nav)));
   $all('.tabbar [data-tab]').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.tab)));
@@ -61,9 +102,9 @@ export function initNav() {
 export function restoreView() {
   // A soft refresh stashes the pane it was on (consumed once).
   const initial = session.take('pdb_refresh_view') || app.D.initialView;
-  if (initial && initial !== 'portfolio' && item(TITLES, initial)) switchView(initial, true);
+  if (initial && initial !== FIRST && item(TITLES, initial)) switchView(initial, true);
   onParent('popstate', (ev) => {
-    const v = (ev.state && ev.state.pdbView) || parentQueryView() || 'portfolio';
+    const v = (ev.state && ev.state.pdbView) || parentQueryView() || FIRST;
     if (item(TITLES, v)) switchView(v, true);
   });
 }

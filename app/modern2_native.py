@@ -48,46 +48,13 @@ import native_writes as nw
 import reporting_tz
 import settings
 import version as app_version
+from dashboard import nav as dash_nav
 from db import fetch_all
 
-# ── rail glyphs (shared visual language with the iframe) ───────────────────
-_ICONS = {
-    "logo": '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 3 5-7"/><path d="M17 7h3v3"/></svg>',
-    "portfolio": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>',
-    "movers": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>',
-    "alerts": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
-    "fundamentals": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
-    "history": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
-    "manage": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
-    "advisor": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></svg>',
-    "stats": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="4" width="3" height="14" rx="1"/></svg>',
-    "health": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
-}
-
-_NAV = [
-    ("portfolio", "Portfolio"),
-    ("movers", "Market Movers"),
-    ("stats", "Statistics"),
-    ("alerts", "Alerts & News"),
-    ("fundamentals", "Fundamentals"),
-    ("history", "History"),
-    ("manage", "Manage"),
-    ("advisor", "Advisor"),
-    ("health", "Data Health"),
-]
-_WORKSPACE = ("portfolio", "movers", "stats", "alerts", "fundamentals", "history")
-_ACCOUNT = ("manage", "advisor", "health")
-
-# The phone/tablet tab bar (≤980px), shaped like the custom front end's: five
-# entries, icon over a short label. The other read-only views are one tap
-# further, through Portfolio's own menu.
-_TABBAR = [
-    ("portfolio", "Portfolio"),
-    ("movers", "Movers"),
-    ("manage", "Manage"),
-    ("advisor", "Advisor"),
-    ("health", "Health"),
-]
+# ── navigation and glyphs: one source ──────────────────────────────────────
+# The rail entries, their labels, the phone tab bar and every glyph come from
+# dashboard/static/nav.json, the file the custom front end draws its own rail
+# and tab bar from (audit R-3). dashboard.nav validates it on import.
 
 # ── design tokens: one source ──────────────────────────────────────────────
 # The colour, radius, type and shadow tokens are the custom front end's own
@@ -119,9 +86,7 @@ def design_tokens_css() -> str:
 
 
 def _mask_url(svg: str) -> str:
-    # An SVG used as an image needs its namespace; inline markup does not.
-    if "xmlns=" not in svg:
-        svg = svg.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ', 1)
+    # An SVG used as an image needs its namespace (dash_nav.svg(xmlns=True)).
     return 'url("data:image/svg+xml,' + quote(svg, safe="") + '")'
 
 
@@ -129,8 +94,9 @@ def _nav_css(active: str) -> str:
     """Per-entry icon masks plus the active entry's highlight, for the rail
     buttons and the tab bar buttons."""
     rules = []
-    for key, _ in _NAV:
-        ico = _mask_url(_ICONS[key])
+    for v in dash_nav.views():
+        key = v["id"]
+        ico = _mask_url(dash_nav.svg(v["icon"], xmlns=True))
         rules.append(f".st-key-m2_nav_{key},.st-key-m2_tab_{key}{{--ico:{ico}}}")
     rules.append(
         f".st-key-m2_nav_{active} button{{background:oklch(34% 0.055 264)!important;"
@@ -456,16 +422,14 @@ def _watchlist_html(watchlist) -> str:
 def _render_rail(active: str, watchlist=None) -> None:
     with st.container(key="m2_rail"):
         st.html(
-            '<div class="m2-rail-brand"><span class="logo">' + _ICONS["logo"] + "</span>"
+            '<div class="m2-rail-brand"><span class="logo">' + dash_nav.svg("logo") + "</span>"
             '<span><div class="name">Portfolio<b>DB</b></div><div class="tag">Live markets</div></span></div>'
-            '<div class="m2-rail-label">Workspace</div>'
         )
-        labels = dict(_NAV)
-        for key in _WORKSPACE:
-            st.button(labels[key], key=f"m2_nav_{key}", on_click=_go, args=(key,), type="tertiary")
-        st.html('<div class="m2-rail-label">Account</div>')
-        for key in _ACCOUNT:
-            st.button(labels[key], key=f"m2_nav_{key}", on_click=_go, args=(key,), type="tertiary")
+        # Every group, in nav.json's order, the way the front end's rail draws them.
+        for group in dash_nav.groups():
+            st.html('<div class="m2-rail-label">' + html.escape(group["label"]) + "</div>")
+            for v in dash_nav.group_views(group["id"]):
+                st.button(v["label"], key=f"m2_nav_{v['id']}", on_click=_go, args=(v["id"],), type="tertiary")
         st.html(
             _watchlist_html(watchlist)
             + '<div class="m2-rail-foot"><span class="avatar">' + html.escape(branding.display_initials()) + "</span>"
@@ -476,12 +440,19 @@ def _render_rail(active: str, watchlist=None) -> None:
 
 
 def _render_tabbar() -> None:
+    # The phone/tablet tab bar (≤980px): five entries, icon over a short label,
+    # nav.json's tabbar.native. The other read-only views are one tap further,
+    # through Portfolio's own menu.
     with st.container(key="m2_tabbar"):
-        for key, label in _TABBAR:
-            st.button(label, key=f"m2_tab_{key}", on_click=_go, args=(key,), type="tertiary")
+        for v in dash_nav.tabbar("native"):
+            st.button(v["short"], key=f"m2_tab_{v['id']}", on_click=_go, args=(v["id"],), type="tertiary")
 
 
-def inject_shell(active: str, title: str, subtitle: str, watchlist=None) -> None:
+def inject_shell(active: str, watchlist=None) -> None:
+    """Rail, tab bar, theme and the page heading. The heading is the view's
+    nav.json label and subtitle, as the front end's own panes use theirs."""
+    meta = dash_nav.view(active)
+    title, subtitle = meta["label"], meta["subtitle"]
     st.markdown(f"<style>{page_css(active)}</style>", unsafe_allow_html=True)
     # Apply the dashboard's saved light/dark theme to this native page. Scripts
     # in st.markdown are stripped, so a tiny same-origin iframe sets data-theme
@@ -606,7 +577,7 @@ DRAFT = {"on_change": "ignore", "persist_state": "session"}
 
 
 def render_manage(get_conn, put_conn, watchlist=None) -> None:
-    inject_shell("manage", "Manage", "Record trades, cash, alerts and settings — writes straight to the ledger", watchlist)
+    inject_shell("manage", watchlist)
     unlocked = render_gate()
     _show_flash()
 
@@ -1395,7 +1366,7 @@ def _render_brief_job() -> None:
 
 
 def render_advisor(get_conn, put_conn, watchlist=None) -> None:
-    inject_shell("advisor", "Advisor", "Your model, reading your own rules against your live ledger", watchlist)
+    inject_shell("advisor", watchlist)
     unlocked = render_gate()
     _show_flash()
 
@@ -1630,12 +1601,7 @@ def render_health(get_conn, put_conn, watchlist=None) -> None:
     have stale, missing or self-contradictory data, and whether the price
     collector is alive. Read-only.
     """
-    inject_shell(
-        "health",
-        "Data Health",
-        "Which numbers you can trust, and exactly why not when you cannot",
-        watchlist,
-    )
+    inject_shell("health", watchlist)
 
     # The dashboard is launched from app/ (see streamlit_app.py), so the repo root is not on
     # sys.path and `app.mcp...` will not resolve. Add it here rather than
