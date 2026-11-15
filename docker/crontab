@@ -1,14 +1,17 @@
-# PortfolioDB scheduled jobs, run by supercronic in the `scheduler` service.
+# PortfolioDB collector jobs, run by supercronic in the `scheduler` service.
 #
-# Times are in the container's TZ (PORTFOLIODB_TZ, default UTC). Every job is
-# safe to run more often than needed:
+# Quote collection only. These jobs fetch third-party web pages (Yahoo), so
+# their container holds no API key at all: docker-compose.yml hands the
+# `scheduler` service an explicit allowlist instead of .env (audit O-3). The
+# jobs that call keyed APIs — the advisor brief and the Financial Datasets
+# enrichment — live in docker/crontab-llm and run in `scheduler-llm`. Do not
+# add a keyed job here: it would find no key, and the fix is not to give the
+# collector one. tools/tests/test_compose_overrides.py keeps the split.
 #
-#   * snapshot_prices.py exits immediately outside the configured market window
-#     (app/market_window.py — set it from the Settings page), so the every-5-
-#     minutes tick below does not need to know the window. Change the window in
-#     one place, not here.
-#   * advisor.py brief and fd_weekly_enrichment.py no-op or degrade cleanly
-#     without their API keys, so an install without keys logs and moves on.
+# Times are in the container's TZ (PORTFOLIODB_TZ, default UTC). snapshot_prices.py
+# exits immediately outside the configured market window (app/market_window.py
+# — set it from the Settings page), so the every-5-minutes tick below does not
+# need to know the window. Change the window in one place, not here.
 #
 # Working directory is /app/app so the bare imports resolve the way they do on
 # a host; supercronic logs each run's output to the container's stdout.
@@ -23,9 +26,3 @@
 # snapshot_runs, so Data Health and the MCP cutoff keep meaning "the portfolio's
 # prices" — see the comment in snapshot_prices.main.
 */15 * * * 0-5   cd /app/app && python snapshot_prices.py --benchmarks
-
-# Daily advisor brief, 07:00 on weekdays.
-0 7 * * 1-5   cd /app/app && python advisor.py brief --kind morning
-
-# Weekly fundamentals enrichment, Saturday 06:00 (cache-first, cheap).
-0 6 * * 6     cd /app/app && python fd_weekly_enrichment.py --profile weekly

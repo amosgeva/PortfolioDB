@@ -10,7 +10,7 @@ broker sync, manual cash entry).
 
 ```bash
 make init                      # .env with generated secrets
-make up                        # postgres + dashboard + scheduler
+make up                        # postgres + dashboard + both schedulers
 make schema
 make demo-seed                 # fictional data — never use your real ledger to develop
 make test                      # builds the image from your working tree, runs the fast suites in it
@@ -25,7 +25,10 @@ overlay).
 first (cached, so only changed layers rebuild) and runs the suites in that
 build. It runs them with a blank database password, so it never touches the
 stack's database even when one is running — the database-backed tests run in
-CI, and below.
+CI, and below. It runs in the dev overlay's `devtools` service (the
+Dockerfile's `dev` stage, the runtime image plus pip, which installs pytest);
+the services themselves, and every published image, are the `runtime` stage,
+which has no pip. CI also runs the suites inside `runtime`.
 
 **On Windows:** the Makefile assumes a POSIX shell — its recipes use `sed`,
 `base64`, `gzip` and `/dev/urandom` — so a `make.exe` alone will not run it.
@@ -230,11 +233,14 @@ one concern per PR where you can. CI runs both suites on Linux; a green run and
 a description of how you verified the change by hand is plenty.
 
 `main` is protected. A pull request merges only when it is up to date with
-`main` and these seven checks pass: `Test suites (no database)`, `Lint (ruff)`,
+`main` and these eight checks pass: `Test suites (no database)`, `Lint (ruff)`,
 `Test suites (live database)`, `Application image (build and self-test)`,
 `Windows runner (init, both PowerShell hosts)`, `Windows runner
-(backup/restore round trip)` and the front end's `Build check, lint, tests`. When `main` moves under your branch, merge it in
-rather than force-pushing.
+(backup/restore round trip)`, and the front end's `Build check, lint, tests`
+and `Browser integration (Streamlit + Postgres)`. The publish workflow calls
+the same CI and front-end workflows and waits for all of their jobs before it
+builds an image. When `main` moves under your branch, merge it in rather than
+force-pushing.
 
 ### Merging without publishing: `[skip publish]`
 

@@ -50,7 +50,7 @@ Anything written down for someone else to run should still use the portable
 form, because a reader on 5.1 gets a corrupt archive and no error.
 
 ```bash
-make up          # postgres + dashboard (:8501) + scheduler
+make up          # postgres + dashboard (:8501) + scheduler + scheduler-llm
 make schema      # create/refresh tables, then apply sql/migrations/* in order
 make demo-seed   # fictional portfolio, for a fresh install or a screenshot
 make ps          # service status
@@ -101,7 +101,7 @@ is installed (`tools/ruff.toml`, the rule set CI's `Lint (ruff)` job runs:
 `ruff check --config tools/ruff.toml .`), and both test suites.
 `git commit --no-verify` bypasses it for work in progress.
 
-`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the seven required checks: both test-suite jobs, `Lint (ruff)`, the image build, both Windows runner jobs and the front end's `Build check, lint, tests`. When `main` moves, merge it in rather than force-pushing.
+`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the eight required checks: `Test suites (no database)`, `Test suites (live database)`, `Lint (ruff)`, `Application image (build and self-test)`, `Windows runner (init, both PowerShell hosts)`, `Windows runner (backup/restore round trip)`, and the front end's `Build check, lint, tests` and `Browser integration (Streamlit + Postgres)`. Publishing waits on the same CI and front-end workflows. When `main` moves, merge it in rather than force-pushing.
 
 Every push to `main` publishes the image as `latest`. **Exception:** `[skip publish]` in the merge commit's message skips publishing that push; a version tag publishes regardless.
 
@@ -220,11 +220,18 @@ Two halves share one Streamlit session.
 ### Layers
 - `app/db.py` — psycopg2 connection + `fetch_all` / `execute` helpers. Everything in `app/` goes through this; the ad-hoc scripts at the repo root often open their own psycopg2 connections.
 - `app/` — long-lived CLIs and modules (engines, dashboard, reports).
-- Repo root — `Makefile` (the entry point for every command), `docker-compose.yml`, `docker/crontab`. Gitignored and host-specific: `run_*.ps1` / `setup_*.ps1` launchers and throwaway scripts under `archive/`. Prefer adding durable logic under `app/`.
+- Repo root — `Makefile` (the entry point for every command), `docker-compose.yml`, `docker/crontab` (collector) and `docker/crontab-llm` (brief, enrichment). Gitignored and host-specific: `run_*.ps1` / `setup_*.ps1` launchers and throwaway scripts under `archive/`. Prefer adding durable logic under `app/`.
 - `app/tests/` — pytest suite for everything importable from `app/` (engines, loader, reports, importer, dashboard payload); `app/mcp/tests/` for the MCP server, run from the repo root.
 
 ### Snapshot collection
-`snapshot_prices.py` selects symbols with open quantity (`ledger_inputs.open_symbols`, the one net quantity) OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`Ticker.info` only — `fast_info` is deliberately unused: its keys are camelCase, so the old `fi.get("last_price")` always returned `None` and every symbol fell through to `info` anyway, and it exposes neither bid/ask nor the trade timestamp the staleness guard needs), and inserts with `ON CONFLICT DO NOTHING`. It refuses a zero, negative or NaN price and stores Yahoo's out-of-hours `0.0` bid/ask as NULL; vendor-reported splits go to `corporate_actions` pending review. A run holds an advisory lock (a manual run and the scheduled one cannot overlap) and a whole-run deadline (`PORTFOLIODB_COLLECTOR_DEADLINE_S`). It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`.
+`snapshot_prices.py` selects symbols with open quantity (`ledger_inputs.open_symbols`, the one net quantity) OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`Ticker.info` only — `fast_info` is deliberately unused: its keys are camelCase, so the old `fi.get("last_price")` always returned `None` and every symbol fell through to `info` anyway, and it exposes neither bid/ask nor the trade timestamp the staleness guard needs), and inserts with `ON CONFLICT DO NOTHING`. It refuses a zero, negative or NaN price and stores Yahoo's out-of-hours `0.0` bid/ask as NULL; vendor-reported splits go to `corporate_actions` pending review. A run holds an advisory lock (a manual run and the scheduled one cannot overlap) and a whole-run deadline (`PORTFOLIODB_COLLECTOR_DEADLINE_S`). It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`. That service receives an env allowlist instead of `.env`, so it holds no API key. Keyed jobs (the brief, the Financial Datasets enrichment) go in `docker/crontab-llm`. The `scheduler-llm` service runs them with `.env`. When the collector starts reading a new setting, add it to the service's `environment:` in `docker-compose.yml`. Add it to `COLLECTOR_ALLOWLIST` in `tools/tests/test_compose_overrides.py` too.
+
+### Image stages
+`app/Dockerfile` has three stages: `base`, then `dev` (keeps pip), then `runtime` (pip removed).
+`runtime` is the last stage, so it is the default target.
+Every service and every published image runs `runtime`.
+`make lock` and `make test` use the dev overlay's `devtools` service, which builds `dev`.
+A running container has no pip by design. To add a package, edit `app/requirements.txt` and run `make lock`.
 
 ## Conventions
 

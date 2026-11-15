@@ -1,0 +1,20 @@
+# PortfolioDB keyed jobs, run by supercronic in the `scheduler-llm` service.
+#
+# The two scheduled jobs that call an API with a key: the advisor brief (the
+# configured LLM provider) and the weekly enrichment (Financial Datasets). Their
+# container receives .env like the dashboard does, minus the secrets that belong
+# to other processes (docker-compose.yml, x-not-mine). Quote collection is NOT
+# here: it runs in `scheduler`, from docker/crontab, with no key in its
+# environment (audit O-3), so the process that parses third-party web pages and
+# the process that holds the LLM and vendor keys are different containers.
+#
+# Both jobs no-op or degrade cleanly without their API keys, so an install
+# without keys logs and moves on. Times are in the container's TZ
+# (PORTFOLIODB_TZ, default UTC). Working directory is /app/app so the bare
+# imports resolve the way they do on a host.
+
+# Daily advisor brief, 07:00 on weekdays.
+0 7 * * 1-5   cd /app/app && python advisor.py brief --kind morning
+
+# Weekly fundamentals enrichment, Saturday 06:00 (cache-first, cheap).
+0 6 * * 6     cd /app/app && python fd_weekly_enrichment.py --profile weekly
