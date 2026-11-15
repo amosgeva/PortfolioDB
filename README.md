@@ -448,7 +448,7 @@ without `make`. Running the Python on the host also works: install
 Four core tables, all append-only:
 
 - **`instruments`** — symbol registry. `watchlist=TRUE` keeps a symbol in the snapshot rotation even when no lots are open.
-- **`lots`** — every BUY/SELL trade. `side` + positive `quantity` encode direction; a unique index on `(symbol, account, trade_date, quantity, price)` is a best-effort dedupe guard for CSV imports.
+- **`lots`** — every BUY/SELL trade. `side` + positive `quantity` encode direction; a unique index on `(symbol, account, side, trade_date, quantity, price)` is a best-effort dedupe guard; every writer reports a refused duplicate instead of claiming success.
 - **`price_snapshots`** — time-series quotes, PK `(symbol, ts)`.
 - **`cash_snapshots`** — manual cash balances per account (no broker auto-pull). Latest row per `account` wins.
 
@@ -461,8 +461,8 @@ There is **no positions table.** Recomputing from `lots` on every read is the de
 ## Conventions
 
 - Monetary math uses `Decimal` end-to-end inside the engines. `float` is only used at the display layer.
-- Symbols are stored and compared uppercase; CLIs uppercase user input before querying.
-- BUY fees inflate cost basis; SELL fees reduce proceeds. Shorts are not supported — a SELL exceeding open BUYs logs a warning and is truncated.
+- Symbols are stored and compared uppercase, and must look like a symbol (`symbol_paths.normalize_symbol`, enforced by the database too); every writer validates before inserting.
+- BUY fees inflate cost basis; SELL fees reduce proceeds. Within a trade date, buys are processed before sells. Shorts are not supported — a SELL exceeding open BUYs logs a warning and is truncated.
 - Matching is scoped to `(symbol, account)`; cross-account fungibility is intentional only at the merge step in `portfolio.compute_fifo_merged`.
 
 ---

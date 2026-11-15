@@ -8,6 +8,7 @@ Rules:
 - FIFO matching is done **within (symbol, account)**.
 - Buy lot fees increase cost basis; sell lot fees reduce proceeds.
 - Quantities are positive in DB; side indicates direction.
+- Within a trade date, buys are matched before sells (ledger_core.processing_key).
 
 This is intentionally implemented in Python (not SQL) for clarity and future extension.
 """
@@ -19,39 +20,11 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+# The shared lot and its processing order (see ledger_core). `Lot` is
+# re-exported so `from fifo import Lot` keeps working.
+from ledger_core import Lot, lot_order_key
 
-@dataclass
-class Lot:
-    id: int
-    symbol: str
-    account: str | None
-    side: str  # BUY/SELL
-    trade_date: date
-    quantity: Decimal
-    price: Decimal
-    fees: Decimal
-
-    @property
-    def per_share_cost(self) -> Decimal:
-        # For BUY: (price*qty + fees)/qty; For SELL proceeds: (price*qty - fees)/qty
-        if self.quantity == 0:
-            return Decimal("0")
-        gross = self.price * self.quantity
-        if self.side.upper() == "BUY":
-            return (gross + self.fees) / self.quantity
-        else:
-            return (gross - self.fees) / self.quantity
-
-    @property
-    def per_share_fee(self) -> Decimal:
-        """Fee attributable to one share of this lot.
-
-        Lets a partial match take its proportional share of the fee: matching 4
-        of a 10-share lot that cost $5 in fees carries $2, not $5 and not $0.
-        """
-        if self.quantity == 0:
-            return Decimal("0")
-        return self.fees / self.quantity
+__all__ = ["Lot", "OpenBuy", "MatchLine", "FifoResult", "run_fifo"]
 
 
 @dataclass
@@ -127,8 +100,9 @@ class FifoResult:
 def run_fifo(lots: list[Lot]) -> FifoResult:
     """Run FIFO for a single (symbol, account) stream of lots."""
 
-    # Sort deterministically
-    lots_sorted = sorted(lots, key=lambda l: (l.trade_date, l.id))
+    # Date, then every BUY before any SELL that day, then id — so a same-day
+    # sale stored before its purchase still finds it (audit F-1).
+    lots_sorted = sorted(lots, key=lot_order_key)
 
     open_buys: deque[OpenBuy] = deque()
     matches: list[MatchLine] = []

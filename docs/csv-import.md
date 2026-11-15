@@ -125,7 +125,9 @@ The ledger is per-account, and CSV exports rarely carry an account column, so:
 
 - `--default-account NAME` (required) is used for every lot, unless
 - `--tagged-accounts A,B` is given, in which case a lot whose `Comment`
-  mentions one of those names (case-insensitive substring) is assigned to it.
+  names one of them **as a whole word** (case-insensitive; `IRA` matches
+  "Roth IRA" and "IRA-2" but not "SMALLIRA") is assigned to it. The first tag
+  in the list that matches wins.
 
 ```bash
 # lots whose Comment mentions "IBKR" land in IBKR; everything else in BrokerA
@@ -137,16 +139,34 @@ Accounts are free-form labels — call them whatever your statements call them.
 ## Duplicates
 
 Safe to re-run. Lots collide on the unique index
-`(symbol, account, trade_date, quantity, price)` and snapshots on the primary
-key `(symbol, ts)`; both insert with `ON CONFLICT DO NOTHING`.
+`(symbol, account, side, trade_date, quantity, price)` and snapshots on the
+primary key `(symbol, ts)`; both insert with `ON CONFLICT DO NOTHING`. Every
+row the index refuses is listed with its line — `trades.csv:14 | NVDA BUY 10 @
+184 on 2026-02-13 (IBKR): already recorded, not written again` — so a re-import
+says exactly what it skipped.
 
-The consequence worth knowing: **two genuinely separate fills of the same size
-at the same price on the same day in the same account import as one lot.** It's
-the same trade-off the manual `add-lot` path has. Split the quantity or add a
-distinguishing `Comment` if you need both rows.
+**Two identical rows in the same file** (same symbol, account, side, date,
+quantity and price) are usually two fills at one price, and the index would
+keep only one of them. Such a file is refused, naming both lines. Combine the
+rows yourself (summed quantity and commission), or pass
+`--combine-identical-fills` to have the importer record them as one lot — which
+FIFO treats exactly as two.
 
-The summary tells the two apart: `inserted` is new rows, `already present` is
-rows the index recognised and skipped.
+## What a row must look like
+
+Checked for every row before anything is written:
+
+- **Symbol** — 1–32 characters: A–Z, 0–9 and `. - = ^ _`, starting with a
+  letter, a digit or `^` (lowercase is uppercased). The database enforces the
+  same rule.
+- **USD only** — a symbol with a non-US exchange suffix (`.TA`, `.L`, `.HK`,
+  `.TO` …) is refused unless `--allow-non-usd`: the ledger has no FX
+  conversion and would sum its local price as dollars.
+- **Numbers** — finite, the right sign, at most 8 decimal places (more would be
+  rounded silently by the database, so they are refused).
+- **Date/Time** — `EST`, `EDT`, `UTC`/`GMT`, a numeric offset, or no token (New
+  York). Any other token is an error rather than a guess.
+- **Current Price** — a blank, zero or negative price is not a snapshot.
 
 ## Errors, transactions and exit codes
 

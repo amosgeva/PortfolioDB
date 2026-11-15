@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+import holdings
 import ledger_inputs
 import portfolio_kpis as kpis
 from fifo import Lot, run_fifo
@@ -68,13 +69,8 @@ def restate_latest(ledger: ledger_inputs.PreparedLedger, latest: dict[str, dict]
 
 
 def holdings_at_date(lot_rows: list[dict], as_of: date) -> dict[str, float]:
-    qty: dict[str, float] = defaultdict(float)
-    for r in lot_rows:
-        if r["trade_date"] > as_of:
-            continue
-        sign = 1 if r["side"].upper() == "BUY" else -1
-        qty[r["symbol"]] += sign * float(r["quantity"])
-    return {s: q for s, q in qty.items() if q > 1e-9}
+    # The one net-quantity implementation, engine rules (audit R-1, F-1).
+    return {s: float(q) for s, q in holdings.open_quantities(lot_rows, as_of=as_of).items() if q > 0}
 
 
 def build_equity_curve(lot_rows, eod_by_day) -> pd.DataFrame:
@@ -318,10 +314,9 @@ def account_allocation(lot_rows: list[dict], latest: dict[str, dict], cash_by_ac
     acct_alloc = pd.DataFrame()
     if lot_rows:
         per_acct: dict[tuple[str, str], float] = defaultdict(float)
-        for r in lot_rows:
-            sign = 1 if r["side"].upper() == "BUY" else -1
-            acct = r["account"] or "(none)"
-            per_acct[(acct, r["symbol"])] += sign * float(r["quantity"])
+        # Per (symbol, account) by the engines' rules (audit R-1, F-1).
+        for (sym, account), q in holdings.net_quantities(lot_rows).items():
+            per_acct[(account or "(none)", sym)] += float(q)
         acct_value: dict[str, float] = defaultdict(float)
         for (acct, sym), q in per_acct.items():
             if q <= 1e-9:

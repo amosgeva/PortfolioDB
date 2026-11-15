@@ -20,6 +20,8 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 import fd_store
+import ledger_inputs
+import symbol_paths
 from db import connect, fetch_all, load_config
 
 BASE_URL = "https://api.financialdatasets.ai"
@@ -85,7 +87,13 @@ def _resolve_api_key() -> str | None:
 
 
 def cache_path(symbol: str, section: str) -> Path:
-    return CACHE_DIR / symbol.upper() / f"{section}.json"
+    """``CACHE_DIR/<SYMBOL>/<section>.json``. The symbol becomes a directory
+    name, so it must pass the same allowlist as every other symbol-derived
+    path (audit A-8): ``--symbols ../../x`` used to write outside the cache."""
+    sym = symbol_paths.normalize_symbol(symbol)
+    if section not in ENDPOINTS:
+        raise ValueError(f"unknown section {section!r}")
+    return CACHE_DIR / sym / f"{section}.json"
 
 
 def read_cache(symbol: str, section: str) -> tuple[dict[str, Any] | None, bool]:
@@ -114,25 +122,25 @@ def write_cache(symbol: str, section: str, data: dict[str, Any]) -> None:
 
 
 def active_symbols_from_db() -> list[str]:
+    """Symbols with an open position, by the engines' rules (audit R-1)."""
     cfg = load_config()
-    with connect(cfg) as conn:
-        rows = fetch_all(
-            conn,
-            """
-            SELECT symbol
-            FROM lots
-            GROUP BY symbol
-            HAVING SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) > 0.0000001
-            ORDER BY symbol
-            """,
-        )
-    return [r["symbol"].upper() for r in rows]
+    conn = connect(cfg)
+    try:
+        return sorted(ledger_inputs.open_symbols(conn))
+    finally:
+        conn.close()
 
 
 def top_movers_from_db(limit: int = 3) -> list[str]:
-    """Return biggest absolute movers between the last two snapshot timestamps."""
+    """Return biggest absolute movers between the last two snapshot timestamps.
+
+    Quantities come from the prepared ledger by the engines' rules, and both
+    quotes are restated with the same actions, so a split between the two
+    snapshots is not a mover (audit R-1).
+    """
     cfg = load_config()
-    with connect(cfg) as conn:
+    conn = connect(cfg)
+    try:
         ts_rows = fetch_all(
             conn,
             """
@@ -146,33 +154,28 @@ def top_movers_from_db(limit: int = 3) -> list[str]:
             return []
         latest_ts = ts_rows[0]["ts"]
         prev_ts = ts_rows[1]["ts"]
+        ledger = ledger_inputs.load(conn)
         rows = fetch_all(
             conn,
-            """
-            WITH active AS (
-                SELECT symbol, SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) AS qty
-                FROM lots
-                GROUP BY symbol
-                HAVING SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) > 0.0000001
-            ), latest AS (
-                SELECT symbol, last_price FROM price_snapshots WHERE ts=%s
-            ), prev AS (
-                SELECT symbol, last_price FROM price_snapshots WHERE ts=%s
-            )
-            SELECT active.symbol,
-                   active.qty * (latest.last_price - prev.last_price) AS dollar_move,
-                   CASE WHEN prev.last_price > 0
-                        THEN ((latest.last_price / prev.last_price) - 1) * 100
-                        ELSE 0 END AS pct_move
-            FROM active
-            JOIN latest ON latest.symbol = active.symbol
-            JOIN prev ON prev.symbol = active.symbol
-            ORDER BY ABS(active.qty * (latest.last_price - prev.last_price)) DESC
-            LIMIT %s
-            """,
-            (latest_ts, prev_ts, limit),
+            "SELECT ts, symbol, last_price FROM price_snapshots WHERE ts IN (%s, %s) AND last_price > 0",
+            (latest_ts, prev_ts),
         )
-    return [r["symbol"].upper() for r in rows]
+    finally:
+        conn.close()
+
+    from holdings import open_quantities
+
+    qty = open_quantities(ledger.lots)
+    restated = ledger.price_rows(rows)
+    latest = {r["symbol"]: float(r["last_price"]) for r in restated if r["ts"] == latest_ts}
+    prev = {r["symbol"]: float(r["last_price"]) for r in restated if r["ts"] == prev_ts}
+    moves = [
+        (abs(float(q) * (latest[s] - prev[s])), s)
+        for s, q in qty.items()
+        if q > 0 and s in latest and s in prev
+    ]
+    moves.sort(key=lambda m: (-m[0], m[1]))
+    return [s.upper() for _, s in moves[:limit]]
 
 
 # Transient failures worth retrying: rate limit + server-side errors.
@@ -352,7 +355,14 @@ def main() -> int:
     parser.add_argument("--no-persist", action="store_true", help="Skip writing parsed sections into the fd_* DB tables.")
     args = parser.parse_args()
 
-    symbols = [s.strip().upper() for s in args.symbols.split(",")] if args.symbols else active_symbols_from_db()
+    if args.symbols:
+        try:
+            symbols = [symbol_paths.normalize_symbol(s) for s in args.symbols.split(",") if s.strip()]
+        except ValueError as e:
+            print(f"--symbols: {e}")
+            return 2
+    else:
+        symbols = active_symbols_from_db()
     symbols = [s for s in symbols if s]
     if args.max_symbols:
         symbols = symbols[: args.max_symbols]
