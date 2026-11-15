@@ -79,7 +79,13 @@ def main() -> int:
     finally:
         conn.close()
 
-    print("Read-only role ready. Add these to .env, then `make restart`:\n")
+    # `make restart` recreates the dashboard and schedulers, not the MCP; the
+    # MCP is the one process that needs these lines.
+    print(
+        "Read-only role ready. Put these in .env, then restart the MCP server "
+        "(`make mcp` recreates its container; restart a host-run server "
+        "yourself):\n"
+    )
     print("PORTFOLIODB_MCP_RO_USER=portfoliodb_ro")
     print(f"PORTFOLIODB_MCP_RO_PASSWORD={password}")
     return 0

@@ -174,7 +174,7 @@ demo-seed: ## Load a fictional portfolio so a fresh install has something to sho
 	$(RUN) python app/demo_seed.py --yes $(ARGS)
 
 ro-role: ## Create the read-only role for the MCP server (PASSWORD= optional)
-	$(RUN) python app/create_ro_role.py $(if $(PASSWORD),--password $(PASSWORD),--generate)
+	$(RUN) python app/create_ro_role.py $(if $(PASSWORD),--password=$(PASSWORD),--generate)
 
 # ── backup / restore ─────────────────────────────────────────────────────
 

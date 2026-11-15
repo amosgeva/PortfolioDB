@@ -20,14 +20,14 @@ needs a schema step says so under **Upgrading**.
 
 The release that answers an independent audit of 1.7.6/1.7.7: security,
 correctness, the two halves of the dashboard, the MCP server, CI and supply
-chain, operations and documentation, worked through in eleven reviewed pull
-requests (#121–#136). Figures that were wrong are now right — total return,
+chain, operations and documentation, worked through in reviewed pull requests
+#121–#137. Figures that were wrong are now right — total return,
 unpriced positions, same-day trades, splits, stale quotes, foreign currency —
 and several are computed differently, so read **Changed — figures computed
 differently** below before comparing numbers with 1.7.x.
 
-**Upgrading — the short list** (each item is explained in the section it
-links to below):
+**Upgrading — the short list** (the **Upgrading** paragraphs further down
+explain each item in detail):
 
 1. **Back up first** (`make backup` / `.\pdb.ps1 backup`). This release adds
    migrations 004–007.
@@ -39,9 +39,13 @@ links to below):
    every migration in `schema_migrations` and lists any collector-recorded split
    still awaiting review. Migration 007 refuses, and lists the rows, if an
    account is named `(none)`; rename it and re-run.
-4. **Re-run `make ro-role`** (or
-   `python app/create_ro_role.py --password=<current>`), so the read-only MCP
-   role gets its narrowed grant list, including `settings`.
+4. **Re-run the read-only role script, keeping its current password:**
+   `make ro-role PASSWORD=<current>` (or
+   `python app/create_ro_role.py --password=<current>`). It narrows the role's
+   grants and adds `settings`. Then restart the MCP so it reconnects: `make mcp`
+   (compose recreates the container), or restart a host-run server yourself.
+   Without `PASSWORD`, `make ro-role` generates a *new* password: copy the two
+   lines it prints into `.env` before restarting the MCP.
 5. **Check the MCP:** its token must be at least 32 characters, and LAN clients
    need `PORTFOLIODB_MCP_ALLOWED_HOSTS`.
 6. **Ports are loopback-only now.** If you reach the dashboard or Postgres from
@@ -118,9 +122,9 @@ links to below):
   password. The CLIs and the scheduler do not use it.
 - Apply `sql/migrations/006_price_alerts_and_lot_audit.sql` (`make schema`
   does it, and records it in `schema_migrations`). It adds two tables,
-  `price_alerts` and `lot_deletions`; nothing existing changes. The schema
-  version is now 0.6 (`sql/schema.sql` header and the MCP's
-  `schema_version`).
+  `price_alerts` and `lot_deletions`; nothing existing changes. It took the
+  schema to 0.6; migration 007 (below) then makes the 1.8.0 schema **0.7**
+  (`sql/schema.sql` header and the MCP's `schema_version`).
 - If a launcher of yours sets `STREAMLIT_THEME_*` variables, you can drop
   them: the theme now ships in `app/.streamlit/config.toml`, and an
   environment variable still overrides it.
@@ -319,14 +323,17 @@ links to below):
   container's loopback).
 - Environment scoping (audit O-3): the dashboard and scheduler no longer receive
   the MCP token and role password or pgAdmin's login; the scheduler also does
-  not receive the dashboard password. The scheduler keeps the LLM and Financial
-  Datasets keys its jobs use. The MCP server now receives `PORTFOLIODB_TZ`.
+  not receive the dashboard password. The price-collector `scheduler` gets no
+  API keys at all; the jobs that need the LLM and Financial Datasets keys run in
+  the separate `scheduler-llm` service (see **Upgrading (two schedulers, a
+  runtime image without pip)**). The MCP server now receives `PORTFOLIODB_TZ`.
 - The image installs its Python packages from `app/requirements.lock` with
   `--require-hashes` (audit O-2): pip refuses any wheel whose sha256 differs from
   the recorded one. `make lock` regenerates the lock and its hashes together.
   The Dockerfile now runs `apt-get upgrade`, replacing the hand-maintained
-  `zlib1g` line. pip stays in the runtime image: `make lock`, `make test` and
-  CI's lock check all run it there.
+  `zlib1g` line. The runtime image the services run has no pip; `make lock`,
+  `make test` and CI's lock check use the separate `dev` build stage (the
+  `devtools` service), which keeps it.
 - `publish.yml` (audit C-1, C-5): both architectures are scanned with Trivy
   *before* anything is pushed, so an image with a fixable HIGH/CRITICAL finding
   is never published; published images carry an SBOM and SLSA provenance, a
@@ -718,9 +725,11 @@ links to below):
 
 **Upgrading (MCP)**
 
-- Re-run `make ro-role` (or `python app/create_ro_role.py --password <current>`
-  to keep the password): it narrows the grants and adds `settings`, which the
-  MCP now needs for the timezone and the one-pager.
+- Re-run the role script keeping the password — `make ro-role PASSWORD=<current>`
+  or `python app/create_ro_role.py --password=<current>` (the `=` form also
+  works for an older password that starts with `-`) — then restart the MCP: it
+  narrows the grants and adds `settings`, which the MCP now needs for the
+  timezone and the one-pager.
 - If other machines reach the MCP, set `PORTFOLIODB_MCP_ALLOWED_HOSTS` to the
   names/addresses they use, or they get 421.
 - A `PORTFOLIODB_MCP_TOKEN` under 32 characters now refuses to start;
