@@ -278,8 +278,10 @@ def _pre_trade_check(
     pos = next((p for p in positions if p["symbol"] == sym), None)
 
     if price is None:
+        # In the units the position is held in: a quote older than a recorded
+        # split is restated, or the trade is priced at the pre-split level.
         latest = prices_service.latest_price(sym)
-        price = latest["last_price"] if latest else None
+        price = latest["split_adjusted_last_price"] if latest else None
 
     existing = _existing_position(pos)
     after = _after_trade(side_u, qty, price, existing)

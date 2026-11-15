@@ -215,6 +215,20 @@ def _read_frame(engine, account, effective_as_of, cutoff):
     return merged, latest, actions
 
 
+def _as_datetime(ts) -> datetime | None:
+    """A quote timestamp as a datetime: the latest-price map hands one over,
+    and an ISO string (as a serialised record carries) is parsed rather than
+    silently skipping the restatement."""
+    if isinstance(ts, datetime):
+        return ts
+    if isinstance(ts, str) and ts:
+        try:
+            return datetime.fromisoformat(ts)
+        except ValueError:
+            return None
+    return None
+
+
 def _finish_frame(merged, latest, actions, key):
     # A quote is in the units of the moment it was observed. The latest quote
     # at or before the cutoff is normally after every applicable action and
@@ -223,9 +237,9 @@ def _finish_frame(merged, latest, actions, key):
     # shares. Restate it with the actions that lie between it and the cutoff.
     if actions:
         stamped = [
-            (v["ts"], sym, float(v["last_price"]))
+            (_as_datetime(v["ts"]), sym, float(v["last_price"]))
             for sym, v in latest.items()
-            if v.get("last_price") is not None and isinstance(v.get("ts"), datetime)
+            if v.get("last_price") is not None and _as_datetime(v.get("ts")) is not None
         ]
         for _ts, sym, price in corporate_actions.adjust_price_points(stamped, actions):
             latest[sym] = {**latest[sym], "last_price": price}
