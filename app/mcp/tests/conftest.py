@@ -66,13 +66,52 @@ def env_token(monkeypatch):
     return TEST_TOKEN
 
 
-class FakeCursor:
-    """Minimal psycopg2-cursor shim for tests."""
+def render_sql(query) -> str:
+    """The text of a str or psycopg2.sql composition, without a connection.
 
-    def __init__(self, rows: list[tuple], columns: list[str]):
+    psycopg2's own as_string() needs a live connection to quote identifiers;
+    the fake has none, so the composition is walked here.
+    """
+    from psycopg2 import sql as pgsql
+
+    if isinstance(query, str):
+        return query
+    if isinstance(query, pgsql.Composed):
+        return "".join(render_sql(part) for part in query.seq)
+    if isinstance(query, pgsql.SQL):
+        return query.string
+    if isinstance(query, pgsql.Identifier):
+        return ".".join('"' + s.replace('"', '""') + '"' for s in query.strings)
+    if isinstance(query, pgsql.Placeholder):
+        return "%s" if query.name is None else f"%({query.name})s"
+    return str(query)
+
+
+def _placeholder_count(text: str) -> int:
+    """Positional %s placeholders, ignoring the %% escape."""
+    return text.replace("%%", "").count("%s")
+
+
+class FakeCursor:
+    """Minimal psycopg2-cursor shim for tests.
+
+    It used to discard the statement and replay rows by position, so a test
+    could not tell a right query from a wrong one (audit T-3). It now:
+
+    * records every statement and its parameters in ``state["executed"]``;
+    * checks that the number of ``%s`` placeholders matches the parameters
+      passed, which is how a dropped or extra filter usually shows up;
+    * when a queued response carries a third element — a substring, or a
+      tuple of substrings — asserts the statement it answers contains them.
+    """
+
+    def __init__(self, rows: list[tuple], columns: list[str], state: dict | None = None,
+                 expect=None):
         self._rows = rows
         self._columns = columns
         self._iter = None
+        self._state = state
+        self._expect = expect
 
     def __enter__(self):
         return self
@@ -80,7 +119,18 @@ class FakeCursor:
     def __exit__(self, *_):
         return False
 
-    def execute(self, sql: str, params=None):
+    def execute(self, sql, params=None):
+        text = render_sql(sql)
+        if self._state is not None:
+            self._state.setdefault("executed", []).append((text, params))
+        if params is not None and not isinstance(params, dict):
+            assert _placeholder_count(text) == len(params), (
+                f"{_placeholder_count(text)} placeholders but {len(params)} parameters in:\n{text}"
+            )
+        if self._expect:
+            wanted = (self._expect,) if isinstance(self._expect, str) else self._expect
+            for fragment in wanted:
+                assert fragment in text, f"expected {fragment!r} in:\n{text}"
         self._iter = iter(self._rows)
 
     def fetchone(self):
@@ -113,11 +163,17 @@ class FakeConn:
         responses = self._state["responses"]
         idx = self._state["idx"]
         if idx >= len(responses):
-            cols, rows = responses[-1] if self._state["cycle"] and responses else ([], [])
+            entry = responses[-1] if self._state["cycle"] and responses else ([], [])
         else:
-            cols, rows = responses[idx]
+            entry = responses[idx]
             self._state["idx"] = idx + 1
-        return FakeCursor(rows, cols)
+        cols, rows = entry[0], entry[1]
+        expect = entry[2] if len(entry) > 2 else None
+        factory = __.get("cursor_factory") or (_[0] if _ else None)
+        if factory is not None and getattr(factory, "__name__", "") == "RealDictCursor":
+            # db.fetch_all asks for dict rows; give it what psycopg2 would.
+            rows = [dict(zip(cols, r)) for r in rows]
+        return FakeCursor(rows, cols, self._state, expect)
 
     def commit(self):
         pass
@@ -213,7 +269,10 @@ def fake_db(monkeypatch):
         state["responses"] = responses
         state["cycle"] = cycle
         state["idx"] = 0
+        state["executed"] = []
 
+    # The statements run so far, for tests that assert on the SQL itself.
+    setter.executed = lambda: list(state.get("executed", []))
     return setter
 
 

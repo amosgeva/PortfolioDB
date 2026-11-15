@@ -27,13 +27,12 @@ if str(_APP_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_APP_DIR.parent))
 
 from fastmcp import FastMCP
-from starlette.middleware import Middleware as ASGIMiddleware
 
 from app.mcp import healthz
 from app.mcp.auth import build_verifier
 from app.mcp.deps import close_pool, init_pool
 from app.mcp.errors import ClientSafeErrors
-from app.mcp.ratelimit import FailedAuthLimiter
+from app.mcp.transport import build_asgi
 from app.mcp.resources import conventions as conventions_resource
 from app.mcp.prompts import prompts as prompts_module
 from app.mcp.resources import kpis_today as kpis_today_resource
@@ -159,41 +158,9 @@ def _shutdown() -> None:
     close_pool()
 
 
-ALLOWED_HOSTS_ENV = "PORTFOLIODB_MCP_ALLOWED_HOSTS"
-
-
-def allowed_hosts() -> list[str]:
-    """Extra Host-header values to accept, from PORTFOLIODB_MCP_ALLOWED_HOSTS.
-
-    Always an explicit list — empty by default — because an explicit list is
-    what makes FastMCP validate the Host header on *every* request. Left
-    unset, its guard only checks requests that arrive on a loopback socket;
-    inside the compose container the server binds 0.0.0.0, so the guard was
-    off and /healthz was reachable by DNS rebinding (audit M-12). With the
-    list, loopback names (localhost, 127.0.0.1, ::1) are accepted, as is the
-    exact bind address when it is not a wildcard, and anything else gets 421.
-
-    To serve other machines, name them: e.g.
-    ``PORTFOLIODB_MCP_ALLOWED_HOSTS=192.168.1.20,nas.lan``. ``*`` accepts any
-    Host (the old behaviour) and is an explicit opt-out.
-    """
-    raw = os.getenv(ALLOWED_HOSTS_ENV, "")
-    return [h.strip() for h in raw.split(",") if h.strip()]
-
-
-def build_asgi(server: FastMCP):
-    """The Starlette app uvicorn serves: the MCP transport at /mcp/, /healthz,
-    the Host/Origin guard with an explicit allowlist, and the failed-auth
-    throttle in front of the token check."""
-    return server.http_app(
-        transport="streamable-http",
-        allowed_hosts=allowed_hosts(),
-        middleware=[ASGIMiddleware(FailedAuthLimiter)],
-    )
-
-
-# Streamable HTTP transport at /mcp/. FastMCP returns a Starlette ASGI app
-# the uvicorn launcher can hand to its server.
+# Streamable HTTP transport at /mcp/, behind the host guard and the auth
+# throttle (app/mcp/transport.py). FastMCP returns a Starlette ASGI app the
+# uvicorn launcher can hand to its server.
 asgi = build_asgi(mcp_server)
 
 
