@@ -130,14 +130,32 @@ def test_make_test_builds_the_working_tree_and_never_reaches_the_database(sandbo
     """Audit C-4: `make test` ran the published image, so it never saw an edit."""
     _, calls = _make(sandbox, "test")
     build, run = calls
-    assert build[-2:] == ["build", "dashboard"]
+    assert build[-2:] == ["build", "devtools"], "the tooling target (pip included) is the devtools service"
     assert "docker-compose.dev.yml" in build, "the build must use the dev overlay (build from source)"
     assert "docker-compose.dev.yml" in run, "the run must use the image just built"
-    assert "run" in run
+    for call in (build, run):
+        assert call[call.index("--profile") + 1] == "devtools", "devtools sits behind a profile"
+    assert "run" in run and "devtools" in run
     assert "--no-deps" in run, "make test must not start (or need) the stack's postgres"
     assert run[run.index("-e") + 1] == "PORTFOLIODB_PASSWORD=", (
         "a blank password is what makes every database-backed test skip"
     )
+
+
+def test_make_lock_freezes_the_dev_target_not_the_runtime(sandbox):
+    """Audit O-2: the runtime image has no pip, so it cannot be frozen; the lock
+    is regenerated in the devtools service (the Dockerfile's `dev` stage)."""
+    (sandbox / "app").mkdir()
+    (sandbox / "app" / "constraints.txt").write_text("# header\npip==1\n", encoding="utf-8")
+    _, calls = _make(sandbox, "lock")
+    assert calls, "make lock ran no compose command"
+    for call in calls:
+        assert "docker-compose.dev.yml" in call
+        assert call[call.index("--profile") + 1] == "devtools"
+        assert "devtools" in call[call.index("--profile") + 2:], call
+        assert "dashboard" not in call, f"make lock still uses the runtime service: {call}"
+    assert calls[0][-3:] == ["--build-arg", "PIP_LOCK=refresh", "devtools"]
+    assert any(c[-4:] == ["pip", "freeze", "--all", "--exclude-editable"] for c in calls)
 
 
 # ── init: the dashboard password ─────────────────────────────────────────────

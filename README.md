@@ -108,8 +108,9 @@ random-walk prices, not anyone's holdings.</sub>
 ## Stack
 
 - **Postgres 16** in Docker; the database lives in a named volume (`pgdata`)
-- **One application image** for every service — dashboard (Streamlit), scheduler
-  (supercronic), MCP server (uvicorn), and the CLIs
+- **One application image** for every service — dashboard (Streamlit), the two
+  schedulers (supercronic: the keyless price collector, and the brief and
+  enrichment jobs that hold API keys), MCP server (uvicorn), and the CLIs
 - Python 3.14 in the image; `psycopg2`, `pandas`, `yfinance`, `streamlit`,
   `plotly`, and whichever LLM SDK your provider needs
 - No cloud dependencies. Price data comes from yfinance; everything else is
@@ -394,8 +395,9 @@ PortfolioDB/
 │   │                          # snapshot_runs, chat_log, advisor_briefs
 │   └── schema_fd.sql          # Financial Datasets enrichment tables
 ├── Makefile                   # Entry point for every command (wraps compose)
-├── docker/crontab             # What the scheduler service runs
-├── docker-compose.yml         # postgres + dashboard + scheduler; mcp/pgadmin behind profiles
+├── docker/crontab             # What the scheduler (collector) service runs
+├── docker/crontab-llm         # What the scheduler-llm (brief, enrichment) service runs
+├── docker-compose.yml         # postgres + dashboard + both schedulers; mcp/pgadmin behind profiles
 ├── docker-compose.override.yml.example
 ├── philosophy.md.template     # Stub for the advisor's operator one-pager
 ├── .env.template

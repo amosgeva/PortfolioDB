@@ -71,6 +71,61 @@ _DEFAULT_MODEL = {
     "custom": "",
 }
 
+# Retirement watch for the defaults above. A vendor retires a model ID on its
+# own schedule, and an install that never set LLM_MODEL learns of it from a
+# failed brief. So each non-empty default is recorded here with the day it was
+# last checked against the vendor's catalogue, a review-by date at most 180
+# days later, the catalogue it was checked against, and the public listing that
+# can check it without a key. tools/check_default_models.py runs every week
+# (security-scan.yml, which opens a tracking issue when it fails) and fails when
+#   * a review-by date has passed (the date alone, so a provider with no
+#     public listing is still re-checked by a person), or
+#   * a public listing no longer has the ID, or lists it with an expiration
+#     date within the next 45 days.
+# The public listings are OpenRouter's /api/v1/models, which mirrors the
+# Anthropic and OpenAI catalogues and publishes `expiration_date` for models
+# being withdrawn, and the Ollama registry's manifest for a library model.
+# Anthropic's and OpenAI's own /v1/models require an API key, so they are not
+# used. tools/tests/test_default_models.py keeps this in step with
+# _DEFAULT_MODEL. To change a default: change both, re-check the vendor page,
+# and move `reviewed` / `review_by`. docs/llm-providers.md describes the check.
+#
+# A plain literal on purpose: the checker reads it with `ast`, without
+# importing this module (and its database and SDK dependencies).
+DEFAULT_MODEL_REVIEW = {
+    "anthropic": {
+        "model": "claude-sonnet-5",
+        "reviewed": "2026-11-15",
+        "review_by": "2027-02-15",
+        "source": "https://platform.claude.com/docs/en/models/sonnet-5/overview",
+        "listing": ("openrouter", "anthropic/claude-sonnet-5"),
+    },
+    "openai": {
+        "model": "gpt-5",
+        "reviewed": "2026-11-15",
+        # OpenAI lists gpt-5 as deprecated, and on 2026-11-15 OpenRouter
+        # listed openai/gpt-5 with expiration_date 2026-12-11: the default
+        # needs a successor before then.
+        "review_by": "2026-12-11",
+        "source": "https://developers.openai.com/api/docs/models/all",
+        "listing": ("openrouter", "openai/gpt-5"),
+    },
+    "openrouter": {
+        "model": "anthropic/claude-sonnet-5",
+        "reviewed": "2026-11-15",
+        "review_by": "2027-02-15",
+        "source": "https://openrouter.ai/anthropic/claude-sonnet-5",
+        "listing": ("openrouter", "anthropic/claude-sonnet-5"),
+    },
+    "ollama": {
+        "model": "llama3.3",
+        "reviewed": "2026-11-15",
+        "review_by": "2027-05-14",
+        "source": "https://ollama.com/library/llama3.3",
+        "listing": ("ollama", "llama3.3"),
+    },
+}
+
 _DEFAULT_BASE_URL = {
     # Written out rather than left to the SDK's default so the origin check in
     # _key_for_destination has something to compare against.

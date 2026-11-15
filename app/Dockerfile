@@ -8,6 +8,15 @@
 #   mcp        uvicorn app.mcp.server:asgi
 #   scheduler  /usr/local/bin/supercronic /app/docker/crontab  (absolute path!)
 #   CLIs       docker compose run --rm dashboard python app/add_lot.py ...
+#
+# Three stages (audit O-2): `base` installs everything; `dev` is base plus the
+# unprivileged user, and keeps pip — `make lock`, `make test` and CI's lock check
+# build it, because freezing a lock and installing a test runner need an
+# installer; `runtime`, the LAST stage and so the default target, is the same
+# filesystem with pip and ensurepip's bundled pip wheel removed. Everything that
+# is published or run by the stack (publish.yml, security-scan.yml, the dev
+# overlay's services, a bare `docker build`) is `runtime`: a running service has
+# no package installer and no installer-vendored dependencies in it.
 
 # Pinned by digest, not by tag. `python:3.14-slim` is a moving target — a
 # rebuild of the same commit a month later got a different Debian snapshot and
@@ -15,7 +24,7 @@
 # pulled" were only nominally the same. The digest below is the multi-arch
 # index; Dependabot (.github/dependabot.yml) proposes the bump when the tag
 # moves, and the weekly scan (security-scan.yml) says when a bump is overdue.
-FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS base
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
@@ -123,7 +132,7 @@ RUN set -eu; \
 # the scheduler's crontab, and the SQL — the last one so an install that pulled
 # this image without cloning the repository can still run apply_schema.py.
 COPY app /app/app
-COPY docker/crontab /app/docker/crontab
+COPY docker/crontab docker/crontab-llm /app/docker/
 COPY sql /app/sql
 # The lock's hash generator, so `make lock` can rehash inside the image (it is
 # stdlib-only and runs nowhere else in the container).
@@ -175,9 +184,40 @@ RUN mkdir -p /app/cache
 # services): if the app process is compromised it is not root in the container.
 RUN useradd --create-home --uid 10001 appuser \
  && chown -R appuser /app
-USER appuser
 
 # The dashboard is the default surface; compose sets `command:` per service, so
 # nothing in the stack depends on this default. Run from /app/app so the bare
 # imports resolve exactly as they do on a host ("run it from app/").
 CMD ["sh", "-c", "cd /app/app && streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port ${PORTFOLIODB_DASHBOARD_PORT:-8501}"]
+
+# ── dev: the build/test tooling target ───────────────────────────────────────
+# base plus the unprivileged user, pip included. `make lock` freezes this stage
+# (`pip freeze --all`, so pip's own pin stays in app/constraints.txt and the
+# hashed lock), `make test` installs pytest into it with `pip install --user`,
+# and CI compares its freeze with the lock. Nothing publishes or runs it as a
+# service; docker-compose.dev.yml builds it only as the `devtools` service.
+FROM base AS dev
+USER appuser
+
+# ── runtime: what ships ──────────────────────────────────────────────────────
+# The same filesystem minus the installer. pip is uninstalled by its own
+# uninstaller (it removes the pip, pip3 and pip3.X entry points with the
+# package), and ensurepip's bundled wheel goes too, so `python -m ensurepip`
+# cannot put it back. The bytes of the base image's original pip remain in that
+# lower layer as deleted files — nothing a container can import, run or have
+# scanned (Trivy and an SBOM read the final filesystem), and no lower layer can
+# be edited without forking the base image. The final check fails the build if
+# any route to pip survived.
+#
+# Everything the app imports was installed in `base` and stays: CI runs both
+# suites inside this stage, with pytest mounted read-only from outside, to prove
+# nothing at runtime needs pip (or the pkg_resources it vendors).
+FROM base AS runtime
+RUN set -eu; \
+    PIP_ROOT_USER_ACTION=ignore python -m pip uninstall --yes pip; \
+    rm -f /usr/local/lib/python3.*/ensurepip/_bundled/*.whl; \
+    if python -c 'import pip' 2>/dev/null; then echo "pip is still importable" >&2; exit 1; fi; \
+    if ls /usr/local/bin/pip* 2>/dev/null; then echo "a pip entry point survived" >&2; exit 1; fi; \
+    if python -m ensurepip --root /tmp/ensurepip-probe >/dev/null 2>&1; then echo "ensurepip can still restore pip" >&2; exit 1; fi; \
+    rm -rf /tmp/ensurepip-probe
+USER appuser

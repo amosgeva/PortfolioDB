@@ -10,7 +10,7 @@ broker sync, manual cash entry).
 
 ```bash
 make init                      # .env with generated secrets
-make up                        # postgres + dashboard + scheduler
+make up                        # postgres + dashboard + both schedulers
 make schema
 make demo-seed                 # fictional data — never use your real ledger to develop
 make test                      # builds the image from your working tree, runs the fast suites in it
@@ -25,7 +25,10 @@ overlay).
 first (cached, so only changed layers rebuild) and runs the suites in that
 build. It runs them with a blank database password, so it never touches the
 stack's database even when one is running — the database-backed tests run in
-CI, and below.
+CI, and below. It runs in the dev overlay's `devtools` service (the
+Dockerfile's `dev` stage, the runtime image plus pip, which installs pytest);
+the services themselves, and every published image, are the `runtime` stage,
+which has no pip. CI also runs the suites inside `runtime`.
 
 **On Windows:** the Makefile assumes a POSIX shell — its recipes use `sed`,
 `base64`, `gzip` and `/dev/urandom` — so a `make.exe` alone will not run it.

@@ -5,6 +5,10 @@ name: Publish image
 #
 # What a published image carries, and why (audit C-1, C-5):
 #
+#   * Its commit passed both pull-request gates first: the CI workflow and the
+#     front-end workflow are called below, and nothing is built for the
+#     registry until both are green (audit NEW-2).
+#   * It is the Dockerfile's `runtime` stage, which has no pip (audit O-2).
 #   * It was scanned before it was pushed. Both architectures are built without
 #     a layer cache, Trivy scans each for fixable HIGH/CRITICAL findings with the
 #     same policy as security-scan.yml, and only then is the push build run —
@@ -143,9 +147,19 @@ jobs:
     needs: plan
     uses: ./.github/workflows/ci.yml
 
+  # Gate: the front end's build reproduction, ESLint (whose rules make an
+  # unescaped innerHTML a failure) and jsdom tests (audit NEW-2). Before, the
+  # bundle the image serves was checked on pull requests only, and nothing here
+  # waited on it. Called, not copied, for the same reason as `test`; it inherits
+  # this workflow's read-only token.
+  frontend:
+    if: github.repository == 'amosgeva/PortfolioDB' && needs.plan.outputs.any == 'true'
+    needs: plan
+    uses: ./.github/workflows/frontend.yml
+
   publish:
     if: github.repository == 'amosgeva/PortfolioDB' && needs.plan.outputs.any == 'true'
-    needs: [plan, test]
+    needs: [plan, test, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -250,6 +264,9 @@ jobs:
         with:
           context: .
           file: app/Dockerfile
+          # The pip-less runtime stage (audit O-2), named so the scanned and
+          # the pushed builds cannot pick different stages.
+          target: runtime
           platforms: linux/amd64
           load: true
           no-cache: true
@@ -265,6 +282,7 @@ jobs:
         with:
           context: .
           file: app/Dockerfile
+          target: runtime
           platforms: linux/arm64
           load: true
           no-cache: true
@@ -309,6 +327,7 @@ jobs:
         with:
           context: .
           file: app/Dockerfile
+          target: runtime
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |

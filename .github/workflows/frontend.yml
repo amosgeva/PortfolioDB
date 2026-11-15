@@ -6,17 +6,30 @@ name: Front end
 # failure), and the JavaScript must run - mount, every view, refresh, theme,
 # CSV export and a hostile-payload XSS walk - in jsdom.
 
+#
+# Also a gate (audit NEW-2): publish.yml calls this workflow and its publish job
+# needs it, so an image is never built for the registry from a tree whose front
+# end is red. On pull requests the check is reported under the job name below,
+# "Build check, lint, tests", which is a required status check on main; keep
+# that name exactly, or every PR waits on a check that never reports.
+# tools/tests/test_ci_workflows.py pins the name, the call and the dependency.
+
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Callable so publish.yml gates on the same steps instead of repeating them.
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: frontend-${{ github.ref }}
+  # Keyed on the calling workflow too, as ci.yml is: a called workflow shares
+  # github.ref with its caller, so a publish run on main and this workflow's own
+  # push run on main would otherwise share one group and cancel each other.
+  group: frontend-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

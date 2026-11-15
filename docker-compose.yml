@@ -1,7 +1,8 @@
 # Run `make init` (or copy .env.template to .env) before the first `up` — the
 # app services read it.
 #
-#   docker compose up -d                    postgres + dashboard (:8501) + scheduler
+#   docker compose up -d                    postgres + dashboard (:8501) + the two
+#                                           schedulers (collector, keyed jobs)
 #   docker compose --profile mcp up -d      also the MCP server (:8765)
 #   docker compose --profile tools up -d    also pgAdmin (:58080)
 #
@@ -50,8 +51,9 @@ x-app-base: &app-base
   # no Linux capability at all, so it gets none, and no-new-privileges stops a
   # setuid binary from handing one back. The root filesystem is read-only: the
   # only places the app writes are its cache (a named volume), /tmp and the
-  # user's home (pip --user for `make test`, Streamlit's and yfinance's small
-  # per-user state), which are tmpfs and vanish with the container.
+  # user's home (Streamlit's and yfinance's small per-user state), which are
+  # tmpfs and vanish with the container. The image these services run is the
+  # Dockerfile's `runtime` stage, which has no pip (audit O-2).
   security_opt:
     - no-new-privileges:true
   cap_drop:
@@ -175,25 +177,37 @@ services:
       - ./philosophy.md:/app/philosophy.md:ro
       # Named volume rather than a ./cache bind mount: a bind mount is created
       # root-owned on Linux hosts and the container runs unprivileged, so the
-      # Financial-Datasets cache could not be written. Shared with the Phase 4
-      # scheduler, which is the only writer.
+      # Financial-Datasets cache could not be written. Shared with
+      # scheduler-llm, whose weekly enrichment is the only writer.
       - appcache:/app/cache
 
-  # Scheduled jobs (price snapshots, daily brief, weekly enrichment) — see
-  # docker/crontab. Replaces the Windows Task Scheduler setup; the market
-  # window lives in app/market_window.py, not in the cron lines.
+  # The price collector (holdings snapshots every 5 minutes, market-overview
+  # benchmarks every 15) — see docker/crontab. Replaces the Windows Task
+  # Scheduler setup; the market window lives in app/market_window.py, not in
+  # the cron lines.
   scheduler:
     <<: *app-base
     container_name: portfoliodb-scheduler
-    # Environment scope, decided rather than inherited (audit O-3): the
-    # scheduler does need most of .env — the morning brief calls the configured
-    # LLM and the weekly enrichment calls Financial Datasets, so those keys stay.
-    # What it never reads is blanked: the MCP and pgAdmin secrets (x-not-mine)
-    # and the dashboard's write-page password. A key added to .env for the app
-    # still arrives without a compose edit.
+    # A per-job secret boundary (audit O-3). This container fetches and parses
+    # third-party web pages every five minutes, so it is handed no API key at
+    # all: not the whole .env (env_file is emptied, as for mcp) but an explicit
+    # allowlist — the database login and the settings the collector reads when
+    # the settings table cannot answer. Blanking the known keys would not have
+    # been enough: the next vendor key added to .env would have arrived here
+    # unasked. A setting the collector starts reading is added here, by name;
+    # tools/tests/test_compose_overrides.py fails on anything else. The jobs
+    # that do need keys run in `scheduler-llm` below.
+    env_file: []
     environment:
-      <<: [*app-env, *not-mine]
-      PORTFOLIODB_DASHBOARD_PASSWORD: ""
+      <<: *app-env
+      PORTFOLIODB_TZ: ${PORTFOLIODB_TZ:-}
+      PORTFOLIODB_MARKET_START: ${PORTFOLIODB_MARKET_START:-}
+      PORTFOLIODB_MARKET_END: ${PORTFOLIODB_MARKET_END:-}
+      PORTFOLIODB_MARKET_WEEK: ${PORTFOLIODB_MARKET_WEEK:-}
+      PORTFOLIODB_MARKET_OVERVIEW: ${PORTFOLIODB_MARKET_OVERVIEW:-}
+      PORTFOLIODB_COLLECTOR_DEADLINE_S: ${PORTFOLIODB_COLLECTOR_DEADLINE_S:-}
+      PORTFOLIODB_QUOTE_MAX_AGE_MIN: ${PORTFOLIODB_QUOTE_MAX_AGE_MIN:-}
+      PORTFOLIODB_CONNECT_TIMEOUT: ${PORTFOLIODB_CONNECT_TIMEOUT:-}
     # Absolute path, not a bare "supercronic": as PID 1 supercronic re-execs
     # itself to reap zombies, and ForkExec cannot resolve argv[0] through PATH
     # — the bare name crash-loops with "Failed to fork exec: no such file or
@@ -209,8 +223,38 @@ services:
       timeout: 6s
       retries: 3
       start_period: 20s
+    # No philosophy.md and no cache volume: the collector reads neither.
+
+  # The scheduled jobs that call keyed APIs — the daily advisor brief (the
+  # configured LLM) and the weekly Financial Datasets enrichment — see
+  # docker/crontab-llm. Same image, same supercronic, its own container, so
+  # the LLM and vendor keys live in a process that never parses a quote page.
+  scheduler-llm:
+    <<: *app-base
+    container_name: portfoliodb-scheduler-llm
+    # Environment scope, decided rather than inherited: these jobs need most of
+    # .env — the brief calls the configured LLM and the enrichment calls
+    # Financial Datasets, so those keys stay, and a key added to .env for the
+    # app still arrives without a compose edit. What they never read is
+    # blanked: the MCP and pgAdmin secrets (x-not-mine) and the dashboard's
+    # write-page password.
+    environment:
+      <<: [*app-env, *not-mine]
+      PORTFOLIODB_DASHBOARD_PASSWORD: ""
+    # Same absolute path and loopback-only metrics listener as `scheduler`; the
+    # port is the container's own, so the two do not collide.
+    command: ["/usr/local/bin/supercronic", "-passthrough-logs", "-prometheus-listen-address", "127.0.0.1:9746", "/app/docker/crontab-llm"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9746/health', timeout=4).status==200 else 1)"]
+      interval: 60s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
     volumes:
+      # The advisor reads the operator's philosophy on every brief.
       - ./philosophy.md:/app/philosophy.md:ro
+      # The enrichment is the only writer of the Financial Datasets cache the
+      # dashboard reads.
       - appcache:/app/cache
 
   # Optional DB browser, behind a profile: it needs PGADMIN_EMAIL/PASSWORD and

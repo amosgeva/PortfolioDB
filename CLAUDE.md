@@ -43,7 +43,7 @@ Anything written down for someone else to run should still use the portable
 form, because a reader on 5.1 gets a corrupt archive and no error.
 
 ```bash
-make up          # postgres + dashboard (:8501) + scheduler
+make up          # postgres + dashboard (:8501) + scheduler + scheduler-llm
 make schema      # create/refresh tables, then apply sql/migrations/* in order
 make demo-seed   # fictional portfolio, for a fresh install or a screenshot
 make ps          # service status
@@ -143,11 +143,14 @@ Readers get their lots from `ledger_inputs.load(conn)`. It reads them in FIFO pr
 ### Layers
 - `app/db.py` — psycopg2 connection + `fetch_all` / `execute` helpers. Everything in `app/` goes through this; the ad-hoc scripts at the repo root often open their own psycopg2 connections.
 - `app/` — long-lived CLIs and modules (engines, dashboard, reports).
-- Repo root — `Makefile` (the entry point for every command), `docker-compose.yml`, `docker/crontab`. Gitignored and host-specific: `run_*.ps1` / `setup_*.ps1` launchers and throwaway scripts under `archive/`. Prefer adding durable logic under `app/`.
+- Repo root — `Makefile` (the entry point for every command), `docker-compose.yml`, `docker/crontab` (collector) and `docker/crontab-llm` (brief, enrichment). Gitignored and host-specific: `run_*.ps1` / `setup_*.ps1` launchers and throwaway scripts under `archive/`. Prefer adding durable logic under `app/`.
 - `app/tests/` — pytest suite for everything importable from `app/` (engines, loader, reports, importer, dashboard payload); `app/mcp/tests/` for the MCP server, run from the repo root.
 
 ### Snapshot collection
-`snapshot_prices.py` selects symbols with open quantity OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`Ticker.info` only — `fast_info` is deliberately unused: its keys are camelCase, so the old `fi.get("last_price")` always returned `None` and every symbol fell through to `info` anyway, and it exposes neither bid/ask nor the trade timestamp the staleness guard needs), and inserts with `ON CONFLICT DO NOTHING`. It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`.
+`snapshot_prices.py` selects symbols with open quantity OR `watchlist=TRUE`, pulls last/bid/ask via `yfinance` (`Ticker.info` only — `fast_info` is deliberately unused: its keys are camelCase, so the old `fi.get("last_price")` always returned `None` and every symbol fell through to `info` anyway, and it exposes neither bid/ask nor the trade timestamp the staleness guard needs), and inserts with `ON CONFLICT DO NOTHING`. It refuses to collect outside the configured collector window (`app/market_window.py`, settable from the Settings page) unless `--ignore-window` is passed, so every caller obeys one rule. The `scheduler` service (supercronic, `docker/crontab`) is what invokes it on a schedule — see `docs/scheduling.md`. That service receives an env allowlist instead of `.env`, so it holds no API key; keyed jobs (the brief, the Financial Datasets enrichment) belong in `docker/crontab-llm`, which `scheduler-llm` runs with `.env`. A setting the collector starts reading must be added to its `environment:` in `docker-compose.yml` (and to `COLLECTOR_ALLOWLIST` in `tools/tests/test_compose_overrides.py`), or it never arrives.
+
+### Image stages
+`app/Dockerfile` builds `base` → `dev` (keeps pip) → `runtime` (pip removed; the last stage, so the default target). Every service and every published image runs `runtime`; `make lock` and `make test` use the dev overlay's `devtools` service, which builds `dev`. Need a package installed in a running container? There is no pip there by design — add it to `app/requirements.txt` and run `make lock`.
 
 ## Conventions
 

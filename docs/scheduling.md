@@ -1,23 +1,48 @@
 # Scheduled jobs
 
-The `scheduler` service runs three jobs with
+Two services run the scheduled jobs with
 [supercronic](https://github.com/aptible/supercronic) (cron built for
-containers: logs to stdout, no root, refuses to start on a bad crontab). It
-starts with the rest of the stack:
+containers: logs to stdout, no root, refuses to start on a bad crontab), and
+both start with the rest of the stack:
 
 ```bash
-docker compose up -d          # postgres + dashboard + scheduler
-docker compose logs -f scheduler
+docker compose up -d                  # postgres + dashboard + scheduler + scheduler-llm
+docker compose logs -f scheduler      # the price collector
+docker compose logs -f scheduler-llm  # the brief and the enrichment
 ```
 
-| Job | Schedule | Notes |
-|---|---|---|
-| `snapshot_prices.py` | every 5 min | Exits immediately outside the collector window — the cron line does not know the window |
-| `snapshot_prices.py --benchmarks` | every 15 min, Sun–Fri | The Markets strip (index futures, volatility). **Deliberately ignores the collector window**: futures quote while your market is shut, which is the only reason to collect them. Records no row in `snapshot_runs`, so Data Health and the MCP cutoff keep meaning "the portfolio's prices" |
-| `advisor.py brief` | 07:00 Mon–Fri | Needs an LLM API key; without one it logs and moves on |
-| `fd_weekly_enrichment.py` | 06:00 Sat | Needs `FINANCIAL_DATASETS_API_KEY`; cache-first, so cheap |
+| Service | Job | Schedule | Notes |
+|---|---|---|---|
+| `scheduler` | `snapshot_prices.py` | every 5 min | Exits immediately outside the collector window — the cron line does not know the window |
+| `scheduler` | `snapshot_prices.py --benchmarks` | every 15 min, Sun–Fri | The Markets strip (index futures, volatility). **Deliberately ignores the collector window**: futures quote while your market is shut, which is the only reason to collect them. Records no row in `snapshot_runs`, so Data Health and the MCP cutoff keep meaning "the portfolio's prices" |
+| `scheduler-llm` | `advisor.py brief` | 07:00 Mon–Fri | Needs an LLM API key; without one it logs and moves on |
+| `scheduler-llm` | `fd_weekly_enrichment.py` | 06:00 Sat | Needs `FINANCIAL_DATASETS_API_KEY`; cache-first, so cheap |
 
 Times are read in the container's timezone (`PORTFOLIODB_TZ`, default UTC).
+
+### Why two schedulers
+
+The collector fetches and parses third-party web pages every five minutes; the
+brief and the enrichment hold API keys that cost money and identify you. Before
+1.8.0 they shared one container, and so one environment: a flaw in a quote
+parser ran next to the LLM and Financial Datasets keys. Now they are separate
+containers built from the same image (`docker/crontab` and
+`docker/crontab-llm`):
+
+- **`scheduler`** gets no `.env` at all. Compose hands it an explicit allowlist —
+  the database login, the timezone, the collector window and the collector's
+  own tunables (`PORTFOLIODB_MARKET_OVERVIEW`, `PORTFOLIODB_COLLECTOR_DEADLINE_S`,
+  `PORTFOLIODB_QUOTE_MAX_AGE_MIN`, `PORTFOLIODB_CONNECT_TIMEOUT`). A key you add
+  to `.env` later does not reach it either. If you need something else there
+  (an HTTP proxy, say), add it to the service's `environment:` in
+  `docker-compose.override.yml`.
+- **`scheduler-llm`** gets `.env` like the dashboard, minus the secrets that
+  belong to other processes (the MCP token and role, pgAdmin's login, the
+  dashboard password).
+
+A per-job wrapper that scrubbed variables inside one container would not have
+been a boundary: every job in a container runs as the same user as supercronic,
+which can read its environment from `/proc/1/environ`.
 
 ## The collector window
 
@@ -47,9 +72,13 @@ docker compose run --rm dashboard python app/snapshot_prices.py --ignore-window
 
 ## Running only some jobs
 
-Edit `docker/crontab` and rebuild, or comment a line out and restart the
-service. The jobs are independent: the snapshot collector is the only one most
-installs need, and the other two no-op without their API keys.
+Edit `docker/crontab` (collector) or `docker/crontab-llm` (brief, enrichment)
+and rebuild, or comment a line out and restart the service. The jobs are
+independent: the snapshot collector is the only one most installs need, and the
+other two no-op without their API keys — so an install with no keys can stop
+the keyed scheduler altogether (`docker compose stop scheduler-llm`, or
+`scale: 0` for it in `docker-compose.override.yml`). Keep keyed jobs out of
+`docker/crontab`: the collector's container has no keys by design.
 
 ## Upgrading an existing install — read this once
 

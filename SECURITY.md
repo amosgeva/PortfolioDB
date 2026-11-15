@@ -99,6 +99,17 @@ by design.
   `pip-audit` of the exact lock, by the same audit on every pull request that
   touches it, and by GitHub's Dependabot alerts on the repository. An alert is
   answered with `make lock`, not by merging a bot's edit to the lock.
+- **No installer in what runs.** The image is built in stages; every service
+  and every published image is the `runtime` stage, which has pip (and the
+  packages pip vendors) removed. The `dev` stage, which keeps pip, exists only
+  for `make lock` and `make test`. CI fails if pip can be imported, run or
+  restored in the runtime image.
+- **The front-end toolchain** (esbuild, ESLint, jsdom — build and test tools
+  that never ship) gets weekly Dependabot version updates, minor and patch
+  grouped, and the front-end checks gate publishing as well as pull requests.
+- **Default LLM model IDs** are re-checked on a schedule: each carries a
+  review-by date in `app/llm.py`, and the weekly scan also checks them against
+  public model listings for retirement (docs/llm-providers.md).
 - **Weekly scans and rebuilds.** Every Monday `security-scan.yml` scans the
   published `latest` and `1` images (both architectures, by digest) as well as
   a fresh build of `main`; a failing scheduled scan opens a tracking issue that

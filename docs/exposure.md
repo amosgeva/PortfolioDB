@@ -215,16 +215,26 @@ compromised one could do next. They are on by default in `docker-compose.yml`:
 
 | Service | Linux capabilities | `no-new-privileges` | Read-only root | Healthcheck |
 |---|---|---|---|---|
-| dashboard, scheduler, mcp | none | yes | yes (`/tmp` and the home directory are tmpfs) | yes |
+| dashboard, scheduler, scheduler-llm, mcp | none | yes | yes (`/tmp` and the home directory are tmpfs) | yes |
 | postgres | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID` — what its entrypoint needs to hand the data directory to the `postgres` user | yes | no — `docker compose cp`, which the Windows backup and restore depend on, does not work on a read-only container | yes |
 | pgadmin (`tools`) | none (listens on 8080 inside the container for that reason) | yes | no — its entrypoint writes its config on start | no |
 
-The scheduler is handed the `.env` keys its jobs use — the LLM key for the
-morning brief, the Financial Datasets key for the weekly enrichment — and the
-secrets that belong to other processes (the MCP token and role, pgAdmin's login,
-the dashboard password) are blanked for it. The dashboard gets the same
-treatment, minus its own password. The MCP server gets none of `.env` at all
-(see above).
+The scheduled work is split by what it holds. The price collector (`scheduler`),
+which fetches and parses third-party pages every five minutes, gets none of
+`.env`: only an allowlist of the database login and the settings it reads, so no
+API key — not even one added to `.env` later — is in its environment. The
+keyed jobs run in `scheduler-llm`, which is handed the `.env` keys they use —
+the LLM key for the morning brief, the Financial Datasets key for the weekly
+enrichment — with the secrets that belong to other processes (the MCP token and
+role, pgAdmin's login, the dashboard password) blanked.
+[scheduling.md](scheduling.md#why-two-schedulers) has the reasoning. The
+dashboard gets the `scheduler-llm` treatment, minus its own password. The MCP
+server gets none of `.env` at all (see above).
+
+Every one of these services runs the image's `runtime` stage, which has no pip:
+the package installer and the dependencies it vendors are build-time tools, so
+they are in the `dev` stage that `make lock` and `make test` use and not in
+anything that runs.
 
 If you relax any of these in an override, say why in a comment there; the
 defaults are the ones that were tested.

@@ -189,7 +189,7 @@ def test_published_images_are_scanned_on_a_schedule_by_digest():
 def test_a_failing_scheduled_scan_opens_a_tracking_issue():
     job = _workflows()["security-scan.yml"]["jobs"]["track"]
     assert job["permissions"] == {"issues": "write"}
-    assert set(job["needs"]) == {"python-packages", "image", "published"}
+    assert set(job["needs"]) == {"python-packages", "image", "published", "llm-models"}
     assert "gh issue create" in _run_text(job)
     assert "gh issue close" in _run_text(job)
 
@@ -234,3 +234,185 @@ def test_dependabot_keeps_the_compose_images_current_but_never_a_postgres_major(
     assert "version-update:semver-major" in rules.get("postgres", set()), (
         "a Postgres major needs pg_upgrade; Dependabot must not propose it as a bump"
     )
+
+
+def test_dependabot_proposes_weekly_frontend_toolchain_updates_grouped():
+    """Section 12: the npm toolchain that builds, lints and tests the bundle had
+    no version-update coverage. Minor and patch bumps come grouped; a major
+    comes on its own, where config formats and rule semantics change."""
+    npm = _dependabot_updates().get("npm")
+    assert npm, "Dependabot does not watch package.json / package-lock.json"
+    assert npm["directory"] == "/" and (ROOT / "package.json").exists() and (ROOT / "package-lock.json").exists()
+    assert npm["schedule"]["interval"] == "weekly"
+    groups = list((npm.get("groups") or {}).values())
+    assert any(set(g.get("update-types", [])) == {"minor", "patch"} and g.get("patterns") == ["*"] for g in groups), (
+        "minor and patch front-end bumps should arrive as one grouped pull request"
+    )
+
+
+# ── NEW-2: the front-end gate is required on PRs and gates publication ───────
+
+# Required on main as a status check: renaming the job silently leaves every PR
+# waiting for a check that never reports.
+FRONTEND_CHECK = "Build check, lint, tests"
+FRONTEND_WORKFLOW = "./.github/workflows/frontend.yml"
+CI_WORKFLOW = "./.github/workflows/ci.yml"
+
+
+def test_frontend_check_keeps_its_required_name_on_pull_requests():
+    doc = _workflows()["frontend.yml"]
+    assert "pull_request" in doc["on"], "the front-end check must report on every pull request"
+    names = [job.get("name") for job in doc["jobs"].values()]
+    assert names == [FRONTEND_CHECK], f"frontend.yml jobs are named {names}; branch protection requires {FRONTEND_CHECK!r}"
+
+
+def test_frontend_workflow_is_reusable_and_read_only():
+    doc = _workflows()["frontend.yml"]
+    assert "workflow_call" in doc["on"], "publish.yml cannot call the front-end gate"
+    assert doc["permissions"] == {"contents": "read"}
+    for job_id, job in doc["jobs"].items():
+        assert not job.get("permissions"), f"frontend.yml:{job_id} widens the token"
+        assert not job.get("continue-on-error"), f"frontend.yml:{job_id} cannot fail"
+    run = _run_text(next(iter(doc["jobs"].values())))
+    for step in ("npm ci", "npm run build:check", "npm run lint", "npm test"):
+        assert step in run, f"the front-end gate no longer runs `{step}`"
+
+
+@pytest.mark.parametrize("name", ["ci.yml", "frontend.yml"])
+def test_called_workflows_key_concurrency_on_the_calling_workflow(name):
+    """A called workflow shares github.ref with its caller. Keyed on the ref
+    alone, publish's call and the workflow's own push run on main would share a
+    group, and cancel-in-progress would cancel one of them."""
+    group = _workflows()[name]["concurrency"]["group"]
+    assert "${{ github.workflow }}" in group and "${{ github.ref }}" in group, group
+
+
+def _needs(job: dict) -> set[str]:
+    needs = job.get("needs") or []
+    return {needs} if isinstance(needs, str) else set(needs)
+
+
+def _ancestors(jobs: dict, job_id: str) -> set[str]:
+    seen: set[str] = set()
+    todo = list(_needs(jobs[job_id]))
+    while todo:
+        j = todo.pop()
+        if j not in seen:
+            seen.add(j)
+            todo.extend(_needs(jobs[j]))
+    return seen
+
+
+def _publish_gate_problems(doc: dict) -> list[str]:
+    """Why a publish workflow could build or push without both gates green."""
+    jobs = doc["jobs"]
+    gates = {
+        uses: [j for j, job in jobs.items() if job.get("uses") == uses]
+        for uses in (CI_WORKFLOW, FRONTEND_WORKFLOW)
+    }
+    problems = [f"no job calls {uses}" for uses, ids in gates.items() if not ids]
+    builders = [
+        j for j, job in jobs.items()
+        if any(re.search(r"docker/(build-push|login)-action", str(s.get("uses", ""))) for s in _steps(job))
+    ]
+    if not builders:
+        problems.append("no job builds the image")
+    for j in builders:
+        before = _ancestors(jobs, j)
+        for uses, ids in gates.items():
+            if ids and not before & set(ids):
+                problems.append(f"{j} can build/push without {uses}")
+        if re.search(r"always\(\)|failure\(\)|!\s*cancelled\(\)", str(jobs[j].get("if", ""))):
+            problems.append(f"{j} runs even when a gate failed")
+    for ids in gates.values():
+        for g in ids:
+            if jobs[g].get("continue-on-error"):
+                problems.append(f"gate {g} cannot fail")
+    return problems
+
+
+def test_publish_builds_nothing_until_ci_and_the_frontend_gate_pass():
+    """Audit NEW-2: publish.yml waited on ci.yml alone, so a red front end
+    (an unescaped innerHTML, a bundle that no longer matches its sources) could
+    still be published."""
+    assert _publish_gate_problems(_workflows()["publish.yml"]) == []
+
+
+def test_the_publish_gate_check_catches_a_missing_frontend_dependency():
+    """Negative control: the check above must notice the pre-1.8 DAG."""
+    doc = _workflows()["publish.yml"]
+    regressed = {**doc, "jobs": {**doc["jobs"], "publish": {**doc["jobs"]["publish"], "needs": ["plan", "test"]}}}
+    assert any("without ./.github/workflows/frontend.yml" in p for p in _publish_gate_problems(regressed))
+    dropped = {**doc, "jobs": {k: v for k, v in doc["jobs"].items() if v.get("uses") != FRONTEND_WORKFLOW}}
+    dropped["jobs"]["publish"] = {**dropped["jobs"]["publish"], "needs": ["plan", "test"]}
+    assert "no job calls ./.github/workflows/frontend.yml" in _publish_gate_problems(dropped)
+    forced = {**doc, "jobs": {**doc["jobs"], "publish": {**doc["jobs"]["publish"], "if": "always()"}}}
+    assert any("even when a gate failed" in p for p in _publish_gate_problems(forced))
+
+
+def test_the_frontend_gate_runs_whenever_publish_would():
+    jobs = _workflows()["publish.yml"]["jobs"]
+    gate = next(job for job in jobs.values() if job.get("uses") == FRONTEND_WORKFLOW)
+    assert gate["if"] == jobs["publish"]["if"], "a skipped gate is a passed gate to `needs`"
+    assert not gate.get("permissions"), "the gate inherits the read-only token"
+
+
+# ── O-2: what ships has no package installer ─────────────────────────────────
+
+
+def _stages() -> list[str]:
+    return re.findall(r"^FROM\s+\S+\s+AS\s+(\w+)\s*$", DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE)
+
+
+def test_the_runtime_stage_is_last_and_removes_pip():
+    """The last stage is the default target, so a bare `docker build` (the
+    security scan's) gets the runtime too."""
+    stages = _stages()
+    assert stages[-1] == "runtime" and "dev" in stages, stages
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    runtime = text[text.index("AS runtime"):]
+    assert "pip uninstall --yes pip" in runtime
+    assert "ensurepip/_bundled" in runtime, "ensurepip's bundled wheel would put pip straight back"
+
+
+def test_publish_builds_and_scans_the_runtime_target():
+    steps = _steps(_publish_job())
+    builds = [s for s in steps if "build-push-action" in str(s.get("uses", ""))]
+    assert len(builds) == 3
+    assert all(s["with"].get("target") == "runtime" for s in builds), "scanned and pushed builds must be `runtime`"
+
+
+def test_ci_checks_the_lock_on_dev_and_tests_inside_runtime():
+    job = _workflows()["ci.yml"]["jobs"]["image"]
+    run = _run_text(job)
+    assert "--target runtime" in run and "--target dev" in run
+    assert "portfoliodb-ci-dev:${{ github.sha }} pip freeze --all" in run, "the lock is compared on the dev target"
+    assert 'python -c "import pip"' in run, "CI must prove the runtime image has no pip"
+    tests = next(s for s in _steps(job) if s.get("name", "").startswith("Test suites inside the runtime image"))
+    assert "portfoliodb-ci:${{ github.sha }}" in tests["run"] and "$HARDENED" in tests["run"]
+    assert "pip install --user" not in tests["run"].split("portfoliodb-ci:${{ github.sha }}")[-1], (
+        "the runtime image has no pip; pytest comes from the dev target, mounted read-only"
+    )
+
+
+def test_ci_starts_both_schedulers_and_tests_both_crontabs():
+    run = _run_text(_workflows()["ci.yml"]["jobs"]["image"])
+    assert "/app/docker/crontab-llm" in run and "probe ci-scheduler-llm" in run
+    assert "supercronic -test" in run
+
+
+DOCKERIGNORE = ROOT / ".dockerignore"
+
+
+def test_the_image_carries_the_built_front_end_not_its_sources():
+    """streamlit_app.py and modern2_native.py read only the committed outputs."""
+    lines = {l.strip() for l in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()}
+    for excluded in ("node_modules/", "app/dashboard/static/src/", "app/dashboard/static/tests/",
+                     "app/dashboard/static/tools/", "app/dashboard/static/build.mjs"):
+        assert excluded in lines, f".dockerignore no longer excludes {excluded}"
+    served = ROOT / "app" / "dashboard" / "static"
+    for needed in ("app.js", "app.css", "shell.html", "skeleton.html", "tokens.css", "fonts"):
+        assert (served / needed).exists()
+        assert not any(l.rstrip("/") in (f"app/dashboard/static/{needed}", "app/dashboard/static") for l in lines), (
+            f".dockerignore drops {needed}, which the dashboard serves"
+        )

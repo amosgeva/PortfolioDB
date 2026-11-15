@@ -1,7 +1,7 @@
 # PortfolioDB — one entry point for the containerized stack.
 #
 #   make            list every target
-#   make up         start postgres + dashboard + scheduler
+#   make up         start postgres + dashboard + the two schedulers
 #   make schema     create/refresh the tables
 #   make positions  show current positions
 #   make add-lot ARGS="--symbol NVDA --account IBKR --trade-date 2026-02-13 --side BUY --qty 1 --price 184"
@@ -21,6 +21,10 @@ shquote = '$(subst ','\'',$(1))'
 RAW     := https://raw.githubusercontent.com/amosgeva/PortfolioDB/main
 # Building from source is the contributor path, so it needs the dev overlay.
 COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
+# The overlay's `devtools` service: the Dockerfile's `dev` stage, which keeps
+# pip for `lock` and `test`. The stack's own services run `runtime`, which has
+# none (audit O-2). Behind a profile, so it is named explicitly.
+DEVTOOLS := --profile devtools
 # One-shot container for CLIs: same image as the dashboard, removed after use.
 RUN     := $(COMPOSE) run --rm dashboard
 PSQL    := $(COMPOSE) exec -T postgres psql -q -U portfoliouser -d portfoliodb
@@ -101,14 +105,14 @@ init: ## First run: fill .env with generated secrets (safe to re-run)
 
 # ── stack ────────────────────────────────────────────────────────────────
 
-up: ## Start postgres + dashboard + scheduler (detached)
+up: ## Start postgres + dashboard + both schedulers (detached)
 	$(COMPOSE) up -d
 
 down: ## Stop everything (keeps the database volume)
 	$(COMPOSE) down
 
 restart: ## Recreate the app containers, e.g. after changing .env
-	$(COMPOSE) up -d --force-recreate dashboard scheduler
+	$(COMPOSE) up -d --force-recreate dashboard scheduler scheduler-llm
 
 pull: ## Fetch the latest published application image
 	$(COMPOSE) pull
@@ -121,26 +125,29 @@ dev-up: ## Start the stack from a locally built image
 
 # Regenerated INSIDE the image, never from a host interpreter: the lock has to
 # be the resolution the image's Python and platform produce, or CI's
-# "image matches the lock" check rejects it. Four steps:
+# "image matches the lock" check rejects it. It runs in the `devtools` service
+# (the Dockerfile's `dev` stage), because freezing needs pip and the runtime
+# image no longer has it. Four steps:
 #   1. build with PIP_LOCK=refresh, which resolves requirements.txt under the
 #      current constraints *without* hashes, so a newly added requirement is
 #      installed at all (the normal build installs only what the lock lists);
-#   2. freeze that image into app/constraints.txt;
+#   2. freeze that image into app/constraints.txt (`--all`, so pip's own pin is
+#      in the lock: the build installs it from its hashed line before anything);
 #   3. hash every wheel of every pin into app/requirements.lock
 #      (tools/hash_lock.py, run in the same image; it reads the new pins on
 #      stdin and asks PyPI for the files);
 #   4. build normally, which installs from the new lock with --require-hashes —
 #      so a lock that cannot install fails here, not in CI.
 lock: ## Refresh app/constraints.txt and the hashed app/requirements.lock (after editing requirements.txt)
-	$(COMPOSE_DEV) build --build-arg PIP_LOCK=refresh dashboard
+	$(COMPOSE_DEV) $(DEVTOOLS) build --build-arg PIP_LOCK=refresh devtools
 	@{ sed -n '/^#/p' app/constraints.txt; \
-	   $(COMPOSE_DEV) run --rm --no-deps -T dashboard pip freeze --all --exclude-editable; } > app/constraints.txt.new \
+	   $(COMPOSE_DEV) $(DEVTOOLS) run --rm --no-deps -T devtools pip freeze --all --exclude-editable; } > app/constraints.txt.new \
 	&& mv app/constraints.txt.new app/constraints.txt \
 	&& echo "app/constraints.txt refreshed: $$(grep -vc '^#' app/constraints.txt) pins"
-	@$(COMPOSE_DEV) run --rm --no-deps -T dashboard python /app/tools/hash_lock.py - < app/constraints.txt > app/requirements.lock.new \
+	@$(COMPOSE_DEV) $(DEVTOOLS) run --rm --no-deps -T devtools python /app/tools/hash_lock.py - < app/constraints.txt > app/requirements.lock.new \
 	&& mv app/requirements.lock.new app/requirements.lock \
 	&& echo "app/requirements.lock rehashed"
-	$(COMPOSE_DEV) build dashboard
+	$(COMPOSE_DEV) $(DEVTOOLS) build devtools
 	@echo "the image builds from the new lock — review both diffs and commit them together"
 
 ps: ## Show service status
@@ -281,9 +288,12 @@ shell: ## Shell inside a throwaway app container
 # writes nothing to it. The database-backed tests run in CI against a
 # disposable Postgres (CONTRIBUTING.md shows how to do the same locally).
 # `-p no:cacheprovider` because the container's root filesystem is read-only.
+# The `devtools` service is the Dockerfile's `dev` stage — the runtime image
+# plus pip, which is what installs pytest; CI runs the same suites inside the
+# pip-less runtime stage itself.
 test: ## Build the image from the working tree and run both fast suites in it
-	$(COMPOSE_DEV) build dashboard
-	$(COMPOSE_DEV) run --rm --no-deps -e PORTFOLIODB_PASSWORD= dashboard sh -c '\
+	$(COMPOSE_DEV) $(DEVTOOLS) build devtools
+	$(COMPOSE_DEV) $(DEVTOOLS) run --rm --no-deps -e PORTFOLIODB_PASSWORD= devtools sh -c '\
 	  pip install --user --quiet pytest && \
 	  export PATH=$$PATH:/home/appuser/.local/bin && \
 	  echo "── app suite ──" && cd /app/app && python -m pytest -p no:cacheprovider tests/ -q && \

@@ -37,6 +37,36 @@ OpenAI-compatible path that covers everything else — OpenRouter proxies 300+
 models, and the same dialect is spoken by Ollama, LM Studio, Groq, Mistral,
 DeepSeek, etc.
 
+## When a default model is retired
+
+The defaults above are what an install uses until someone sets `LLM_MODEL` (or
+the model on the Settings page), and vendors retire model IDs on their own
+schedule. Setting `LLM_MODEL` always wins, so an operator is never stuck on a
+default — but a default that has been withdrawn is a broken advisor for
+everyone who never set one. So the defaults are watched:
+
+- `DEFAULT_MODEL_REVIEW` in `app/llm.py` records, for each default, the day it
+  was last checked against the vendor's catalogue (with that page's link), a
+  **review-by date at most 180 days later**, and a public listing that can
+  check it without a key.
+- `tools/check_default_models.py` runs every Monday in the
+  [security scan](../.github/workflows/security-scan.yml) (`llm-models` job).
+  It fails when a review-by date has passed — on the date alone, because
+  Anthropic's and OpenAI's own model lists need an API key — and, online, when
+  a public listing no longer has the ID or lists it as expiring within 45 days:
+  [OpenRouter's model list](https://openrouter.ai/api/v1/models), which mirrors
+  the Anthropic and OpenAI catalogues and carries an `expiration_date` for
+  models being withdrawn, and the Ollama registry. A scheduled failure opens
+  the same tracking issue as a failed vulnerability scan.
+- `tools/tests/test_default_models.py` keeps the registry in step with the
+  defaults on every pull request, so a default cannot change without its entry.
+
+When it goes red: check the vendor's page, pick the successor, change
+`_DEFAULT_MODEL` and its `DEFAULT_MODEL_REVIEW` entry together (moving
+`reviewed` and `review_by`), and update the table above. Run it yourself with
+`python3 tools/check_default_models.py --online`. The check proves an ID is
+still listed, not that it suits the daily brief — see below for that.
+
 ## Examples
 
 **OpenRouter** (any hosted model, one key):

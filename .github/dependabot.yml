@@ -57,3 +57,29 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
+
+  # The dashboard front end's build/lint/test toolchain: package.json pins each
+  # devDependency exactly and package-lock.json pins the whole tree. None of it
+  # ships — the built bundle is committed and served by
+  # app/streamlit_app.py — but esbuild produces that bundle, ESLint enforces the
+  # no-unescaped-innerHTML rules and jsdom runs the XSS walk, so a stale tool is
+  # a stale gate. Unlike the Python lock, npm resolves the same tree on any
+  # platform, so a bot's edit to the lockfile is exactly what `npm ci` installs
+  # in frontend.yml, and that workflow (a required check) judges each bump.
+  #
+  # Minor and patch bumps arrive as one grouped pull request a week; a major
+  # (ESLint 10 → 11, jsdom 30 → 31) gets its own, because it is where config
+  # formats and rule semantics change.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(frontend)"
+    versioning-strategy: increase
+    groups:
+      frontend-toolchain:
+        patterns: ["*"]
+        update-types:
+          - minor
+          - patch
