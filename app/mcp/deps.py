@@ -214,10 +214,24 @@ def _get_pool() -> ThreadedConnectionPool:
         return _pool
 
 
-# The connection pinned by snapshot() for the current context, if any.
+# The connection pinned by snapshot() for the current context, if any, and a
+# memo that lives exactly as long as that snapshot (see snapshot_memo).
 _pinned: contextvars.ContextVar[psycopg2.extensions.connection | None] = (
     contextvars.ContextVar("portfoliodb_mcp_pinned_conn", default=None)
 )
+_memo: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "portfoliodb_mcp_snapshot_memo", default=None
+)
+
+
+def snapshot_memo() -> dict | None:
+    """A dict scoped to the active snapshot(), or None outside one.
+
+    For reads that are memoised process-wide (the positions frame cache): a
+    value computed inside a snapshot is valid only for that snapshot's
+    transaction, so it is kept here rather than in the shared cache.
+    """
+    return _memo.get()
 
 
 def _discard(pool: ThreadedConnectionPool, conn) -> None:
@@ -314,12 +328,13 @@ def snapshot() -> Iterator[psycopg2.extensions.connection]:
 
     pool = _get_pool()
     conn = _acquire(pool)
-    token = None
+    token = memo_token = None
     try:
         with conn.cursor() as cur:
             # First statement of the transaction psycopg2 opens implicitly.
             cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         token = _pinned.set(conn)
+        memo_token = _memo.set({})
         yield conn
         # A rollback inside the block would have ended the snapshot silently and
         # let the remaining reads run in a fresh READ COMMITTED transaction.
@@ -334,6 +349,8 @@ def snapshot() -> Iterator[psycopg2.extensions.connection]:
                 "the composite read is not consistent"
             )
     finally:
+        if memo_token is not None:
+            _memo.reset(memo_token)
         if token is not None:
             _pinned.reset(token)
         _release(pool, conn)

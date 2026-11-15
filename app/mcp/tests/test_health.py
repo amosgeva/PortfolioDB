@@ -143,7 +143,8 @@ def test_get_health_tool_still_returns_the_diagnostic(env_token, fake_db, monkey
     sc = result.structured_content
     if isinstance(sc, dict) and "result" in sc:
         sc = sc["result"]
-    assert sc["last_snapshot_run"]["error"] == _POISON
+    # Still there for a human, now marked as the collector's free text (M-6).
+    assert sc["last_snapshot_run"]["error"] == {"untrusted_text": _POISON, "truncated": False}
     assert sc["last_snapshot_run"]["symbols_failed"] == 2
     assert "NVDA" in json.dumps(sc)
 

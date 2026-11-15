@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from fastmcp import FastMCP
 
 from app.mcp.services import activity as activity_service
+
+
+Limit = Annotated[int, Field(ge=1, le=activity_service.MAX_ROWS)]
+Account = Annotated[
+    str | None,
+    Field(description="One broker account; '(none)' selects lots recorded without one. None = all accounts."),
+]
 
 
 def register(mcp: FastMCP) -> None:
@@ -15,11 +24,11 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool
     def get_lots(
         symbol: str | None = None,
-        account: str | None = None,
+        account: Account = None,
         side: str | None = None,
         since: date | None = None,
         until: date | None = None,
-        limit: int = 200,
+        limit: Limit = 200,
     ) -> list[dict[str, Any]]:
         """Raw lot rows with any combination of filters.
 
@@ -33,7 +42,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     def get_recent_trades(
-        limit: int = 20, since: date | None = None
+        limit: Limit = 20, since: date | None = None
     ) -> list[dict[str, Any]]:
         """Most recent BUY/SELL trades across all symbols and accounts."""
         return activity_service.recent_trades(limit=limit, since=since)
@@ -59,12 +68,16 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     def get_cash_history(
-        account: str | None = None,
+        account: Account = None,
         since: date | None = None,
         until: date | None = None,
-        limit: int = 200,
+        limit: Limit = 200,
     ) -> list[dict[str, Any]]:
-        """Full cash adjustment history, optionally filtered."""
+        """Full cash adjustment history, optionally filtered.
+
+        since/until are inclusive reporting-timezone dates. `note` is free
+        text, returned as {"untrusted_text": ...}.
+        """
         return activity_service.cash_history(
             account, since=since, until=until, limit=limit,
         )

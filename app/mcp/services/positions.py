@@ -11,6 +11,7 @@ Streamlit dashboard.
 
 from __future__ import annotations
 
+import threading
 import time
 
 from datetime import date, datetime
@@ -24,7 +25,7 @@ from portfolio import compute_avg_cost_merged, compute_fifo_merged
 import corporate_actions
 import ledger_inputs
 
-from app.mcp.deps import get_conn
+from app.mcp.deps import get_conn, snapshot_memo
 from app.mcp.services import common
 from app.mcp.services import prices as prices_service
 from app.mcp.services.cutoff import Cutoff
@@ -39,25 +40,21 @@ def _fetch_lots(
     symbol: str | None = None,
     as_of: date | None = None,
 ) -> list[dict[str, Any]]:
-    """Pull lot rows in the column order portfolio.compute_*_merged expects."""
-    # Compose from psycopg2.sql fragments rather than concatenating a raw
-    # string; all user-supplied filters remain bound via %s.
-    query = sql.SQL(
-        "SELECT id, symbol, account, side, trade_date, quantity, price, fees "
-        "FROM lots "
-        "WHERE 1=1"
-    )
+    """Pull lot rows in the column order portfolio.compute_*_merged expects.
+
+    Composed on the parity contract's own query (ledger_inputs.LOTS_SQL /
+    LOTS_ORDER) with this reader's filters added; all values stay bound.
+    """
+    query = ledger_inputs.LOTS_SQL
     params: list[Any] = []
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     if symbol is not None:
         query += sql.SQL(" AND symbol = %s")
         params.append(symbol.upper())
     if as_of is not None:
         query += sql.SQL(" AND trade_date <= %s")
         params.append(as_of)
-    query += sql.SQL(" ORDER BY symbol, COALESCE(account,''), trade_date, id")
+    query += ledger_inputs.LOTS_ORDER
 
     with conn.cursor() as cur:
         cur.execute(query, params)
@@ -78,12 +75,9 @@ def _fetch_lots(
 
 
 def _engine(method: str):
-    method = method.lower()
-    if method == "fifo":
+    if common.normalize_method(method) == "fifo":
         return compute_fifo_merged
-    if method in ("avg", "avg_cost"):
-        return compute_avg_cost_merged
-    raise ValueError(f"Unknown method '{method}'. Use 'fifo' or 'avg'.")
+    return compute_avg_cost_merged
 
 
 # ────────────────────────── public API ──────────────────────────
@@ -106,20 +100,58 @@ def _engine(method: str):
 # cutoff would otherwise be masked for the life of the process. A short TTL
 # bounds that to seconds, well inside the 5-minute snapshot cadence, while still
 # covering the burst of calls within one request.
+#
+# Why it is locked: tools run on worker threads, and the evict-then-insert below
+# is a compound mutation of a shared dict (audit X-10).
+#
+# Inside deps.snapshot() the global cache is bypassed entirely: the snapshot's
+# reads must all come from its own REPEATABLE READ transaction, and a frame
+# cached from an earlier transaction would let one section of a review see
+# data the others do not (audit Q-6). The snapshot keeps its own memo instead,
+# so a review still computes each frame once.
 _FRAME_CACHE: dict[tuple, tuple[float, pd.DataFrame]] = {}
 _FRAME_CACHE_MAX = 32
 _FRAME_CACHE_TTL_SECONDS = 60.0
+_FRAME_CACHE_LOCK = threading.Lock()
 
 
 def _cache_key(
     method: str, account: str | None, as_of: date | None, cutoff: Cutoff
 ) -> tuple:
-    return (method, account, as_of, cutoff.ts)
+    return (common.normalize_method(method), account, as_of, cutoff.ts)
 
 
 def clear_frame_cache() -> None:
     """Drop the memoised frames. For tests that mutate the underlying data."""
-    _FRAME_CACHE.clear()
+    with _FRAME_CACHE_LOCK:
+        _FRAME_CACHE.clear()
+
+
+def _cache_get(key: tuple) -> pd.DataFrame | None:
+    local = snapshot_memo()
+    if local is not None:
+        frame = local.get(("positions_frame", key))
+        return frame.copy() if frame is not None else None
+    with _FRAME_CACHE_LOCK:
+        entry = _FRAME_CACHE.get(key)
+        if entry is not None and (time.monotonic() - entry[0]) < _FRAME_CACHE_TTL_SECONDS:
+            # Copy: callers filter and assign columns on the result, and a
+            # mutated cache entry would corrupt every later read.
+            return entry[1].copy()
+    return None
+
+
+def _cache_put(key: tuple, frame: pd.DataFrame) -> None:
+    local = snapshot_memo()
+    if local is not None:
+        local[("positions_frame", key)] = frame.copy()
+        return
+    with _FRAME_CACHE_LOCK:
+        if key not in _FRAME_CACHE and len(_FRAME_CACHE) >= _FRAME_CACHE_MAX:
+            # Bounded, and insertion-ordered: drop the oldest entry rather than
+            # letting a long-lived server accumulate one frame per cutoff.
+            _FRAME_CACHE.pop(next(iter(_FRAME_CACHE)))
+        _FRAME_CACHE[key] = (time.monotonic(), frame.copy())
 
 
 def positions_dataframe(
@@ -143,11 +175,9 @@ def positions_dataframe(
     engine = _engine(method)
     key = _cache_key(method, account, as_of, cutoff) if cutoff is not None else None
     if key is not None:
-        entry = _FRAME_CACHE.get(key)
-        if entry is not None and (time.monotonic() - entry[0]) < _FRAME_CACHE_TTL_SECONDS:
-            # Copy: callers filter and assign columns on the result, and a
-            # mutated cache entry would corrupt every later read.
-            return entry[1].copy()
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
 
     effective_as_of = as_of if as_of is not None else (cutoff.trade_date if cutoff else None)
     with get_conn() as conn:
@@ -198,11 +228,7 @@ def positions_dataframe(
     )
 
     if key is not None:
-        if len(_FRAME_CACHE) >= _FRAME_CACHE_MAX:
-            # Bounded, and insertion-ordered: drop the oldest entry rather than
-            # letting a long-lived server accumulate one frame per cutoff.
-            _FRAME_CACHE.pop(next(iter(_FRAME_CACHE)))
-        _FRAME_CACHE[key] = (time.monotonic(), merged.copy())
+        _cache_put(key, merged)
     return merged
 
 
@@ -274,11 +300,13 @@ def positions_summary(
 def position_detail(symbol: str, method: str = "fifo") -> dict[str, Any]:
     """Per-symbol drill-down: merged numbers + per-account breakdown + open lots."""
     sym = symbol.upper()
+    method = common.normalize_method(method)
     merged_row = next(
         (r for r in current_positions(method, held_only=False) if r["symbol"] == sym),
         None,
     )
     breakdown = _per_account_breakdown(sym, method)
+    # Open lots are a FIFO concept: avg-cost has no lot identity to report.
     open_lots_list = open_lots(symbol=sym) if method == "fifo" else []
     trades = _symbol_trades(sym)
     return {
@@ -310,7 +338,7 @@ def _per_account_breakdown(symbol: str, method: str) -> list[dict[str, Any]]:
         if df.empty:
             continue
         row = df.iloc[0].to_dict()
-        row["account"] = acct if acct is not None else "(none)"
+        row["account"] = common.account_label(acct)
         out.append(_clean_record(row))
     return out
 
@@ -328,7 +356,11 @@ def _symbol_trades(symbol: str, limit: int = 20) -> list[dict[str, Any]]:
                 (symbol, limit),
             )
             cols = [d[0] for d in cur.description]
-            return [_clean_record(dict(zip(cols, r))) for r in cur.fetchall()]
+            rows = [_clean_record(dict(zip(cols, r))) for r in cur.fetchall()]
+    for r in rows:
+        # Free text a person typed — or a broker CSV carried in (audit M-6).
+        r["notes"] = common.untrusted(r.get("notes"))
+    return rows
 
 
 def open_lots(

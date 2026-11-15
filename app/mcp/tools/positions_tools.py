@@ -24,7 +24,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             method: 'fifo' (default) or 'avg' — which cost-basis engine to use.
-            account: filter to one broker account (None = all accounts merged).
+            account: filter to one broker account ('(none)' = lots recorded
+                without one; None = all accounts merged).
             held_only: when true, exclude rows with qty == 0.
             as_of: value the portfolio as it stood at the end of this date —
                 lots with trade_date <= it, priced at the last snapshot on or

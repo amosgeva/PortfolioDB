@@ -31,8 +31,12 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from psycopg2 import sql
+
+from app.mcp import deps
 from app.mcp.deps import get_conn
 from app.mcp.services import analytics as analytics_service
+from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import data_quality as dq_service
 from app.mcp.services import fees as fees_service
@@ -83,7 +87,59 @@ def portfolio_review_snapshot(
             f"reporting_currency must be {cutoff_service.REPORTING_CURRENCY}: "
             f"no FX rates are stored, so no conversion is possible."
         )
+    method = common.normalize_method(method)
+    common.check_limit("top_n", top_n, analytics_service.MAX_TOP_N)
 
+    # One consistent read (audit Q-6). The cutoff pins *which* observations
+    # count; the snapshot pins the database state they are read from. Every
+    # service below borrows "a connection" and gets this one, inside a single
+    # REPEATABLE READ transaction, so a correction or backfill committed while
+    # the review is being assembled is seen by every section or by none. The
+    # positions frame cache is bypassed for the same reason (positions.py).
+    with deps.snapshot():
+        return _review(
+            method=method,
+            account=account,
+            as_of=as_of,
+            cutoff=cutoff,
+            benchmark=benchmark,
+            benchmark_period=benchmark_period,
+            detail_level=detail_level,
+            correlation_window=correlation_window,
+            top_n=top_n,
+        )
+
+
+# Which population each section describes when an account is requested
+# (audit X-2). Everything that can be computed for one account is; the data
+# quality verdict is about the shared price and reference data every account
+# is valued from, so it stays portfolio-wide and says so.
+ACCOUNT_SCOPED_SECTIONS = (
+    "summary", "returns", "benchmark", "risk", "concentration", "attribution", "detail",
+)
+PORTFOLIO_WIDE_SECTIONS = ("data_quality",)
+
+
+def _scopes(account: str | None) -> dict[str, str]:
+    if account is None:
+        return {s: "portfolio" for s in (*ACCOUNT_SCOPED_SECTIONS, *PORTFOLIO_WIDE_SECTIONS)}
+    out = {s: f"account:{account}" for s in ACCOUNT_SCOPED_SECTIONS}
+    out.update({s: "portfolio" for s in PORTFOLIO_WIDE_SECTIONS})
+    return out
+
+
+def _review(
+    *,
+    method: str,
+    account: str | None,
+    as_of: datetime | date | None,
+    cutoff: Cutoff | None,
+    benchmark: str | None,
+    benchmark_period: str,
+    detail_level: str,
+    correlation_window: str,
+    top_n: int,
+) -> dict[str, Any]:
     cutoff = cutoff or cutoff_service.resolve(as_of)
 
     positions = positions_service.current_positions(
@@ -92,7 +148,7 @@ def portfolio_review_snapshot(
     # Built once and shared: `risk` and the `full` detail block both need it,
     # and it is one of the more expensive reads in the payload.
     correlation = analytics_service.correlation_matrix(
-        [p["symbol"] for p in positions], window=correlation_window, cutoff=cutoff
+        _largest_symbols(positions), window=correlation_window, cutoff=cutoff
     )
     totals = positions_service.positions_summary(
         method, account=account, cutoff=cutoff
@@ -106,27 +162,50 @@ def portfolio_review_snapshot(
     )
 
     summary = _summary(totals, cash, cash_by_account, income, fees, positions)
+    scopes = _scopes(account)
     review: dict[str, Any] = {
         "meta": cutoff_service.meta(
             cutoff,
             method=method,
             account=account,
             detail_level=detail_level,
+            consistent_read="repeatable_read_snapshot",
+            section_scope=scopes,
         ),
-        "summary": summary,
-        "returns": _returns(cutoff, summary, method, account),
-        "benchmark": returns_service.benchmark_comparison(
-            benchmark_period, symbol=benchmark, cutoff=cutoff
-        ),
-        "risk": _risk(correlation, cutoff),
-        "concentration": _concentration(cutoff, top_n, correlation_window, correlation),
-        "attribution": _attribution(cutoff, method, account, fees, income),
-        "data_quality": _data_quality(cutoff, method),
+        "summary": {**summary, "scope": scopes["summary"]},
+        "returns": {**_returns(cutoff, summary, method, account), "scope": scopes["returns"]},
+        "benchmark": {
+            **returns_service.benchmark_comparison(
+                benchmark_period, symbol=benchmark, cutoff=cutoff, account=account
+            ),
+            "scope": scopes["benchmark"],
+        },
+        "risk": {**_risk(correlation, cutoff, account), "scope": scopes["risk"]},
+        "concentration": {
+            **_concentration(cutoff, top_n, correlation_window, correlation, account),
+            "scope": scopes["concentration"],
+        },
+        "attribution": {
+            **_attribution(cutoff, method, account, fees, income),
+            "scope": scopes["attribution"],
+        },
+        "data_quality": {**_data_quality(cutoff, method), "scope": scopes["data_quality"]},
     }
 
     if detail_level != "summary":
-        review["detail"] = _detail(positions, correlation, detail_level)
+        review["detail"] = {
+            **_detail(positions, correlation, detail_level),
+            "scope": scopes["detail"],
+        }
     return review
+
+
+def _largest_symbols(positions: list[dict[str, Any]]) -> list[str]:
+    """The held symbols to correlate, largest first, within the matrix cap."""
+    ordered = sorted(
+        positions, key=lambda p: float(p.get("market_value") or 0.0), reverse=True
+    )
+    return [p["symbol"] for p in ordered][: analytics_service.MAX_CORRELATION_SYMBOLS]
 
 
 # ────────────────────────── sections ──────────────────────────
@@ -174,7 +253,7 @@ def _summary(
 def _returns(
     cutoff: Cutoff, summary: dict[str, Any], method: str, account: str | None
 ) -> dict[str, Any]:
-    twr = returns_service.period_returns(cutoff=cutoff)
+    twr = returns_service.period_returns(cutoff=cutoff, account=account)
     mwr = _xirr(cutoff, summary, account)
 
     cost_basis = summary["cost_basis"]
@@ -204,7 +283,7 @@ def _returns(
             "return_on_cost": "(realized + unrealized + income) / cost basis. A cumulative ratio, not annualised.",
             "reference": "docs/methodology.md",
         },
-        "coverage_quality": _coverage_quality(cutoff, twr),
+        "coverage_quality": _coverage_quality(cutoff, twr, account),
         "null_reasons": (
             {} if cost_basis else {"return_on_cost_pct": "no_cost_basis"}
         ),
@@ -219,13 +298,14 @@ def _xirr(
     Portfolio-level MWR is impossible here — no external-flow ledger — so this
     is deliberately scoped to the trades themselves, with the closing market
     value standing in for the open position.
+
+    Scoped as a whole for an account: its lots, its income, and its own
+    closing value. The lots used to be filtered on a key the loader never
+    selected (so an account got no lots at all, audit X-1), and the income
+    was every account's (audit Q-3).
     """
-    lots = returns_service._fetch_lots(cutoff)
-    if account is not None:
-        # _fetch_lots does not filter by account; do it here rather than
-        # widening a loader used by the whole returns path.
-        lots = [l for l in lots if l.get("account") == account]
-    dividends = returns_service._fetch_dividends(cutoff)
+    lots = returns_service._fetch_lots(cutoff, account=account)
+    dividends = returns_service._fetch_dividends(cutoff, account=account)
     return xirr_module.from_ledger(
         lots=lots,
         income=[{"pay_date": d["pay_date"], "amount": d["amount"]} for d in dividends],
@@ -234,9 +314,11 @@ def _xirr(
     )
 
 
-def _coverage_quality(cutoff: Cutoff, twr: dict[str, Any]) -> dict[str, Any]:
+def _coverage_quality(
+    cutoff: Cutoff, twr: dict[str, Any], account: str | None = None
+) -> dict[str, Any]:
     """Whether the return series can actually answer what was asked of it."""
-    first_trade = _first_trade_date(cutoff)
+    first_trade = _first_trade_date(cutoff, account)
     coverage_start = cutoff.coverage_start
     gap = (
         (coverage_start - first_trade).days
@@ -259,9 +341,9 @@ def _coverage_quality(cutoff: Cutoff, twr: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _risk(corr: dict[str, Any], cutoff: Cutoff) -> dict[str, Any]:
-    drawdown = analytics_service.drawdown_stats(cutoff=cutoff)
-    vol = returns_service.volatility(cutoff=cutoff)
+def _risk(corr: dict[str, Any], cutoff: Cutoff, account: str | None = None) -> dict[str, Any]:
+    drawdown = analytics_service.drawdown_stats(cutoff=cutoff, account=account)
+    vol = returns_service.volatility(cutoff=cutoff, account=account)
     return {
         "max_drawdown_pct": drawdown["max_drawdown_pct"],
         "current_drawdown_pct": drawdown["current_drawdown_pct"],
@@ -285,10 +367,11 @@ def _risk(corr: dict[str, Any], cutoff: Cutoff) -> dict[str, Any]:
 def _concentration(
     cutoff: Cutoff, top_n: int, correlation_window: str,
     correlation: dict[str, Any] | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
-    conc = analytics_service.concentration(top_n, cutoff=cutoff)
+    conc = analytics_service.concentration(top_n, cutoff=cutoff, account=account)
     allocations = {
-        dim: analytics_service.allocation_by(dim, cutoff=cutoff)["rows"]
+        dim: analytics_service.allocation_by(dim, cutoff=cutoff, account=account)["rows"]
         for dim in REVIEW_DIMENSIONS
     }
     return {
@@ -305,7 +388,7 @@ def _concentration(
         "by_account": allocations["account"],
         "scenarios": analytics_service.stress_scenarios(
             cutoff=cutoff, correlation_window=correlation_window,
-            correlation=correlation,
+            correlation=correlation, account=account,
         ),
         "null_reasons": conc.get("null_reasons", {}),
     }
@@ -415,6 +498,8 @@ def _cash(cutoff: Cutoff, account: str | None) -> tuple[float, list[dict[str, An
                 (as_of_ts,),
             )
             rows = cur.fetchall()
+    # cash_snapshots.account is NOT NULL, so '(none)' — lots without an
+    # account — has no cash of its own and matches nothing here.
     out = [
         {"account": acct or "(merged)", "cash": float(amount),
          "ts": ts.isoformat() if ts else None}
@@ -424,12 +509,12 @@ def _cash(cutoff: Cutoff, account: str | None) -> tuple[float, list[dict[str, An
     return sum(r["cash"] for r in out), out
 
 
-def _first_trade_date(cutoff: Cutoff) -> date | None:
+def _first_trade_date(cutoff: Cutoff, account: str | None = None) -> date | None:
+    query = sql.SQL("SELECT MIN(trade_date) FROM lots WHERE trade_date <= %s")
+    params: list[Any] = [cutoff.trade_date]
+    query, params = common.add_account_filter(query, params, account)
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT MIN(trade_date) FROM lots WHERE trade_date <= %s",
-                (cutoff.trade_date,),
-            )
+            cur.execute(query, params)
             row = cur.fetchone()
             return row[0] if row else None

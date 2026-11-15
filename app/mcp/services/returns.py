@@ -19,11 +19,15 @@ from typing import Any
 
 # Import deps first: it puts app/ on sys.path so the top-level `twr` module
 # (a sibling of fifo.py/portfolio.py) resolves regardless of how tests are run.
+from psycopg2 import sql
+
 from app.mcp.deps import get_conn
+from app.mcp.services import common
 from app.mcp.services.cutoff import Cutoff, LOCAL_TZ, tz_name
 
 import benchmark
 import corporate_actions
+import ledger_inputs
 import twr
 
 _BASIS = "time_weighted_return"
@@ -38,20 +42,50 @@ TRADING_DAYS_PER_YEAR = 252
 MIN_ALIGNMENT_PCT = 80.0
 MIN_ALIGNED_OBSERVATIONS = 10
 
+# Short periods cannot reach ten observed days: a 1D return spans two (the
+# last observed day before today, and today), a WTD one at most six. The
+# blanket minimum made both periods the tool advertises permanently
+# unanswerable (audit X-6). Their floor is the two observations a return needs
+# at all; the alignment percentage still applies to every period.
+PERIOD_MIN_OBSERVATIONS = {"1D": 2, "WTD": 2}
+
+
+def period_minimum(period: str) -> int:
+    return PERIOD_MIN_OBSERVATIONS.get(period, MIN_ALIGNED_OBSERVATIONS)
+
+
+def _records(cutoff: Cutoff | None, account: str | None, price_by_day):
+    """The daily TWR records for the whole book or one account.
+
+    Account-scoped means both flows are scoped: that account's trades and that
+    account's income. Prices are shared — a quote is not per-account.
+    """
+    return twr.build_daily_records(
+        _fetch_lots(cutoff, account=account),
+        price_by_day,
+        _fetch_dividends(cutoff, account=account),
+    )
+
 
 def period_returns(
-    *, today: date | None = None, cutoff: Cutoff | None = None
+    *,
+    today: date | None = None,
+    cutoff: Cutoff | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
-    """Time-weighted return % for each standard period."""
+    """Time-weighted return % for each standard period.
+
+    ``account`` scopes the return to one account's trades and income ('(none)'
+    for lots recorded without an account); None is the whole book.
+    """
     today = today or (cutoff.trade_date if cutoff else datetime.now(LOCAL_TZ).date())
     price_by_day = _price_by_day(cutoff)
-    records = twr.build_daily_records(
-        _fetch_lots(cutoff), price_by_day, _fetch_dividends(cutoff)
-    )
+    records = _records(cutoff, account, price_by_day)
     periods = twr.period_returns(records, today)
     return {
         "basis": _BASIS,
         "as_of": today.isoformat(),
+        "account": account,
         "periods": {p: periods.get(p) for p in PERIODS},
         "observations": len(records),
         "coverage": _coverage(price_by_day),
@@ -59,7 +93,10 @@ def period_returns(
 
 
 def volatility(
-    *, cutoff: Cutoff | None = None, annualised: bool = True
+    *,
+    cutoff: Cutoff | None = None,
+    annualised: bool = True,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Standard deviation of daily portfolio returns, read off the TWR curve.
 
@@ -67,9 +104,7 @@ def volatility(
     contributions do not register as volatility.
     """
     price_by_day = _price_by_day(cutoff)
-    records = twr.build_daily_records(
-        _fetch_lots(cutoff), price_by_day, _fetch_dividends(cutoff)
-    )
+    records = _records(cutoff, account, price_by_day)
     curve = twr.growth_curve(records)
 
     daily = [
@@ -107,7 +142,8 @@ def benchmark_comparison(
     symbol: str | None = None,
     cutoff: Cutoff | None = None,
     min_alignment_pct: float = MIN_ALIGNMENT_PCT,
-    min_observations: int = MIN_ALIGNED_OBSERVATIONS,
+    min_observations: int | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Portfolio TWR vs a benchmark (default SPY) over one period.
 
@@ -124,21 +160,28 @@ def benchmark_comparison(
     """
     if period not in PERIODS:
         raise ValueError(f"period must be one of {PERIODS}")
+    if min_observations is None:
+        min_observations = period_minimum(period)
+    # The tool schema floors this at 2; a direct service caller may pass 0 to
+    # switch the observation guard off deliberately (the alignment % remains).
+    if isinstance(min_observations, bool) or not isinstance(min_observations, int) or min_observations < 0:
+        raise ValueError("min_observations must be a non-negative integer")
+    if not (0.0 <= float(min_alignment_pct) <= 100.0):
+        raise ValueError("min_alignment_pct must be between 0 and 100")
     # One resolution for every surface (app/benchmark.py): the dashboard
     # computes against the same symbol (audit U-3).
     symbol = benchmark.benchmark_symbol(symbol)
     today = today or (cutoff.trade_date if cutoff else datetime.now(LOCAL_TZ).date())
 
     price_by_day = _price_by_day(cutoff)
-    records = twr.build_daily_records(
-        _fetch_lots(cutoff), price_by_day, _fetch_dividends(cutoff)
-    )
+    records = _records(cutoff, account, price_by_day)
     port = twr.period_returns(records, today)
     bench = twr.period_returns(twr.benchmark_records(price_by_day, symbol), today)
 
     alignment = _alignment(price_by_day, records, symbol, period, today)
     base = {
         "period": period,
+        "account": account,
         "benchmark_symbol": symbol,
         "basis": _BASIS,
         "benchmark_source": "price_snapshots",
@@ -200,23 +243,42 @@ def benchmark_comparison(
 # ────────────────────────── alignment ──────────────────────────
 
 
-def _period_start(period: str, today: date) -> date | None:
-    """First day the period covers. None for MAX (all of history)."""
+def _period_start(
+    period: str, today: date, records: list[dict[str, Any]] | None = None
+) -> date | None:
+    """First day the period's return is measured from. None for MAX.
+
+    The same base day ``twr.period_returns`` uses: the last observed day
+    *before* the period's boundary (for 1Y, on or before it). A 1D return on a
+    Monday is measured from Friday, so the alignment window must include
+    Friday — counting from the calendar boundary (Sunday) found one day and
+    could never pass. Without records, the calendar boundary.
+    """
     from datetime import timedelta
 
     if period == "MAX":
         return None
+    strict = True
     if period == "1D":
-        return today - timedelta(days=1)
-    if period == "WTD":
-        return today - timedelta(days=today.weekday())
-    if period == "MTD":
-        return today.replace(day=1)
-    if period == "YTD":
-        return today.replace(month=1, day=1)
-    if period == "1Y":
-        return today - timedelta(days=365)
-    return None
+        boundary = today
+    elif period == "WTD":
+        boundary = today - timedelta(days=today.weekday())
+    elif period == "MTD":
+        boundary = today.replace(day=1)
+    elif period == "YTD":
+        boundary = today.replace(month=1, day=1)
+    elif period == "1Y":
+        boundary, strict = today - timedelta(days=365), False
+    else:
+        return None
+    if records:
+        days = sorted(
+            r["day"] for r in records
+            if (r["day"] < boundary if strict else r["day"] <= boundary)
+        )
+        if days:
+            return days[-1]
+    return boundary
 
 
 def _alignment(
@@ -232,7 +294,7 @@ def _alignment(
     a trading-day count from a calendar — there is no market calendar in this
     database, and inventing one would put a guess underneath a guard.
     """
-    start = _period_start(period, today)
+    start = _period_start(period, today, records)
     port_days = {
         r["day"] for r in records
         if r["mv"] > 0 and (start is None or r["day"] >= start) and r["day"] <= today
@@ -299,54 +361,70 @@ def _coverage(price_by_day: dict[date, dict[str, float]]) -> dict[str, Any]:
 # ────────────────────────── data loaders ──────────────────────────
 
 
-def _fetch_lots(cutoff: Cutoff | None = None) -> list[dict[str, Any]]:
-    """Lots restated into post-split units.
+def _fetch_lots(
+    cutoff: Cutoff | None = None, *, account: str | None = None
+) -> list[dict[str, Any]]:
+    """Lots restated into today's units, optionally for one account.
 
-    Cash flow (quantity × price) is invariant under the adjustment; the
+    Composed on the parity contract (ledger_inputs.LOTS_SQL + prepare) with
+    every recorded action applied, because the price series below is restated
+    with every action too: the TWR walk multiplies these quantities by those
+    prices. Cash flow (quantity × price) is invariant under the adjustment; the
     reconstructed share count is not, which is what the holdings walk needs.
+
+    ``account`` filters with the same rule as every other reader ('(none)'
+    selects lots without an account). The rows carry ``account`` — the review's
+    account-scoped XIRR used to filter on a key this loader never selected,
+    and so received no lots at all (audit X-1).
     """
     trade_date = cutoff.trade_date if cutoff else None
+    query = ledger_inputs.LOTS_SQL
+    params: list[Any] = []
+    query, params = common.add_account_filter(query, params, account)
+    if trade_date is not None:
+        query += sql.SQL(" AND trade_date <= %s")
+        params.append(trade_date)
+    query += ledger_inputs.LOTS_ORDER
     with get_conn() as conn:
         actions = corporate_actions.fetch_actions(conn)
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT symbol, side, trade_date, quantity, price, fees
-                FROM lots
-                WHERE (%s::date IS NULL OR trade_date <= %s)
-                """,
-                (trade_date, trade_date),
-            )
-            rows = [
-                {
-                    "symbol": r[0], "side": r[1], "trade_date": r[2],
-                    "quantity": r[3], "price": r[4], "fees": float(r[5] or 0),
-                }
-                for r in cur.fetchall()
-            ]
-    adjusted = corporate_actions.adjust_lot_rows(rows, actions)
+            cur.execute(query, params)
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    adjusted = ledger_inputs.prepare(rows, actions).lots
     for r in adjusted:
         r["quantity"] = float(r["quantity"])
         r["price"] = float(r["price"])
+        r["fees"] = float(r.get("fees") or 0)
     return adjusted
 
 
-def _fetch_dividends(cutoff: Cutoff | None = None) -> list[dict[str, Any]]:
+def _fetch_dividends(
+    cutoff: Cutoff | None = None, *, account: str | None = None
+) -> list[dict[str, Any]]:
+    """Income received by the cutoff, optionally for one account.
+
+    Scoped with the lots: an account's money-weighted or time-weighted return
+    built from its own trades and every account's dividends was wrong by the
+    other accounts' income (audit Q-3).
+    """
     pay_date = cutoff.trade_date if cutoff else None
+    query = sql.SQL("SELECT pay_date, amount, account FROM income WHERE 1=1")
+    params: list[Any] = []
+    query, params = common.add_account_filter(query, params, account)
+    if pay_date is not None:
+        query += sql.SQL(" AND pay_date <= %s")
+        params.append(pay_date)
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT pay_date, amount FROM income
-                WHERE (%s::date IS NULL OR pay_date <= %s)
-                """,
-                (pay_date, pay_date),
-            )
-            return [
-                {"pay_date": r[0], "amount": float(r[1])}
-                for r in cur.fetchall()
-                if r[0] is not None and r[1] is not None
-            ]
+            cur.execute(query, params)
+            cols = [d[0] for d in cur.description]
+            recs = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [
+        {"pay_date": r["pay_date"], "amount": float(r["amount"]), "account": r.get("account")}
+        for r in recs
+        if r.get("pay_date") is not None and r.get("amount") is not None
+    ]
 
 
 def _price_by_day(cutoff: Cutoff | None = None) -> dict[date, dict[str, float]]:

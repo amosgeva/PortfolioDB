@@ -18,6 +18,7 @@ from typing import Any
 from psycopg2 import sql
 
 from app.mcp.deps import get_conn
+from app.mcp.services import common
 from app.mcp.services import positions as positions_service
 from app.mcp.services.cutoff import Cutoff
 
@@ -106,9 +107,7 @@ def _fetch_fee_rows(
     if until is not None:
         query += sql.SQL(" AND trade_date <= %s")
         params.append(until)
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     query += sql.SQL(" ORDER BY symbol, COALESCE(account,'')")
 
     with get_conn() as conn:

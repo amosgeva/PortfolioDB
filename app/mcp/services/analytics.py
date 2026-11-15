@@ -30,13 +30,25 @@ import twr
 # ────────────────────────── concentration ──────────────────────────
 
 
-def concentration(top_n: int = 10, *, cutoff: Cutoff | None = None) -> dict[str, Any]:
+# Caps on client-controlled sizes (audit M-5). The correlation matrix is
+# O(n²) in symbols, so its list is the one that matters most.
+MAX_TOP_N = 100
+MAX_CORRELATION_SYMBOLS = 60
+
+
+def concentration(
+    top_n: int = 10, *, cutoff: Cutoff | None = None, account: str | None = None
+) -> dict[str, Any]:
     """Top-N weights, HHI, and percentage held in the top-N.
 
     HHI is the Herfindahl-Hirschman Index = Σ wᵢ² over position weights
     expressed as decimals (0-1). 1.0 = single name; 1/N = perfectly equal.
+    ``account`` measures one account's book on its own.
     """
-    positions = positions_service.current_positions("fifo", held_only=True, cutoff=cutoff)
+    common.check_limit("top_n", top_n, MAX_TOP_N)
+    positions = positions_service.current_positions(
+        "fifo", held_only=True, cutoff=cutoff, account=account
+    )
     weighted = [
         (p["symbol"], float(p.get("market_value") or 0.0), float(p.get("weight_pct") or 0.0))
         for p in positions
@@ -98,7 +110,10 @@ _ATTRIBUTE_DIMENSIONS = frozenset({"sector", "asset_class", "currency", "region"
 
 
 def allocation_by(
-    dimension: str = "sector", *, cutoff: Cutoff | None = None
+    dimension: str = "sector",
+    *,
+    cutoff: Cutoff | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Portfolio market-value weight bucketed by one dimension.
 
@@ -117,9 +132,11 @@ def allocation_by(
         raise ValueError(f"dimension must be one of {_ALLOC_DIMENSIONS}")
 
     if dimension == "account":
-        return _allocation_by_account(cutoff)
+        return _allocation_by_account(cutoff, account=account)
 
-    positions = positions_service.current_positions("fifo", held_only=True, cutoff=cutoff)
+    positions = positions_service.current_positions(
+        "fifo", held_only=True, cutoff=cutoff, account=account
+    )
     if not positions:
         return {"dimension": dimension, "total_market_value": 0.0, "rows": []}
 
@@ -222,25 +239,34 @@ def _attribute_map(symbols: list[str], dimension: str) -> dict[str, str | None]:
             return {sym: val for sym, val in cur.fetchall()}
 
 
-def _allocation_by_account(cutoff: Cutoff | None = None) -> dict[str, Any]:
+def _allocation_by_account(
+    cutoff: Cutoff | None = None, *, account: str | None = None
+) -> dict[str, Any]:
     """Market value per broker account (open positions only).
 
     Reuses positions_summary per distinct account so the numbers match the
     per-account view elsewhere. Accounts with no current market value drop out.
+
+    Lots without an account are their own bucket, '(none)', valued with the
+    `account IS NULL` filter. They used to be valued with account=None — which
+    means "no filter", the whole portfolio — and then the named accounts were
+    added on top, double-counting every named account (audit X-3).
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT account FROM lots")
-            accounts = [r[0] for r in cur.fetchall()]
+            accounts = [common.account_label(r[0]) for r in cur.fetchall()]
+    if account is not None:
+        accounts = [a for a in accounts if a == account]
 
     buckets: dict[str, float] = defaultdict(float)
     total_mv = 0.0
-    for acct in accounts:
+    for acct in sorted(set(accounts)):
         summary = positions_service.positions_summary("fifo", account=acct, cutoff=cutoff)
         mv = float(summary.get("market_value") or 0.0)
         if mv <= 0:
             continue
-        buckets[acct or "(none)"] += mv
+        buckets[acct] += mv
         total_mv += mv
 
     rows = [
@@ -283,11 +309,22 @@ def correlation_matrix(
         raise ValueError("window must be '1m', '3m', '6m', '1y', or 'all'")
     if resample not in ("daily", "raw"):
         raise ValueError("resample must be 'daily' or 'raw'")
+    common.check_limit("min_observations", min_observations, 10_000, minimum=2)
 
-    syms = symbols
+    syms = common.check_symbols(symbols, MAX_CORRELATION_SYMBOLS)
     if syms is None:
-        syms = [p["symbol"] for p in positions_service.current_positions("fifo", held_only=True)]
-    syms = sorted({s.upper() for s in syms})
+        held = [
+            p["symbol"]
+            for p in sorted(
+                positions_service.current_positions("fifo", held_only=True, cutoff=cutoff),
+                key=lambda p: float(p.get("market_value") or 0.0),
+                reverse=True,
+            )
+        ]
+        # The held book can be larger than the cap; correlate its largest
+        # names rather than refusing a call the caller did not size.
+        syms = held[:MAX_CORRELATION_SYMBOLS]
+    syms = sorted(set(syms))
     if len(syms) < 2:
         return {
             "symbols": syms, "window": window, "observations": 0,
@@ -357,8 +394,10 @@ def _daily_price_frame(
     returns matrix as a one-day ±50%-scale move and dominate every correlation
     that symbol takes part in.
     """
-    since = _window_since(window)
+    # Anchored to the cutoff: "3m as of June 30" is April–June, not the three
+    # months before whenever the call happened to run (audit X-10).
     as_of_ts = cutoff.ts if cutoff else None
+    since = _window_since(window, now=as_of_ts)
     with get_conn() as conn:
         actions = corporate_actions.fetch_actions(conn)
         with conn.cursor() as cur:
@@ -424,8 +463,13 @@ def drawdown_stats(
     since: date | None = None,
     holdings_basis: str = "historical",
     cutoff: Cutoff | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Max-drawdown stats for a symbol or for the whole portfolio.
+
+    ``account`` scopes the portfolio growth curve to one account's trades and
+    income (historical basis only — the comparison basis and a single symbol's
+    price series have no account dimension, and are refused with one).
 
     symbol=None replays portfolio value over the snapshot history using the
     holdings actually held at each point. Prices are split-adjusted, so a 2:1
@@ -454,10 +498,14 @@ def drawdown_stats(
     """
     if holdings_basis not in ("historical", "current_constant"):
         raise ValueError("holdings_basis must be 'historical' or 'current_constant'")
+    if account is not None and (symbol is not None or holdings_basis != "historical"):
+        raise ValueError(
+            "account applies only to the portfolio drawdown on the historical basis"
+        )
 
     if symbol is None and holdings_basis == "historical":
         basis = "twr_growth_curve"
-        series = _portfolio_growth_series(since, cutoff=cutoff)
+        series = _portfolio_growth_series(since, cutoff=cutoff, account=account)
     elif symbol is None:
         basis = "market_value_current_constant"
         series = _portfolio_value_series(since, holdings_basis=holdings_basis, cutoff=cutoff)
@@ -487,6 +535,7 @@ def drawdown_stats(
 
     return {
         "symbol": symbol.upper() if symbol else None,
+        "account": account,
         "since": since.isoformat() if since else None,
         "basis": basis,
         "holdings_basis": holdings_basis if symbol is None else None,
@@ -572,7 +621,7 @@ def _portfolio_value_series(
 
 
 def _portfolio_growth_series(
-    since: date | None, *, cutoff: Cutoff | None = None
+    since: date | None, *, cutoff: Cutoff | None = None, account: str | None = None
 ) -> list[tuple[Any, float]]:
     """The portfolio's time-weighted growth curve, one point per reporting day.
 
@@ -587,9 +636,9 @@ def _portfolio_growth_series(
     from app.mcp.services import returns as returns_service
 
     records = twr.build_daily_records(
-        returns_service._fetch_lots(cutoff),
+        returns_service._fetch_lots(cutoff, account=account),
         returns_service._price_by_day(cutoff),
-        returns_service._fetch_dividends(cutoff),
+        returns_service._fetch_dividends(cutoff, account=account),
     )
     curve = twr.growth_curve(records)
     if since is not None:
@@ -657,8 +706,11 @@ def stress_scenarios(
     cluster_shock_pct: float = DEFAULT_SHOCKS["cluster_shock_pct"],
     correlation_window: str = "3m",
     correlation: dict[str, Any] | None = None,
+    account: str | None = None,
 ) -> dict[str, Any]:
     """Deterministic what-if arithmetic on current weights.
+
+    ``account`` runs the scenarios on one account's holdings.
 
     These are **analytical sensitivities, not forecasts**: each result is what
     the portfolio would be worth if the named holdings fell by the stated
@@ -670,9 +722,10 @@ def stress_scenarios(
     Concentration is the live risk in a book this size, which is why the
     scenarios are weight-driven rather than volatility-driven.
     """
+    common.check_limit("top_n", top_n, MAX_TOP_N)
     positions = [
         p for p in positions_service.current_positions(
-            "fifo", held_only=True, cutoff=cutoff
+            "fifo", held_only=True, cutoff=cutoff, account=account
         )
         if p.get("market_value")
     ]

@@ -186,6 +186,15 @@ def fake_db(monkeypatch):
         reports_resource, meta_tools,
     ):
         monkeypatch.setattr(mod, "get_conn", fake_get_conn)
+
+    # The review reads inside deps.snapshot(), which borrows a real pooled
+    # connection. Under the fake it pins nothing: every get_conn() already
+    # answers from the same queue.
+    @contextmanager
+    def fake_snapshot():
+        yield FakeConn(state)
+
+    monkeypatch.setattr(deps, "snapshot", fake_snapshot)
     # No corporate actions unless a test says otherwise. Every reader now asks
     # for them on the connection it holds, and with a cycling fake response the
     # actions query would be answered with whatever rows the test queued for

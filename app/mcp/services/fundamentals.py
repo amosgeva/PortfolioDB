@@ -18,8 +18,28 @@ from typing import Any
 import fd_store
 from psycopg2 import sql
 
-from app.mcp.deps import get_conn
+from app.mcp.deps import explain_db_error, get_conn
 from app.mcp.services import common
+
+# Caps on client-controlled sizes (audit M-5).
+MAX_ROWS = 100
+MAX_NEWS = 200
+MAX_NEWS_SYMBOLS = 100
+
+# Vendor columns that hold free text — names, titles, headlines — wrapped as
+# untrusted data. The raw upstream JSON is not returned at all (audit M-6).
+VENDOR_TEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "facts": ("name", "industry", "category", "location", "website"),
+    "metrics": (),
+    "statements": (),
+    "earnings": (),
+    "filings": ("url",),
+    "insiders": ("name", "title", "security_title"),
+    "ownership": ("investor",),
+    "news": ("title", "source", "url"),
+}
+# Most numeric line items a statement row carries from its raw payload.
+MAX_LINE_ITEMS = 200
 
 
 def is_etf(symbol: str) -> bool:
@@ -33,14 +53,14 @@ def company_facts(symbol: str) -> dict[str, Any] | None:
     sym = symbol.upper()
     with get_conn() as conn:
         row = fd_store.latest_facts(conn, sym)
-    return _scrub(row)
+    return _vendor(row, "facts")
 
 
 def financial_metrics(symbol: str) -> dict[str, Any] | None:
     sym = symbol.upper()
     with get_conn() as conn:
         row = fd_store.latest_metrics(conn, sym)
-    return _scrub(row)
+    return _vendor(row, "metrics")
 
 
 def financial_statements(
@@ -53,52 +73,58 @@ def financial_statements(
             "statement_type must be 'income_statement', 'balance_sheet', "
             "or 'cash_flow_statement'"
         )
+    common.check_limit("limit", limit, MAX_ROWS)
     sym = symbol.upper()
     with get_conn() as conn:
         rows = fd_store.recent_financials(conn, sym, statement_type, limit=limit)
-    return [_scrub(r) for r in rows]
+    return [_statement(r) for r in rows]
 
 
 def earnings_history(symbol: str, limit: int = 4) -> list[dict[str, Any]]:
+    common.check_limit("limit", limit, MAX_ROWS)
     sym = symbol.upper()
     with get_conn() as conn:
         rows = fd_store.recent_earnings(conn, sym, limit=limit)
-    return [_scrub(r) for r in rows]
+    return [_vendor(r, "earnings") for r in rows]
 
 
 def filings(symbol: str, limit: int = 10) -> list[dict[str, Any]]:
+    common.check_limit("limit", limit, MAX_ROWS)
     sym = symbol.upper()
     with get_conn() as conn:
         rows = fd_store.recent_filings(conn, sym, limit=limit)
-    return [_scrub(r) for r in rows]
+    return [_vendor(r, "filings") for r in rows]
 
 
 def insider_trades(symbol: str, limit: int = 15) -> list[dict[str, Any]]:
+    common.check_limit("limit", limit, MAX_ROWS)
     sym = symbol.upper()
     with get_conn() as conn:
         rows = fd_store.recent_insiders(conn, sym, limit=limit)
-    return [_scrub(r) for r in rows]
+    return [_vendor(r, "insiders") for r in rows]
 
 
 def top_holders(symbol: str, limit: int = 10) -> list[dict[str, Any]]:
+    common.check_limit("limit", limit, MAX_ROWS)
     sym = symbol.upper()
     with get_conn() as conn:
         rows = fd_store.top_holders(conn, sym, limit=limit)
-    return [_scrub(r) for r in rows]
+    return [_vendor(r, "ownership") for r in rows]
 
 
 def news(
     symbols: list[str] | None = None, limit: int = 50
 ) -> list[dict[str, Any]]:
     """News for one or many symbols. None = held + watchlist universe."""
+    common.check_limit("limit", limit, MAX_NEWS)
     if symbols is None:
         symbols = _default_news_universe()
     if not symbols:
         return []
-    syms = [s.upper() for s in symbols]
+    syms = common.check_symbols(symbols, MAX_NEWS_SYMBOLS)
     with get_conn() as conn:
         rows = fd_store.recent_news(conn, syms, limit=limit)
-    return [_scrub(r) for r in rows]
+    return [_vendor(r, "news") for r in rows]
 
 
 # ────────────────────────── freshness ──────────────────────────
@@ -137,7 +163,9 @@ def freshness(symbol: str | None = None) -> dict[str, Any]:
                     ts, count = cur.fetchone()
             except Exception as e:
                 conn.rollback()
-                out["sections"][section] = {"error": str(e)}
+                # Usually the table does not exist yet (enrichment never ran).
+                # The driver's text names the database; say what it means.
+                out["sections"][section] = {"table": tbl, "error": explain_db_error(e)}
                 continue
             out["sections"][section] = {
                 "table": tbl,
@@ -174,3 +202,29 @@ def _default_news_universe() -> list[str]:
 
 # Shared with positions — see common.clean_record.
 _scrub = common.clean_record
+
+
+def _vendor(row: dict[str, Any] | None, section: str) -> dict[str, Any] | None:
+    """A vendor row without ``raw``, its free-text columns wrapped."""
+    return _scrub(common.vendor_record(row, text_fields=VENDOR_TEXT_FIELDS[section]))
+
+
+def _statement(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A financial-statement row: the extracted columns plus the numeric line
+    items of the raw payload.
+
+    A statement's line items live only in ``raw``; dropping it outright would
+    lose the data the tool exists to serve. Numbers carry no instructions, so
+    the numeric scalars are kept (capped) and every string is left behind.
+    """
+    if row is None:
+        return None
+    raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
+    items = {
+        str(k): v for k, v in raw.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    out = _vendor(row, "statements") or {}
+    out["line_items"] = dict(list(items.items())[:MAX_LINE_ITEMS])
+    out["line_items_truncated"] = len(items) > MAX_LINE_ITEMS
+    return out

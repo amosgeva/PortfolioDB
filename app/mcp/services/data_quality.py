@@ -33,12 +33,17 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from decimal import Decimal
+
 from app.mcp.deps import get_conn
+from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
 from app.mcp.services.cutoff import Cutoff, tz_name
 
 import corporate_actions
+import ledger_inputs
+from fifo import Lot as FifoLot, run_fifo
 
 # Worst-wins ordering. `inconsistent` outranks `unavailable` because
 # contradictory data yields a confidently wrong number, while missing data at
@@ -383,10 +388,14 @@ def _collector_status(
                 hours_since_last_run=round(gap_h, 2),
             ))
         if last_run["status"] == "partial":
+            # The collector's error text is written verbatim from yfinance and
+            # its exceptions: free text, carried separately and marked as such
+            # rather than spliced into this message (audit M-6).
             issues.append(_issue(
                 "last_run_partial", "partial",
                 f"Most recent run reported {last_run['symbols_failed']} "
-                f"problem symbol(s): {last_run.get('error') or 'no detail'}",
+                f"problem symbol(s); the collector's own text is in error_text.",
+                error_text=common.untrusted(last_run.get("error")),
             ))
             status = worst([status, "partial"])
 
@@ -518,42 +527,62 @@ def _classification_gaps(symbols: list[str]) -> dict[str, list[str]]:
 
 
 def _orphan_sells(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
-    """First point per symbol where cumulative SELL exceeds cumulative BUY.
+    """First SELL per symbol that the FIFO engine could not fully match.
 
-    Scoped to (symbol, account) because that is how the engines match. The
-    running total is the same walk run_fifo performs, so a hit here is exactly
-    the case where it logs a warning and truncates.
+    Asked of the engine itself, on the prepared ledger: lots restated by the
+    corporate actions that had happened by the cutoff (ledger_inputs.load,
+    the parity contract), then replayed per (symbol, account) exactly as
+    run_fifo does — its own ordering included. A sell whose matched quantity
+    falls short of its quantity is the case run_fifo logs and truncates.
+
+    This used to sum raw quantities in SQL. A buy of 10 before a 2:1 split and
+    a sale of 20 after it is matched in full by the engines, but read as a
+    permanent oversell of 10; a reverse split hid a real oversell the same way
+    (audit X-5). Reading the engine's own matches also keeps this check right
+    if the engine's within-day ordering changes.
     """
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH ordered AS (
-                  SELECT symbol, account, trade_date, id, side, quantity,
-                         SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END)
-                           OVER (PARTITION BY symbol, COALESCE(account,'')
-                                 ORDER BY trade_date, id) AS running
-                  FROM lots
-                  WHERE trade_date <= %s
-                )
-                SELECT DISTINCT ON (symbol)
-                       symbol, account, trade_date, id, quantity, running
-                FROM ordered
-                WHERE running < -0.00000001
-                ORDER BY symbol, trade_date, id
-                """,
-                (cutoff.trade_date,),
-            )
-            return {
-                r[0]: {
-                    "account": r[1],
-                    "trade_date": r[2],
-                    "lot_id": int(r[3]),
-                    "sell_quantity": float(r[4]),
-                    "shortfall": float(r[5]),
+        prepared = ledger_inputs.load(conn, as_of=cutoff.trade_date)
+
+    streams: dict[tuple[str, str | None], list[FifoLot]] = defaultdict(list)
+    for r in prepared.lots:
+        streams[(r["symbol"], r["account"])].append(FifoLot(
+            id=int(r["id"]),
+            symbol=r["symbol"],
+            account=r["account"],
+            side=r["side"],
+            trade_date=r["trade_date"],
+            quantity=Decimal(str(r["quantity"])),
+            price=Decimal(str(r["price"])),
+            fees=Decimal(str(r["fees"] or 0)),
+        ))
+
+    found: dict[str, dict[str, Any]] = {}
+    tolerance = Decimal("0.00000001")
+    for (sym, acct), stream in sorted(
+        streams.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
+    ):
+        result = run_fifo(stream)
+        matched: dict[int, Decimal] = defaultdict(Decimal)
+        for m in result.matches:
+            matched[m.sell_lot_id] += m.qty
+        for lot in sorted(stream, key=lambda l: (l.trade_date, l.id)):
+            if lot.side.upper() != "SELL":
+                continue
+            shortfall = lot.quantity - matched.get(lot.id, Decimal("0"))
+            if shortfall <= tolerance:
+                continue
+            prior = found.get(sym)
+            if prior is None or (lot.trade_date, lot.id) < (prior["trade_date"], prior["lot_id"]):
+                found[sym] = {
+                    "account": acct,
+                    "trade_date": lot.trade_date,
+                    "lot_id": lot.id,
+                    "sell_quantity": float(lot.quantity),
+                    "shortfall": -float(shortfall),
                 }
-                for r in cur.fetchall()
-            }
+            break
+    return found
 
 
 def _suspect_duplicate_lots(cutoff: Cutoff) -> dict[str, dict[str, Any]]:

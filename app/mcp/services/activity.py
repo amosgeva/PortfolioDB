@@ -2,12 +2,36 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from psycopg2 import sql
 
 from app.mcp.deps import get_conn
+from app.mcp.services import common
+from app.mcp.services.cutoff import LOCAL_TZ
+
+# Largest page a caller may ask for. The ledger is personal-scale; a request
+# for more is a mistake or an attempt to make the server do a lot of work.
+MAX_ROWS = 1000
+
+
+def _day_bounds(since: date | None, until: date | None) -> tuple[datetime | None, datetime | None]:
+    """[since 00:00, until+1 00:00) in the reporting timezone, as instants.
+
+    A bare date compared with a timestamptz is midnight at the *start* of that
+    day in the server's zone, so ``until=2026-08-01`` used to stop at the first
+    instant of the 1st and drop the whole day it named (audit X-10). Both ends
+    are now whole reporting-timezone days, ``until`` inclusive.
+    """
+    if since is not None and until is not None and since > until:
+        raise ValueError(f"since ({since}) is after until ({until})")
+    lo = datetime.combine(since, time.min, tzinfo=LOCAL_TZ) if since is not None else None
+    hi = (
+        datetime.combine(until + timedelta(days=1), time.min, tzinfo=LOCAL_TZ)
+        if until is not None else None
+    )
+    return lo, hi
 
 
 # ────────────────────────── lots ──────────────────────────
@@ -23,6 +47,11 @@ def lots(
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """Raw lot rows filtered by any combination of fields."""
+    common.check_limit("limit", limit, MAX_ROWS)
+    if since is not None and until is not None and since > until:
+        raise ValueError(f"since ({since}) is after until ({until})")
+    if side is not None and side.upper() not in ("BUY", "SELL"):
+        raise ValueError("side must be 'BUY' or 'SELL'")
     # Build the statement from psycopg2.sql fragments so the query is never a
     # formatted/concatenated raw string. Every user value is still bound via %s.
     query = sql.SQL(
@@ -33,9 +62,7 @@ def lots(
     if symbol is not None:
         query += sql.SQL(" AND symbol = %s")
         params.append(symbol.upper())
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     if side is not None:
         query += sql.SQL(" AND side = %s")
         params.append(side.upper())
@@ -179,17 +206,17 @@ def cash_history(
     # cash_snapshots in production has columns (ts, account, cash, currency,
     # note) — there is no `id` (the schema.sql file in the repo is drifted).
     # Query only what exists.
+    common.check_limit("limit", limit, MAX_ROWS)
+    lo, hi = _day_bounds(since, until)
     query = sql.SQL("SELECT ts, account, cash, note FROM cash_snapshots WHERE 1=1")
     params: list[Any] = []
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
-    if since is not None:
+    query, params = common.add_account_filter(query, params, account)
+    if lo is not None:
         query += sql.SQL(" AND ts >= %s")
-        params.append(since)
-    if until is not None:
-        query += sql.SQL(" AND ts <= %s")
-        params.append(until)
+        params.append(lo)
+    if hi is not None:
+        query += sql.SQL(" AND ts < %s")
+        params.append(hi)
     query += sql.SQL(" ORDER BY ts DESC LIMIT %s")
     params.append(limit)
     with get_conn() as conn:
@@ -200,7 +227,8 @@ def cash_history(
         "ts": r[0].isoformat() if r[0] else None,
         "account": r[1],
         "cash": float(r[2]),
-        "note": r[3],
+        # Free text typed by the operator (audit M-6).
+        "note": common.untrusted(r[3]),
     } for r in rows]
 
 
@@ -217,7 +245,8 @@ def _lot_row(r: dict[str, Any]) -> dict[str, Any]:
         "quantity": float(r["quantity"]) if r.get("quantity") is not None else None,
         "price": float(r["price"]) if r.get("price") is not None else None,
         "fees": float(r["fees"]) if r.get("fees") is not None else 0.0,
-        "notes": r.get("notes"),
+        # Free text: typed by the operator or carried in from a broker CSV.
+        "notes": common.untrusted(r.get("notes")),
         "created_at": (
             r["created_at"].isoformat()
             if isinstance(r.get("created_at"), datetime)

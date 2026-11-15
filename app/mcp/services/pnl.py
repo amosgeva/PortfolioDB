@@ -19,6 +19,7 @@ import ledger_inputs
 from psycopg2 import sql
 
 from app.mcp.deps import get_conn
+from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
 from app.mcp.services.common import is_nan
@@ -47,8 +48,7 @@ def realized_pnl(
     """
     if group_by not in ("none", "symbol", "account", "month"):
         raise ValueError("group_by must be 'none', 'symbol', 'account', or 'month'")
-    if method not in ("fifo", "avg", "avg_cost"):
-        raise ValueError("method must be 'fifo' or 'avg'")
+    method = common.normalize_method(method)
 
     matches = _all_realized_matches(method=method, account=account)
     if since is not None:
@@ -114,17 +114,13 @@ def _all_realized_matches(
     account: str | None = None,
 ) -> list[dict[str, Any]]:
     """Replay the engine over every (symbol, account) and emit match lines."""
+    method = common.normalize_method(method)
     # Compose from psycopg2.sql fragments rather than concatenating a raw
     # string; the only user value (account) remains bound via %s.
-    query = sql.SQL(
-        "SELECT id, symbol, account, side, trade_date, quantity, price, fees "
-        "FROM lots WHERE 1=1"
-    )
+    query = ledger_inputs.LOTS_SQL
     params: list[Any] = []
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
-    query += sql.SQL(" ORDER BY symbol, COALESCE(account,''), trade_date, id")
+    query, params = common.add_account_filter(query, params, account)
+    query += ledger_inputs.LOTS_ORDER
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -427,8 +423,7 @@ def trade_quality(
     """
     if group_by not in TRADE_GROUP_BY:
         raise ValueError(f"group_by must be one of {TRADE_GROUP_BY}")
-    if method not in ("fifo", "avg", "avg_cost"):
-        raise ValueError("method must be 'fifo' or 'avg'")
+    method = common.normalize_method(method)
 
     effective_until = until if until is not None else (
         cutoff.trade_date if cutoff else None
@@ -650,9 +645,7 @@ def _traded_notional(
     if until is not None:
         query += sql.SQL(" AND trade_date <= %s")
         params.append(until)
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     query += sql.SQL(" GROUP BY side")
 
     with get_conn() as conn:

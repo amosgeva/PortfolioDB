@@ -152,7 +152,7 @@ def stub(review, monkeypatch):
                 "material_issues": [], "minor_issues": [],
             })))
         monkeypatch.setattr(review, "_cash", lambda c, a: (500.0, []))
-        monkeypatch.setattr(review, "_first_trade_date", lambda c: date(2024, 12, 3))
+        monkeypatch.setattr(review, "_first_trade_date", lambda c, a=None: date(2024, 12, 3))
         return seen
 
     return apply
