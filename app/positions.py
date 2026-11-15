@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 from collections import defaultdict
+from contextlib import closing
 from decimal import Decimal
 
 import ledger_inputs
@@ -39,7 +40,9 @@ def print_positions(symbol: str | None = None) -> None:
 
     cfg = load_config()
 
-    with connect(cfg) as conn:
+    # closing(): psycopg2's own `with conn` leaves the connection open (db.py);
+    # this only reads (audit R-6).
+    with closing(connect(cfg)) as conn:
         # The prepared ledger, not a raw SELECT: lots restated into post-split
         # units, the same rows the dashboard and the MCP tools compute from.
         rows = ledger_inputs.load(conn, symbol=sym).lots

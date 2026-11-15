@@ -10,18 +10,21 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 from collections import OrderedDict, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import benchmark
 import fd_store
 import holdings as holdings_module
 import ledger_inputs
 import market_overview
 import market_window
 import period_stats
+import portfolio_kpis as kpis
 import symbol_paths
 import twr
 from portfolio import compute_fifo_merged
@@ -142,13 +145,15 @@ def _downsample_pairs(pairs: list, cap: int = MAX_SERIES_POINTS) -> list:
     return out
 
 
-def _build_risk(price_by_day: dict, qty_map: dict, stocks: dict, held_syms: list) -> dict:
+def _build_risk(price_by_day: dict, qty_map: dict, stocks: dict, held_syms: list,
+                bench: str = benchmark.DEFAULT_BENCHMARK) -> dict:
     """Risk & analytics block: beta / vol / Sharpe / max drawdown / correlation.
 
     Works off the same daily-close buckets the TWR engine uses (last snapshot
     per reporting-local day, forward-filled across gaps). Like the PV chart, the
     portfolio series applies CURRENT quantities to historical prices — a
     price-risk view, not a full backtest. Needs ~20 trading days to activate.
+    Beta is measured against `bench`, the configured benchmark (U-3).
     """
     from math import sqrt
 
@@ -157,9 +162,9 @@ def _build_risk(price_by_day: dict, qty_map: dict, stocks: dict, held_syms: list
     syms = [s for s in held_syms if s in stocks and qty_map.get(s)]
     days = sorted(price_by_day.keys())[-380:]
     if not syms or len(days) < 3:
-        return {"ok": False, "days": len(days)}
+        return {"ok": False, "days": len(days), "benchmark": bench}
 
-    track = syms + (["SPY"] if "SPY" not in syms else [])
+    track = syms + ([bench] if bench not in syms else [])
     filled: dict[str, list] = {s: [] for s in track}
     last: dict[str, float | None] = {s: None for s in track}
     for d in days:
@@ -197,7 +202,7 @@ def _build_risk(price_by_day: dict, qty_map: dict, stocks: dict, held_syms: list
         return sd * ANN * 100, _mean(v) / sd * ANN
 
     def _beta(r_series):
-        p = _pair(r_series, rets.get("SPY", []))
+        p = _pair(r_series, rets.get(bench, []))
         if len(p) < MIN_OBS:
             return None
         xs = [a for a, _ in p]
@@ -217,7 +222,7 @@ def _build_risk(price_by_day: dict, qty_map: dict, stocks: dict, held_syms: list
     ]
     p_vol, p_sharpe = _vol_sharpe(prets)
     if p_vol is None:
-        return {"ok": False, "days": sum(1 for r in prets if r is not None)}
+        return {"ok": False, "days": sum(1 for r in prets if r is not None), "benchmark": bench}
 
     peak, max_dd = None, 0.0
     for v in pvals:
@@ -266,6 +271,7 @@ def _build_risk(price_by_day: dict, qty_map: dict, stocks: dict, held_syms: list
     p_beta = _beta(prets)
     return {
         "ok": True,
+        "benchmark": bench,
         "days": sum(1 for r in prets if r is not None),
         "portfolio": {
             "beta": round(p_beta, 2) if p_beta is not None else None,
@@ -304,13 +310,43 @@ def _safe_url(u) -> str:
 
 
 def _cash_total(cash_rows) -> float:
-    """Latest cash balance per account, summed."""
+    """Latest USD cash balance per account, summed.
+
+    A balance entered in another currency is left out — it is not dollars —
+    and reported by the payload's `currencyWarnings` instead (audit F-11).
+    """
     cash_latest: dict[str, float] = {}
     for r in cash_rows:
+        if kpis.currency_of(r) != kpis.BASE_CURRENCY:
+            continue
         acct = r["account"] or "(merged)"
         if acct not in cash_latest:
             cash_latest[acct] = float(r["cash"])
     return sum(cash_latest.values()) if cash_latest else 0.0
+
+
+def _cash_accounts(cash_rows) -> list[dict]:
+    """Each account's latest cash entry, with when it was entered.
+
+    The one KPI that is not derived from anything: it is a figure the operator
+    typed. Its evidence is therefore which account it belongs to, when it was
+    last entered and in which currency — which only the server knows. `as_of`
+    is the snapshot timestamp (the UI labels the tile "Cash (as entered) ·
+    <date>", audit U-4); `asOf` is the same value under its pre-1.8 name.
+    """
+    out = []
+    for r in cash_rows:
+        as_of = r["ts"].isoformat() if r.get("ts") is not None else None
+        currency = kpis.currency_of(r)
+        out.append({
+            "account": r["account"],
+            "cash": round(float(r["cash"]), 2),
+            "as_of": as_of,
+            "asOf": as_of,
+            "currency": currency,
+            "inTotal": currency == kpis.BASE_CURRENCY,
+        })
+    return out
 
 
 def _spark_history(hist_rows) -> dict[str, list[float]]:
@@ -438,10 +474,12 @@ def _series_since(full_series, jer, today_jer, now_utc, cutoff_days=None, today_
     return out
 
 
-def _value_ranges(conn, full_series, jer, today_jer, now_utc) -> tuple[dict, dict, list]:
+def _value_ranges(conn, full_series, jer, today_jer, now_utc) -> tuple[dict, dict, list, dict]:
     """Portfolio-value series per chart range and the collection gaps.
 
-    Returns (pv, pv_gaps, gaps_all).
+    Returns (pv, pv_gaps, gaps_all, pv_basis). `pv_basis` says what each range
+    actually covers, so a 1Y chart that fell back to the whole history is
+    labelled as such instead of passing for a year (audit F-14).
     """
     def since(cutoff_days=None, today_only=False):
         return _series_since(full_series, jer, today_jer, now_utc, cutoff_days, today_only)
@@ -464,9 +502,11 @@ def _value_ranges(conn, full_series, jer, today_jer, now_utc) -> tuple[dict, dic
     # The client picks the narrowest range that actually has data.
     # 1Y is the one exception: it stands in for "everything", so an install whose
     # history predates the window still has a chart to show.
+    pv_basis = {"1D": "today", "1W": "trailing_7d", "1M": "trailing_30d", "1Y": "trailing_365d"}
     if len(pv["1Y"]) < 2:
         pv_full["1Y"] = since(None)
         pv["1Y"] = _downsample_pairs(pv_full["1Y"])
+        pv_basis["1Y"] = "all_history"
 
     runs_since = queries.first_snapshot_run_ts(conn)
     if runs_since is not None and runs_since.tzinfo is None:
@@ -485,7 +525,7 @@ def _value_ranges(conn, full_series, jer, today_jer, now_utc) -> tuple[dict, dic
         k: [g for g in gaps_all if v and g["from"] >= v[0][0]]
         for k, v in pv_full.items()
     }
-    return pv, pv_gaps, gaps_all
+    return pv, pv_gaps, gaps_all, pv_basis
 
 
 def _symbol_lists(holdings, watch_rows, stocks, qty_map) -> tuple[list, list, list, list]:
@@ -558,7 +598,12 @@ def _realized_by_symbol(fifo) -> list[dict]:
 
 
 def _income_totals(income_rows, today_jer) -> tuple[float, float]:
-    """All-time and trailing-twelve-month income (dividends/interest)."""
+    """All-time and trailing-twelve-month income (dividends/interest).
+
+    Handed USD rows only: build_payload_data splits the income by currency
+    first, so a dividend recorded in another currency is never added to a
+    dollar total (audit Q-8).
+    """
     total_income = sum(float(r["amount"]) for r in income_rows if r.get("amount") is not None)
     ttm_cut = today_jer - timedelta(days=365)
     ttm_income = sum(
@@ -568,61 +613,77 @@ def _income_totals(income_rows, today_jer) -> tuple[float, float]:
     return total_income, ttm_income
 
 
+def _position_rows(fifo, latest_map: dict) -> list[dict]:
+    """FIFO rows with their latest quote (None when unpriced), for the roll-up."""
+    if fifo.empty:
+        return []
+    return [
+        {"symbol": r["symbol"], "qty": r["qty"], "open_cost": r["open_cost"],
+         "realized_pnl": r["realized_pnl"], "last_price": latest_map.get(r["symbol"])}
+        for _i, r in fifo.iterrows()
+    ]
+
+
 def _kpi_block(
-    fifo, qty_map, avgcost_map, stocks, second_rows, lot_rows, income_rows,
+    fifo, qty_map, latest_map, stocks, second_rows, lot_rows, income_rows,
     cash_rows, cash, holdings, watch_rows, today_jer,
 ) -> dict:
-    """Portfolio-level roll-ups, computed server-side."""
-    held = [s for s in qty_map if s in stocks]
-    total_market = sum(qty_map[s] * stocks[s]["price"] for s in held)
-    cost_basis = sum(avgcost_map.get(s, 0.0) * qty_map[s] for s in qty_map)
-    unrealized = total_market - cost_basis
-    realized = float(fifo["realized_pnl"].sum()) if not fifo.empty else 0.0
+    """Portfolio-level roll-ups, computed server-side.
+
+    Market value, cost and P&L come from portfolio_kpis, the definitions the
+    Advisor snapshot and the executive report use too. A held position with no
+    quote is left out of market value and unrealized P&L and its cost is
+    reported as `unpricedCostBasis` (audit F-12 / Q-2); total return is over
+    peak net invested capital (audit F-5 / Q-4). See docs/methodology.md.
+    """
+    total_fees = sum(float(r["fees"]) for r in lot_rows if r.get("fees") is not None)
+    # Income (dividends/interest), a SEPARATE additive return term.
+    total_income, ttm_income = _income_totals(income_rows, today_jer)
+    s = kpis.summary(_position_rows(fifo, latest_map), lot_rows, income=kpis.to_dec(total_income))
+    total_market = float(s["market_value"])
+    held = [sym for sym in qty_map if sym in stocks]
     # Day-change roll-ups only over symbols with a known prior close.
-    with_prev = [s for s in held if stocks[s]["prev"] is not None]
-    prev_value = sum(qty_map[s] * stocks[s]["prev"] for s in with_prev)
-    day_change = sum(qty_map[s] * (stocks[s]["price"] - stocks[s]["prev"]) for s in with_prev)
+    with_prev = [sym for sym in held if stocks[sym]["prev"] is not None]
+    prev_value = sum(qty_map[sym] * stocks[sym]["prev"] for sym in with_prev)
+    day_change = sum(qty_map[sym] * (stocks[sym]["price"] - stocks[sym]["prev"]) for sym in with_prev)
     # Restricted to symbols that appear in BOTH snapshots, so the two sides have
     # to be summed over that same set -- a portfolio total taken from the value
     # series is a different figure over a different set, and the dashboard used
     # to derive one that missed this by ~40c while presenting it as the terms.
     second_latest = {r["symbol"]: float(r["last_price"]) for r in second_rows if r.get("last_price") is not None}
-    delta_syms = [s for s in held if s in second_latest]
-    delta_prev = sum(qty_map[s] * second_latest[s] for s in delta_syms)
-    delta_curr = sum(qty_map[s] * stocks[s]["price"] for s in delta_syms)
-    # Total fees paid across the whole ledger (already folded into basis /
-    # proceeds — this is a reporting figure, not a P&L adjustment).
-    total_fees = sum(float(r["fees"]) for r in lot_rows if r.get("fees") is not None)
-    # Income (dividends/interest) — a SEPARATE additive return term; the
-    # existing total-return % stays unchanged.
-    total_income, ttm_income = _income_totals(income_rows, today_jer)
+    delta_syms = [sym for sym in held if sym in second_latest]
+    delta_prev = sum(qty_map[sym] * second_latest[sym] for sym in delta_syms)
+    delta_curr = sum(qty_map[sym] * stocks[sym]["price"] for sym in delta_syms)
+    invested = s["invested_capital"]
 
-    def of_basis(x: float) -> float:
-        return round(x / cost_basis * 100, 2) if cost_basis else 0.0
+    def money(x) -> float:
+        return round(float(x), 2)
+
+    def ratio(x) -> float | None:
+        return kpis.as_float(x, 2)
 
     return {
         "totalValue": round(total_market + cash, 2),
-        "marketValue": round(total_market, 2),
+        "marketValue": money(s["market_value"]),
         "cash": round(cash, 2),
-        # The one KPI that is not derived from anything: it is a figure the
-        # operator typed. Its evidence is therefore which account it belongs to
-        # and when it was last entered, which only the server knows.
-        "cashAccounts": [
-            {
-                "account": r["account"],
-                "cash": round(float(r["cash"]), 2),
-                "asOf": r["ts"].isoformat() if r.get("ts") is not None else None,
-            }
-            for r in cash_rows
-        ],
-        "costBasis": round(cost_basis, 2),
+        "cashAccounts": _cash_accounts(cash_rows),
+        # Open cost of every held position, priced or not, and its two parts.
+        # unrealized = marketValue - pricedCostBasis; the unpriced part has no
+        # market value to compare against and is not a loss.
+        "costBasis": money(s["cost_basis"]),
+        "pricedCostBasis": money(s["priced_cost_basis"]),
+        "unpricedCostBasis": money(s["unpriced_cost_basis"]),
+        "unpricedSymbols": s["unpriced_symbols"],
         "dayChange": round(day_change, 2),
         "dayChangePct": round(day_change / prev_value * 100, 2) if prev_value else 0.0,
-        "unrealized": round(unrealized, 2),
-        "unrealizedPct": of_basis(unrealized),
-        "realized": round(realized, 2),
+        "unrealized": money(s["unrealized_pnl"]),
+        "unrealizedPct": ratio(s["unrealized_pct"]),
+        "realized": money(s["realized_pnl"]),
         "realizedBySymbol": _realized_by_symbol(fifo),
-        "totalReturnPct": of_basis(realized + unrealized),
+        "investedCapital": money(invested),
+        "totalReturnPct": ratio(s["total_return_pct"]),
+        "totalReturnBasis": kpis.TOTAL_RETURN_BASIS,
+        "totalReturnPartial": s["total_return_partial"],
         "deltaLast": round(delta_curr - delta_prev, 2),
         "deltaLastPrev": round(delta_prev, 2),
         "deltaLastCurr": round(delta_curr, 2),
@@ -630,11 +691,14 @@ def _kpi_block(
         "activeCount": len(holdings),
         "watchlistCount": len(watch_rows),
         "totalFees": round(total_fees, 2),
-        "feeDragPct": of_basis(total_fees),
+        # Lifetime fees over the same lifetime denominator as total return; over
+        # the cost still open, selling most of the book made it explode.
+        "feeDragPct": ratio(kpis.pct(kpis.to_dec(total_fees), invested)),
         "dividends": round(total_income, 2),
         "dividendsTtm": round(ttm_income, 2),
-        "yieldOnCostPct": of_basis(ttm_income),
-        "totalReturnWithIncomePct": of_basis(realized + unrealized + total_income),
+        # Yield on cost is trailing income over what the open positions cost.
+        "yieldOnCostPct": ratio(kpis.pct(kpis.to_dec(ttm_income), s["cost_basis"])),
+        "totalReturnWithIncomePct": ratio(s["total_return_with_income_pct"]),
     }
 
 
@@ -649,12 +713,17 @@ def _price_by_day(ts_prices, jer) -> dict:
     return price_by_day
 
 
-def _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer) -> tuple[dict, dict]:
-    """Multi-period TIME-WEIGHTED returns against SPY, and the period statistics.
+def _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer,
+                       bench: str = benchmark.DEFAULT_BENCHMARK,
+                       bench_label: str | None = None) -> tuple[dict, dict]:
+    """Multi-period TIME-WEIGHTED returns against the configured benchmark, and
+    the period statistics.
 
     TWR reconstructs historical holdings, so a contribution is not mistaken
     for a gain nor a sale for a loss. See app/twr.py for the day-level
-    convention (purchases start-weighted, proceeds end-weighted).
+    convention (purchases start-weighted, proceeds end-weighted). The
+    benchmark is `bench`: PORTFOLIODB_BENCHMARK_SYMBOL, resolved by
+    app/benchmark.py exactly as the MCP resolves it (audit U-3).
     """
     twr_lots = [
         {"symbol": r["symbol"], "side": r["side"], "trade_date": r["trade_date"],
@@ -671,12 +740,17 @@ def _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer) -> tuple[
     # Period statistics ride the same growth curve as the returns strip, so
     # "best month" and the MTD figure can never disagree.
     stats_block = period_stats.build(twr.growth_curve(records), today=today_jer)
-    spy_ret = twr.period_returns(twr.benchmark_records(price_by_day, "SPY"), today_jer)
+    bench_records = twr.benchmark_records(price_by_day, bench)
+    bench_ret = twr.period_returns(bench_records, today_jer)
     returns_strip = {
         "basis": "Time-weighted return (contributions and withdrawals are not gains or losses).",
-        "benchmark": "SPY (price return, excl. its dividends)",
+        "benchmark": f"{bench_label or bench} (price return, excl. its dividends)",
+        "benchmarkSymbol": bench,
+        # False when no quote of the benchmark is on file: its column is then
+        # empty because nothing collects it, not because it returned nothing.
+        "benchmarkAvailable": bool(bench_records),
         "periods": [
-            {"period": p, "portfolio": pv_ret.get(p), "benchmark": spy_ret.get(p)}
+            {"period": p, "portfolio": pv_ret.get(p), "benchmark": bench_ret.get(p)}
             for p in ("1D", "WTD", "MTD", "YTD", "1Y", "MAX")
         ],
     }
@@ -799,6 +873,81 @@ def _snapshot_status(snaprun_rows, jer) -> dict:
     return {"text": f"Last snapshot {when} · {run.get('symbols_ok') or 0} symbols", "level": level}
 
 
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _config(tz_name: str) -> dict:
+    """Settings the front end must follow rather than assume.
+
+    `benchmark_symbol` is resolved by app/benchmark.py, the same rule the MCP
+    uses (audit U-3); `logo_cdn` is PORTFOLIODB_LOGO_CDN (truthy -> true,
+    default false), whether the browser may fetch a logo the server has not
+    cached from a third-party CDN.
+    """
+    bench = benchmark.benchmark_symbol()
+    return {
+        "benchmark_symbol": bench,
+        "benchmark_label": benchmark.benchmark_label(bench),
+        "reporting_tz": tz_name,
+        "currency": kpis.BASE_CURRENCY,
+        "logo_cdn": (os.getenv("PORTFOLIODB_LOGO_CDN") or "").strip().lower() in _TRUTHY,
+    }
+
+
+def _alerts(alert_rows, latest_rows, ledger) -> list[dict]:
+    """Active price alerts, each evaluated against its symbol's latest quote.
+
+    `level` is what the operator entered. A split recorded after the alert was
+    created restates it with the same actions as the quote (the prepared
+    ledger, as for every other price), so a 2:1 does not trip every "below"
+    alert on the symbol; `effective_level` is the figure actually compared.
+    `triggered` is None when the symbol has no quote: unknown, not false.
+    """
+    latest = {
+        r["symbol"]: r for r in latest_rows if r.get("last_price") is not None
+    }
+    out = []
+    for r in alert_rows:
+        sym = str(r["symbol"]).upper()
+        level = float(r["level"])
+        created = r.get("created_at")
+        effective = level
+        if created is not None:
+            (_w, _s, effective), = ledger.price_points([(created, sym, level)])
+        q = latest.get(sym)
+        last = float(q["last_price"]) if q else None
+        if last is None:
+            triggered = None
+        elif r["direction"] == "above":
+            triggered = last >= effective
+        else:
+            triggered = last <= effective
+        out.append({
+            "id": r["id"],
+            "symbol": sym,
+            "direction": r["direction"],
+            "level": level,
+            "effective_level": round(effective, 8),
+            "note": r.get("note"),
+            "created_at": created.isoformat() if created is not None else None,
+            "last_price": last,
+            "last_price_ts": q["ts"].isoformat() if q and q.get("ts") is not None else None,
+            "triggered": triggered,
+        })
+    return out
+
+
+def _currency_warnings(instr_attr_rows, lot_rows, qty_map, income_rows, cash_rows) -> list[dict]:
+    """Anything recorded in a currency other than USD (audit F-11 / Q-8)."""
+    return kpis.currency_warnings(
+        instruments=instr_attr_rows,
+        traded_symbols={r["symbol"] for r in lot_rows},
+        held_symbols=set(qty_map),
+        income=income_rows,
+        cash=cash_rows,
+    )
+
+
 def build_payload_data(conn, fundamentals_loader) -> dict:
     """Assemble the live PDB-shaped feed consumed by the embedded design.
 
@@ -820,12 +969,16 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     fact_rows = queries.company_facts(conn)
     watch_rows = queries.watchlist_symbols(conn)
     cash_rows = queries.latest_cash_per_account(conn)
-    income_rows = queries.income_rows(conn)
+    # Income in another currency is not dollars: it is left out of every total
+    # (KPIs and the TWR) and reported in currencyWarnings (audit Q-8).
+    all_income_rows = queries.income_rows(conn)
+    income_rows, _foreign_income = kpis.split_by_currency(all_income_rows)
     instr_attr_rows = queries.instrument_attrs(conn)
     second_rows = ledger.price_rows(queries.second_latest_prices(conn))
     hist_lot_rows = queries.recent_lots(conn)
     snaplog_rows = queries.snapshot_log(conn)
     snaprun_rows = queries.last_snapshot_run(conn)
+    alert_rows = queries.price_alerts(conn)
 
     fifo = compute_fifo_merged(lot_rows)
     facts = {r["symbol"]: r for r in fact_rows}
@@ -851,7 +1004,7 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     # portfolio-value series per range: the holdings actually held at each
     # snapshot, at the prices known then (see _historical_series).
     ts_prices = _ts_prices(hist_rows)
-    pv, pv_gaps, gaps_all = _value_ranges(
+    pv, pv_gaps, gaps_all, pv_basis = _value_ranges(
         conn, _historical_series(ts_prices, lot_rows), jer, today_jer, now_utc
     )
 
@@ -861,23 +1014,28 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     markets, markets_problem = _market_overview(conn)
     news, news_problem = _news_feed(conn, held_syms, watch_syms, stocks)
     degraded = [p for p in (markets_problem, news_problem) if p]
+    latest_map = {r["symbol"]: r["last_price"] for r in latest_rows if r.get("last_price") is not None}
     kpi = _kpi_block(
-        fifo, qty_map, avgcost_map, stocks, second_rows, lot_rows, income_rows,
+        fifo, qty_map, latest_map, stocks, second_rows, lot_rows, income_rows,
         cash_rows, cash, holdings, watch_rows, today_jer,
     )
+    config = _config(TZ_NAME)
+    bench = config["benchmark_symbol"]
 
     price_by_day = _price_by_day(ts_prices, jer)
-    returns_strip, stats_block = _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer)
+    returns_strip, stats_block = _returns_and_stats(
+        lot_rows, income_rows, price_by_day, today_jer, bench, config["benchmark_label"]
+    )
     alloc = _allocations(qty_map, stocks, instr_attr_rows, fact_rows, facts)
     # risk & analytics (beta / vol / Sharpe / drawdown / correlation). Unlike
     # the value chart above, this applies the CURRENT basket to historical
     # closes — a price-risk view, not a backtest — and the payload says so, as
     # the caption in the UI does, so a reader never mistakes it for history.
-    risk = _build_risk(price_by_day, qty_map, stocks, held_syms)
+    risk = _build_risk(price_by_day, qty_map, stocks, held_syms, bench)
     risk["basis"] = RISK_BASIS
     latest_prices = _latest_prices_table(latest_rows, jer)
 
-    chart_syms = set(qty_map) | set(watch_syms) | {"SPY"}
+    chart_syms = set(qty_map) | set(watch_syms) | {bench}
     price_hist, sym_lots = _price_charts(hist_rows, lot_rows, chart_syms, jer)
     chart_sym_options = [s for s in held_syms if s in price_hist] + \
                         [s for s in watch_syms if s in price_hist and s not in qty_map]
@@ -890,12 +1048,16 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
     fd_default = held_syms[0] if (held_syms and held_syms[0] in fundamentals) else (fd_universe[0] if fd_universe else None)
 
     return {
+        # Settings the front end follows (benchmark, timezone, currency, logo
+        # CDN). Added in 1.8.0; the front end tolerates its absence.
+        "config": config,
         "stocks": stocks,
         "reportingTz": TZ_NAME,
         "logos": _logo_data_uris(stocks.keys()),
         "holdings": holdings,
         "cash": round(cash, 2),
         "pv": pv,
+        "pvBasis": pv_basis,
         "pvGaps": pv_gaps,
         "gapsAll": gaps_all,
         "returns": returns_strip,
@@ -906,6 +1068,13 @@ def build_payload_data(conn, fundamentals_loader) -> dict:
         "news": news,
         # Sections that failed and were left empty, named for the banner.
         "degraded": degraded,
+        # Money recorded in another currency: what it is and what was done
+        # with it (left out of totals, or included unconverted).
+        "currencyWarnings": _currency_warnings(
+            instr_attr_rows, lot_rows, qty_map, all_income_rows, cash_rows
+        ),
+        # Persistent price alerts (table price_alerts), evaluated on read.
+        "alerts": _alerts(alert_rows, latest_rows, ledger),
         "tapeSyms": tape_syms,
         "watchSyms": rail_watch,
         # The engine every number on the shell was computed with. Labelled in

@@ -45,7 +45,7 @@ def test_period_returns_twr_neutralises_contribution(env_token, monkeypatch):
     p = out["periods"]
     assert p["MAX"] == pytest.approx(21.0)   # contribution does NOT inflate
     assert p["1D"] == pytest.approx(10.0)
-    assert p["1Y"] == pytest.approx(21.0)    # <1y history -> inception
+    assert p["1Y"] is None                   # <1y history -> n/a, not inception (F-14)
     assert p["WTD"] is None                  # no base before this Monday
 
 

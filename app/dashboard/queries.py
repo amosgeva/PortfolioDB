@@ -7,21 +7,30 @@ that lives in payload.py / streamlit_app.py.
 
 from __future__ import annotations
 
+from psycopg2 import errors as psycopg2_errors
+
 import reporting_tz
 from db import fetch_all
 
 TZ_NAME = reporting_tz.tz_name()
 
 
+# Every price read below skips last_price <= 0: Yahoo answers 0.0 outside
+# regular hours and the collector has stored it, and a zero is not a price —
+# it reads as a −100% day and zeroes a TWR curve for good (audit F-15). The
+# collector-side guard is W2a's; the readers refuse it too.
+
+
 def latest_prices(conn) -> list[dict]:
-    """Latest snapshot row per symbol."""
+    """Latest positive snapshot row per symbol."""
     return fetch_all(
         conn,
         """
         SELECT ps.symbol, ps.ts, ps.last_price, ps.bid, ps.ask, ps.source
         FROM price_snapshots ps
         JOIN (
-          SELECT symbol, MAX(ts) AS ts FROM price_snapshots GROUP BY symbol
+          SELECT symbol, MAX(ts) AS ts FROM price_snapshots
+          WHERE last_price > 0 GROUP BY symbol
         ) m ON m.symbol = ps.symbol AND m.ts = ps.ts
         ORDER BY ps.symbol;
         """,
@@ -41,14 +50,16 @@ def prev_close(conn) -> list[dict]:
         conn,
         """
         WITH latest AS (
-          SELECT symbol, MAX(ts) AS ts FROM price_snapshots GROUP BY symbol
+          SELECT symbol, MAX(ts) AS ts FROM price_snapshots
+          WHERE last_price > 0 GROUP BY symbol
         ),
         prev AS (
           SELECT ps.symbol, ps.ts, ps.last_price,
                  ROW_NUMBER() OVER (PARTITION BY ps.symbol ORDER BY ps.ts DESC) AS rn
           FROM price_snapshots ps
           JOIN latest l ON l.symbol = ps.symbol
-          WHERE (ps.ts AT TIME ZONE %s)::date < (l.ts AT TIME ZONE %s)::date
+          WHERE ps.last_price > 0
+            AND (ps.ts AT TIME ZONE %s)::date < (l.ts AT TIME ZONE %s)::date
         )
         SELECT symbol, ts, last_price FROM prev WHERE rn = 1;
         """,
@@ -69,7 +80,7 @@ def price_history(conn, days: int = 370) -> list[dict]:
         """
         SELECT ts, symbol, last_price
         FROM price_snapshots
-        WHERE ts >= now() - make_interval(days => %s)
+        WHERE ts >= now() - make_interval(days => %s) AND last_price > 0
         ORDER BY ts
         """,
         (days,),
@@ -91,12 +102,16 @@ def latest_cash_per_account(conn) -> list[dict]:
     # accounts whose newest snapshot falls outside the first N rows.
     return fetch_all(
         conn,
-        "SELECT DISTINCT ON (account) account, cash, ts FROM cash_snapshots ORDER BY account, ts DESC",
+        "SELECT DISTINCT ON (account) account, cash, ts, currency "
+        "FROM cash_snapshots ORDER BY account, ts DESC",
     )
 
 
 def income_rows(conn) -> list[dict]:
-    return fetch_all(conn, "SELECT pay_date, amount FROM income")
+    # Currency travels with the amount: a dividend recorded in another
+    # currency must not be summed as dollars (audit Q-8). payload.py splits
+    # the rows by it.
+    return fetch_all(conn, "SELECT symbol, pay_date, amount, currency FROM income")
 
 
 def instrument_attrs(conn) -> list[dict]:
@@ -114,6 +129,7 @@ def second_latest_prices(conn) -> list[dict]:
           SELECT symbol, ts, last_price,
                  ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
           FROM price_snapshots
+          WHERE last_price > 0
         )
         SELECT symbol, ts, last_price FROM ranked WHERE rn = 2;
         """,
@@ -162,6 +178,34 @@ def first_snapshot_run_ts(conn):
     """
     rows = fetch_all(conn, "SELECT MIN(ts_start) AS ts FROM snapshot_runs")
     return rows[0]["ts"] if rows else None
+
+
+def price_alerts(conn) -> list[dict]:
+    """Active price alerts, oldest first; [] when the table does not exist.
+
+    `price_alerts` arrives with migration 006. A database that has not had it
+    applied reads as "no alerts" so the dashboard still renders. That is the
+    only failure absorbed — the same rule as corporate_actions.fetch_actions,
+    and for the same reason: a transient error or a permissions slip that
+    silently read as "no alerts" would hide armed alerts from the operator,
+    which is worse than an error.
+    """
+    try:
+        return fetch_all(
+            conn,
+            """
+            SELECT id, symbol, direction, level, note, created_at
+            FROM price_alerts
+            WHERE active
+            ORDER BY created_at, id
+            """,
+        )
+    except psycopg2_errors.UndefinedTable:
+        conn.rollback()
+        return []
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def news_max_fetched_at(conn):
