@@ -131,8 +131,9 @@ needs a schema step says so under **Upgrading**.
   control characters; the vendor `raw` JSON is no longer returned (statements
   keep their numeric line items). (M-6)
 - **Read-only role narrowed**: SELECT on exactly the tables the MCP reads
-  (now including `settings`), not `chat_log`, and no default grant on future
-  tables. `create_ro_role` revokes and re-grants, so re-running it upgrades
+  (now including `settings`, and the ledger core's `corporate_actions_in_effect`
+  view plus EXECUTE on `lot_open_quantities()` where they exist), not
+  `chat_log`, and no default grant on future tables. `create_ro_role` revokes and re-grants, so re-running it upgrades
   an existing install. (M-10)
 - `server.json` requires the read-only role and no longer asks for the
   application's write password; stale "clear the RO variables to fall back"
@@ -165,7 +166,9 @@ needs a schema step says so under **Upgrading**.
   `unpriced_cost_basis` / `unpriced_symbols`; `total_return_pct`,
   `total_return_with_income_pct`, the review's `return_on_cost_pct` and
   `fee_drag_pct` over peak net invested capital; income and cash USD-only,
-  others listed under `excluded_non_usd` and flagged by data quality;
+  others listed under `excluded_non_usd` and flagged by data quality
+  (`get_cash_balance` too: USD 50 + EUR 500 reads 50 with the euros listed;
+  `get_cash_history` carries each row's currency);
   benchmark symbol through `app/benchmark.py`. (F-5/Q-4, F-12/Q-2, Q-8, U-3)
 
 ### Infrastructure (W3)
