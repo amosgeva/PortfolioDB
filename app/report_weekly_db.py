@@ -15,14 +15,16 @@ Usage:
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import closing
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import fd_store
 import ledger_inputs
+import portfolio_kpis as kpis
 from db import connect, fetch_all, load_config
 from portfolio import compute_fifo_merged
-from reporting_utils import IL_TZ, money, pct, utf8_stdout
+from reporting_utils import local_tz, money, pct, utf8_stdout
 
 UTC = timezone.utc
 
@@ -143,18 +145,41 @@ def price_map(conn, ts: datetime, ledger: ledger_inputs.PreparedLedger | None = 
     return {sym: D(px) for _, sym, px in points}
 
 
-def cash_as_of(conn, ts: datetime) -> dict[str, Decimal]:
-    rows = fetch_all(
+def cash_entries_as_of(conn, ts: datetime) -> list[dict]:
+    """Each account's latest cash entry at or before ``ts``, with its own
+    timestamp and currency — the figure, and how old it is."""
+    return fetch_all(
         conn,
         """
-        SELECT DISTINCT ON (account) account, cash, ts
+        SELECT DISTINCT ON (account) account, cash, ts, currency
         FROM cash_snapshots
         WHERE ts <= %s
         ORDER BY account, ts DESC
         """,
         (ts,),
     )
-    return {r["account"]: D(r["cash"]) for r in rows}
+
+
+def usd_cash(entries: list[dict]) -> dict[str, Decimal]:
+    """{account: cash} over USD entries; another currency is not dollars and
+    is reported instead of summed (audit F-11)."""
+    return {r["account"]: D(r["cash"]) for r in entries if kpis.currency_of(r) == kpis.BASE_CURRENCY}
+
+
+def cash_as_of(conn, ts: datetime) -> dict[str, Decimal]:
+    return usd_cash(cash_entries_as_of(conn, ts))
+
+
+def stale_cash(entries: list[dict], since: datetime) -> list[dict]:
+    """Cash entries last made before ``since`` (the week's start snapshot).
+
+    The weekly change adds cash to securities, and cash is typed in by hand.
+    An account whose balance was not re-entered during the week still shows
+    last week's figure, so a purchase made this week appears as securities
+    bought with money that never left cash — the change reads as a gain it is
+    not (audit F-9). The report names those accounts next to the figure.
+    """
+    return [r for r in entries if r.get("ts") is not None and r["ts"] < since]
 
 
 def positions_as_of(conn, asof_date) -> dict[tuple[str, str], Decimal]:
@@ -245,13 +270,16 @@ def qty_by_symbol(positions: dict[tuple[str, str], Decimal]) -> dict[str, Decima
 def main():
     utf8_stdout()
 
-    now_il = datetime.now(IL_TZ)
+    tz = local_tz()
+    now_il = datetime.now(tz)
     week_start_date = now_il.date() - timedelta(days=now_il.weekday())
-    start_il = datetime.combine(week_start_date, time(16, 15)).replace(tzinfo=IL_TZ)
+    start_il = datetime.combine(week_start_date, time(16, 15)).replace(tzinfo=tz)
     start_utc = start_il.astimezone(UTC)
 
     cfg = load_config()
-    with connect(cfg) as conn:
+    # closing(): psycopg2's own `with conn` leaves the connection open (db.py);
+    # the report only reads (audit R-6).
+    with closing(connect(cfg)) as conn:
         # The week's boundaries are snapshots that quote something the ledger
         # has ever held, so a futures-only market-overview run cannot become
         # the start or the end of the week.
@@ -262,8 +290,8 @@ def main():
         if not start_ts or not end_ts:
             raise RuntimeError("Missing start or end price snapshot")
 
-        start_date = start_ts.astimezone(IL_TZ).date()
-        end_date = end_ts.astimezone(IL_TZ).date()
+        start_date = start_ts.astimezone(tz).date()
+        end_date = end_ts.astimezone(tz).date()
 
         # One prepared ledger for the week, in the end snapshot's units. Both
         # position snapshots, both quote maps and the week's trades are read
@@ -279,8 +307,11 @@ def main():
         end_sym_val, end_acct_val, end_missing = value_positions(end_pos, end_prices)
         start_qty = qty_by_symbol(start_pos)
         end_qty = qty_by_symbol(end_pos)
-        start_cash = cash_as_of(conn, start_ts)
-        end_cash = cash_as_of(conn, end_ts)
+        start_cash_entries = cash_entries_as_of(conn, start_ts)
+        end_cash_entries = cash_entries_as_of(conn, end_ts)
+        start_cash = usd_cash(start_cash_entries)
+        end_cash = usd_cash(end_cash_entries)
+        cash_not_updated = stale_cash(end_cash_entries, start_ts)
 
         start_sec = sum(start_sym_val.values(), Decimal("0"))
         end_sec = sum(end_sym_val.values(), Decimal("0"))
@@ -378,15 +409,31 @@ def main():
             contribs.append((sym, d, p, price_move, trade_pnl, qty_delta, sv, ev))
         contribs.sort(key=lambda x: x[1], reverse=True)
 
+        market_pnl = sum((c[1] for c in contribs), Decimal("0"))
+        net_outlay = sum(outlays.values(), Decimal("0")) - sum(proceeds.values(), Decimal("0"))
+
         print("📊 WEEKLY PORTFOLIO NUMBERS — PortfolioDB Source of Truth")
         print(f"Week: {week_start_date} → {end_date}")
-        print(f"Start snapshot: {start_ts.astimezone(IL_TZ).strftime('%Y-%m-%d %H:%M IL')}")
-        print(f"End snapshot:   {end_ts.astimezone(IL_TZ).strftime('%Y-%m-%d %H:%M IL')}")
+        print(f"Start snapshot: {start_ts.astimezone(tz).strftime('%Y-%m-%d %H:%M IL')}")
+        print(f"End snapshot:   {end_ts.astimezone(tz).strftime('%Y-%m-%d %H:%M IL')}")
         print()
         print("💰 WEEK IN NUMBERS")
         print(f"Start securities: {money(start_sec)} | cash: {money(start_cash_total)} | total: {money(start_total)}")
         print(f"End securities:   {money(end_sec)} | cash: {money(end_cash_total)} | total: {money(end_total)}")
-        print(f"Weekly change:    {money(delta)} ({pct(delta_pct)})")
+        # A value change, not a return (audit F-9): deposits, withdrawals and
+        # any cash balance that was not re-entered are all in it. The market
+        # P&L line below is the flow-adjusted figure.
+        print(f"Weekly change:    {money(delta)} ({pct(delta_pct)}) — change in securities + entered cash; not a return")
+        print(f"Market P&L:       {money(market_pnl)} — Σ contributions below (trades netted out, quoted symbols only)")
+        if net_outlay:
+            print(f"Net trade outlay: {money(net_outlay)} — bought minus sold this week, fees included")
+        for r in cash_not_updated:
+            when = r["ts"].astimezone(tz).strftime("%Y-%m-%d")
+            note = (f"; {len(week_lots)} trade(s) this week are not reflected in it, so the weekly "
+                    "change counts their cash as a gain or loss") if week_lots else ""
+            print(f"⚠️ Cash for {account_label(r['account'])} was last entered {when}, before this week began{note}.")
+        for w in kpis.currency_warnings(cash=end_cash_entries):
+            print(f"⚠️ {w['message']}")
         print()
         print("🏦 ACCOUNT TOTALS")
         accounts = set(start_acct_val) | set(end_acct_val) | set(start_cash) | set(end_cash)

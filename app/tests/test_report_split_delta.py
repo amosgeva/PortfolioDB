@@ -34,6 +34,7 @@ def report(monkeypatch):
     class _Conn:
         def __enter__(self): return self
         def __exit__(self, *a): return False
+        def close(self): pass
 
     monkeypatch.setattr(rep, "utf8_stdout", lambda: None)
     monkeypatch.setattr(rep, "load_config", lambda: {})
