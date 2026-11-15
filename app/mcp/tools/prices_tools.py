@@ -23,6 +23,12 @@ def register(mcp: FastMCP) -> None:
 
         Returns None if the symbol has no snapshots on file. Includes
         age_seconds so callers can decide whether the quote is fresh.
+
+        last_price, bid, ask and ts are the quote as observed, in the units
+        traded at that time (not adjusted for splits). split_adjusted_last_price
+        restates last_price by every split in effect since ts; use it with
+        current, split-adjusted quantities (get_positions) and to price a trade
+        today. The two are equal when no split followed the quote.
         """
         return prices_service.latest_price(symbol)
 
@@ -31,6 +37,11 @@ def register(mcp: FastMCP) -> None:
         symbols: Symbols = None,
     ) -> list[dict[str, Any]]:
         """Latest snapshot per symbol.
+
+        Each row's last_price, bid, ask and ts are the quote as observed, in the
+        units traded at that time (not adjusted for splits);
+        split_adjusted_last_price restates last_price by every split in effect
+        since ts and is the one to use with current, split-adjusted quantities.
 
         Args:
             symbols: subset to look up, or None = every symbol with any snapshot.

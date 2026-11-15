@@ -53,28 +53,13 @@ def latest_price(
 ) -> dict[str, Any] | None:
     """Most recent snapshot for one symbol at or before ``as_of_ts``.
 
-    as_of_ts=None means "now", i.e. genuinely the latest row.
+    as_of_ts=None means "now", i.e. genuinely the latest row. ``last_price`` is
+    the quote as observed; ``split_adjusted_last_price`` restates it into the
+    units of the recorded splits in effect since it was observed (they differ
+    only for a quote older than a split's ex-date).
     """
-    sym = symbol.upper()
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT symbol, ts, last_price, bid, ask, source
-                FROM price_snapshots
-                WHERE last_price > 0 AND symbol = %s
-                  AND (%s::timestamptz IS NULL OR ts <= %s)
-                ORDER BY ts DESC
-                LIMIT 1
-                """,
-                (sym, as_of_ts, as_of_ts),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            cols = [d[0] for d in cur.description]
-            r = dict(zip(cols, row))
-    return _price_record(r)
+    rows = latest_prices([symbol], as_of_ts=as_of_ts)
+    return rows[0] if rows else None
 
 
 def latest_prices(
@@ -84,27 +69,43 @@ def latest_prices(
 
     symbols=None = every symbol that has a snapshot in range. as_of_ts=None
     keeps the previous behaviour of reading the genuinely-latest row, so
-    callers that have not been given a cutoff are unaffected.
+    callers that have not been given a cutoff are unaffected. Each record also
+    carries ``split_adjusted_last_price`` (see latest_price).
     """
     syms = common.check_symbols(symbols, MAX_SYMBOLS) if symbols else None
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            # DISTINCT ON rather than a join against MAX(ts): one scan, and the
-            # optional bound drops in without duplicating the whole query.
-            cur.execute(
-                """
-                SELECT DISTINCT ON (symbol)
-                       symbol, ts, last_price, bid, ask, source
-                FROM price_snapshots
-                WHERE last_price > 0 AND (%s::text[] IS NULL OR symbol = ANY(%s))
-                  AND (%s::timestamptz IS NULL OR ts <= %s)
-                ORDER BY symbol, ts DESC
-                """,
-                (syms, syms, as_of_ts, as_of_ts),
-            )
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-    return [_price_record(r) for r in rows]
+        actions = corporate_actions.fetch_actions(conn)
+        rows = _latest_rows(conn, syms, as_of_ts)
+    return [_price_record(r, actions) for r in rows]
+
+
+def _latest_rows(
+    conn, syms: list[str] | None, as_of_ts: datetime | None
+) -> list[dict[str, Any]]:
+    """Raw latest positive quote per symbol — ``ts`` stays a datetime.
+
+    The positions frame restates a stale quote by comparing its timestamp with
+    each split's boundary, which needs the datetime. It used to get the
+    serialised record instead (``ts`` an ISO string), skipped the restatement,
+    and valued restated post-split shares at an unadjusted pre-split quote:
+    20 shares × 100 = 2,000 where the position was worth 1,000 (QA of #126).
+    """
+    with conn.cursor() as cur:
+        # DISTINCT ON rather than a join against MAX(ts): one scan, and the
+        # optional bound drops in without duplicating the whole query.
+        cur.execute(
+            """
+            SELECT DISTINCT ON (symbol)
+                   symbol, ts, last_price, bid, ask, source
+            FROM price_snapshots
+            WHERE last_price > 0 AND (%s::text[] IS NULL OR symbol = ANY(%s))
+              AND (%s::timestamptz IS NULL OR ts <= %s)
+            ORDER BY symbol, ts DESC
+            """,
+            (syms, syms, as_of_ts, as_of_ts),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 def latest_price_map(*, as_of_ts: datetime | None = None) -> dict[str, float]:
@@ -119,11 +120,20 @@ def latest_price_map(*, as_of_ts: datetime | None = None) -> dict[str, float]:
 def latest_price_map_with_ts(
     *, as_of_ts: datetime | None = None
 ) -> dict[str, dict[str, Any]]:
-    """symbol -> {last_price, ts} — used by the positions service."""
-    out: dict[str, dict[str, Any]] = {}
-    for r in latest_prices(as_of_ts=as_of_ts):
-        out[r["symbol"]] = {"last_price": r["last_price"], "ts": r["ts"]}
-    return out
+    """symbol -> {last_price, ts} — used by the positions service.
+
+    Raw: ``last_price`` as observed and ``ts`` as a datetime, so the caller can
+    restate a stale quote with the actions it holds (positions._finish_frame).
+    """
+    with get_conn() as conn:
+        rows = _latest_rows(conn, None, as_of_ts)
+    return {
+        r["symbol"]: {
+            "last_price": float(r["last_price"]) if r.get("last_price") is not None else None,
+            "ts": r.get("ts"),
+        }
+        for r in rows
+    }
 
 
 # ────────────────────────── second-latest + prev-EOD ──────────────────────────
@@ -583,13 +593,20 @@ def _local_day_bounds(since: date, until: date) -> tuple[datetime, datetime]:
     )
 
 
-def _price_record(r: dict[str, Any]) -> dict[str, Any]:
+def _price_record(r: dict[str, Any], actions=()) -> dict[str, Any]:
     ts = r.get("ts")
+    last = float(r["last_price"]) if r.get("last_price") is not None else None
+    adjusted = last
+    if last is not None and isinstance(ts, datetime) and actions:
+        (_, _, adjusted), = corporate_actions.adjust_price_points(
+            [(ts, r["symbol"], last)], actions
+        )
     return {
         "symbol": r["symbol"],
         "ts": ts.isoformat() if ts else None,
         "age_seconds": int((datetime.now(timezone.utc) - ts).total_seconds()) if ts else None,
-        "last_price": float(r["last_price"]) if r.get("last_price") is not None else None,
+        "last_price": last,
+        "split_adjusted_last_price": adjusted,
         "bid": float(r["bid"]) if r.get("bid") is not None else None,
         "ask": float(r["ask"]) if r.get("ask") is not None else None,
         "source": r.get("source"),

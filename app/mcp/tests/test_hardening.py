@@ -604,6 +604,31 @@ def test_m5_price_history_refuses_an_unbounded_series(fake_db, monkeypatch):
         prices.price_history("AAA", date(2026, 1, 1), date(2026, 1, 2))
 
 
+def test_latest_price_tools_publish_observed_vs_split_adjusted(env_token, fake_db, monkeypatch):
+    """The descriptions clients actually receive (not the service docstrings)
+    must say last_price is the observed quote and split_adjusted_last_price is
+    the one that matches current, split-adjusted quantities."""
+    from fastmcp import Client
+
+    from app.mcp import deps
+
+    monkeypatch.setattr(deps, "init_pool", lambda: None)
+    import importlib
+
+    mcp = importlib.import_module("app.mcp.server").build_server()
+
+    async def go():
+        async with Client(mcp) as client:
+            return {t.name: t.description or "" for t in await client.list_tools()}
+
+    descriptions = _run(go())
+    for tool in ("get_latest_price", "get_latest_prices"):
+        text = " ".join(descriptions[tool].split())
+        assert "last_price" in text and "split_adjusted_last_price" in text, tool
+        assert "as observed" in text and "not adjusted for splits" in text, tool
+        assert "split-adjusted quantities" in text, tool
+
+
 def test_m5_tool_schemas_publish_the_bounds(env_token, fake_db, monkeypatch):
     """The bound is in the schema the client receives, so a well-behaved client
     never sends an out-of-range value, and FastMCP rejects one that does."""
