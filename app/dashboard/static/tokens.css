@@ -1,0 +1,89 @@
+/* Design tokens: the one definition of colour, radius, type scale, shadow and
+   font stacks for both halves of the UI.
+
+   The custom front end gets this file through build.mjs, which places it at
+   the top of the generated app.css. The native Streamlit pages
+   (modern2_native.py) read it directly and inline it into their <style>, so a
+   token changed here changes both - the duplication that made every visual
+   change land twice (audit R-3) ends at this file. Light values sit on :root,
+   dark overrides on [data-theme="dark"]; the families named in --font and
+   --mono are self-hosted by fonts/fonts.css. */
+:root{
+  --bg:oklch(98% 0.005 255);--surface:#fff;--surface-2:oklch(97.5% 0.006 255);--surface-3:oklch(95.5% 0.008 255);
+  /* Ink ramp. Every step in THIS ramp clears WCAG AA (4.5:1) against the worst
+     surface it lands on, which is --surface-3, not white. That constraint is
+     what sets the spacing: --faint cannot be lighter than 53.5% and stay
+     legible, so --muted moves down to keep the two steps distinguishable.
+     The claim is about the ink ramp, not every token: --accent is a brand
+     value at 4.42 on --surface-3, so it carries text only on --surface, and
+     serves elsewhere as fill, border, focus ring or icon, where 3:1 suffices. */
+  --fg:oklch(24% 0.022 260);--fg-soft:oklch(38% 0.02 260);--muted:oklch(46% 0.018 260);--faint:oklch(53.5% 0.012 260);
+  --border:oklch(91% 0.008 260);--border-2:oklch(86% 0.01 260);
+  /* --rail-2 is the rail's raised ground: hover on nav rows and watchlist rows.
+     It already existed and the code wrote its literal value in two slightly
+     different shades instead of using it. --rail-edge and --rail-line are the
+     two border jobs, which look alike and are opposites: the edge sits darker
+     than the rail as a seam against the page, the lines sit lighter as inner
+     dividers. */
+  --rail:oklch(26% 0.035 264);--rail-2:oklch(31% 0.04 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(68% 0.02 264);
+  --rail-edge:oklch(20% 0.03 264);--rail-line:oklch(33% 0.03 264);
+  --scrim:rgba(10,14,24,.45);
+  /* The label colour for a heat tile. Each theme's fill range is composed so
+     that one of these two clears AA across the whole scale — pale fills take
+     ink, deep fills take white. Kept in step with INK_ON_FILL in app.js. */
+  --heat-ink:oklch(22% 0.02 260);
+  --accent:oklch(55% 0.19 264);--accent-fg:#fff;--accent-soft:oklch(95% 0.04 264);
+  /* Green reads lighter than red at equal lightness, so it sits lower to hit
+     the same contrast — 51/56 is closer to perceptually equal than 58/58 was. */
+  --up:oklch(51% 0.16 152);--up-soft:oklch(95% 0.05 152);--down:oklch(55% 0.20 26);--down-soft:oklch(95.5% 0.04 26);--warn:oklch(53.5% 0.15 75);
+  --topbar-bg:oklch(99% 0.003 255 / .82);
+  /* Corner scale. Thirteen values collapsed to the six steps DESIGN.md already
+     documented: several sat 1–2px apart doing the same job, which is a shape
+     vocabulary nobody can read. --r-ctl and --r-pill were the most-used radii
+     in the file and had no token at all. */
+  --r-sm:7px;--r-ctl:9px;--r:11px;--r-lg:16px;--r-pill:99px;--r-round:50%;
+  /* Type scale — nine steps, each named for the job it does. Replaces the
+     nineteen arbitrary sizes this file grew, several of which sat 0.5px apart
+     and so carried no hierarchy at all. 11px is the floor for anything a
+     person has to read. */
+  --fs-micro:11px;   /* uppercase tracked labels: rail sections, KPI captions, table heads */
+  --fs-meta:12px;    /* lowercase metadata: timestamps, tags, badges, secondary lines */
+  --fs-sm:13px;      /* table body, controls, nav, chips */
+  --fs-base:14px;    /* body copy and card titles */
+  --fs-lg:16px;      /* section heads and prominent values */
+  --fs-xl:19px;      /* the view title — the largest prose in the app */
+  --fs-num:22px;     /* stat and KPI values */
+  --fs-num-lg:27px;  /* drawer price */
+  --fs-hero-sm:30px;--fs-hero:40px;   /* the one display role: total portfolio value */
+  /* The single deliberate exception to the 11px floor. An N x N correlation
+     grid divides its width by the number of holdings, so a larger label
+     overflows its own column. Revisit with a responsive strategy (scroll or
+     abbreviate) rather than by nudging this value. */
+  --fs-matrix:10px;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.04);--shadow-lg:0 10px 30px -12px rgba(16,24,40,.22);
+  /* The chart tooltips' own lift — a third role, distinct from the resting
+     edge and from floating, and written as a literal in two places. */
+  --shadow-tip:0 4px 14px rgba(0,0,0,.12);
+  --font:'Space Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;--rail-w:248px;
+  color-scheme:light;
+}
+[data-theme="dark"]{
+  --bg:oklch(16.5% 0.015 260);--surface:oklch(20.5% 0.018 260);--surface-2:oklch(24% 0.02 260);--surface-3:oklch(28% 0.022 260);
+  /* Same constraint inverted: --faint has to reach 65% to clear AA against
+     --surface-3, so --muted moves up to keep the ramp's steps apart. */
+  --fg:oklch(93% 0.008 260);--fg-soft:oklch(82% 0.012 260);--muted:oklch(74% 0.015 260);--faint:oklch(66.5% 0.012 260);
+  --border:oklch(29% 0.015 260);--border-2:oklch(35% 0.018 260);
+  --rail:oklch(18.5% 0.028 264);--rail-2:oklch(24% 0.032 264);--rail-fg:oklch(92% 0.01 264);--rail-muted:oklch(66% 0.018 264);
+  --rail-edge:oklch(13% 0.025 264);--rail-line:oklch(26% 0.028 264);
+  --heat-ink:#fff;
+  /* Dark redefines --accent four points lighter, so white can no longer sit
+     on it: 3.74:1. The button label goes dark instead of the brand colour
+     going darker, which would cost the accent its visibility on the page. */
+  --accent:oklch(62% 0.18 264);--accent-fg:oklch(20% 0.02 264);--accent-soft:oklch(29% 0.06 264);
+  --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);--down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);--warn:oklch(76% 0.13 75);
+  --topbar-bg:oklch(18% 0.015 260 / .82);
+  --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);--shadow-lg:0 10px 30px -12px rgba(0,0,0,.6);
+  --shadow-tip:0 4px 14px rgba(0,0,0,.45);
+  color-scheme:dark;
+}

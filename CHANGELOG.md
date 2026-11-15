@@ -94,6 +94,42 @@ needs a schema step says so under **Upgrading**.
 - The positions CLI, both text reports and the Advisor close their
   connections instead of leaving them to the garbage collector (audit R-6).
 
+### Dashboard front end
+
+- **Security: payload text can no longer become markup.** Every write of
+  markup in the read-only views now goes through one escaping template
+  (`html` in `app/dashboard/static/src/core/html.js`); a symbol, note,
+  account, news title or fundamentals field containing `<img onerror=…>`,
+  quotes or `&#60;` entities renders as text. ESLint fails the build on any
+  other `innerHTML`/`insertAdjacentHTML`/`document.write`, and a jsdom test
+  walks every view with a hostile payload. Links must be `http(s)`.
+- **Security: CSV exports neutralise formulas.** A text cell starting with
+  `= + - @`, a tab or a carriage return is prefixed with `'` in the positions
+  and lots exports; numbers stay numeric.
+- **Privacy: no third-party requests by default.** Space Grotesk and
+  JetBrains Mono are self-hosted (SIL OFL, licences in
+  `app/dashboard/static/fonts/`) for the dashboard and the native pages. The
+  ticker-logo CDN is used only when the payload's `config.logo_cdn` is true;
+  otherwise a symbol without a cached logo shows its letter badge.
+- **Price alerts are stored, not armed in the page.** The Alerts view lists
+  the alerts kept in the database (created on Manage → Alerts) and no longer
+  offers a form whose alerts vanished on refresh.
+- The benchmark label follows `config.benchmark_label`; the reporting time
+  zone and currency come from the payload (UTC and USD when absent — the
+  `Asia/Jerusalem` fallback is gone); NYSE holidays and 13:00 early closes are
+  derived from the exchange's rules instead of a 2026–2030 table.
+- "Buying power — Settled cash" is now **Cash (as entered)**, with the date
+  the balance was entered.
+- Chart values can be read by keyboard (focus the chart, arrow keys; each
+  point is announced) and by touch. Toasts are announced to screen readers.
+- Refreshing no longer leaves a resize and a popstate listener behind on the
+  page for every refresh.
+- `app.js` is now built from ES modules under `src/` by `npm run build`; the
+  bundle stays committed, so running the dashboard needs no Node. CSS tokens
+  live in `app/dashboard/static/tokens.css` for both halves of the UI. A new
+  workflow (`frontend.yml`) checks the build, lints with zero warnings and
+  runs the tests.
+
 ## [1.7.7] — 2026-11-15
 
 A maintenance release, a month after 1.7.6. The image scan had started failing

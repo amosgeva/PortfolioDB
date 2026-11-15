@@ -18,6 +18,7 @@ import html
 import os
 import re
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -70,8 +71,8 @@ _NAV = [
 ]
 
 # ── themed CSS for native pages ────────────────────────────────────────────
-NATIVE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+# Fonts are self-hosted (base64 @font-face built by dashboard/static/build.mjs), not Google Fonts.
+NATIVE_CSS = (Path(__file__).resolve().parent / "dashboard" / "static" / "fonts" / "fonts.css").read_text(encoding="utf-8") + """
 :root{
   --bg:oklch(98% 0.005 255);--surface:#fff;--surface-2:oklch(97.5% 0.006 255);--surface-3:oklch(95.5% 0.008 255);
   --fg:oklch(24% 0.022 260);--fg-soft:oklch(38% 0.02 260);--muted:oklch(46% 0.018 260);--faint:oklch(53.5% 0.012 260);

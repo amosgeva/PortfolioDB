@@ -1,0 +1,629 @@
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body,.card,.topbar,.iconbtn,.chip,.search input{transition:background-color .25s ease,border-color .25s ease}
+body{font-family:var(--font);background:var(--bg);color:var(--fg);font-size:var(--fs-base);line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+::selection{background:var(--accent-soft)}
+/* Browser surfaces that ship with defaults belonging to no design system.
+   The placeholder was Chrome's own #757575 at 3.90:1 on --surface, under the
+   4.5 floor, on the one control the whole product routes through. The tap
+   highlight painted a dark box over every press on a phone; :active states
+   already answer the touch, so the flash is noise on top of an answer. */
+::placeholder{color:var(--faint);opacity:1}
+html{-webkit-tap-highlight-color:transparent}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.up{color:var(--up)}.down{color:var(--down)}
+a{color:inherit;text-decoration:none}
+.app{display:grid;grid-template-columns:var(--rail-w) 1fr;min-height:100vh}
+.rail{background:var(--rail);color:var(--rail-fg);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;border-right:1px solid var(--rail-edge)}
+.rail__brand{display:flex;align-items:center;gap:11px;padding:20px 20px 18px}
+.rail__logo{width:34px;height:34px;border-radius:var(--r-ctl);background:linear-gradient(140deg,var(--accent),oklch(62% 0.2 290));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 4px 12px -4px oklch(55% 0.19 264 / .7)}
+.rail__logo svg{width:18px;height:18px}
+.rail__name{font-weight:700;font-size:var(--fs-lg);letter-spacing:-.02em}
+.rail__name b{color:oklch(78% 0.12 290);font-weight:700}
+.rail__tag{font-size:var(--fs-micro);color:var(--rail-muted);letter-spacing:.14em;text-transform:uppercase}
+/* The rail is dark in both themes, so the semantic colours inside it have to be
+   the dark-theme ones whatever the page theme is. The light-theme --down is
+   tuned against a white ground and falls to 3.02:1 on the rail. */
+.rail{--up:oklch(70% 0.14 152);--down:oklch(68% 0.18 26)}
+.rail__sect{padding:8px 12px}
+.rail__label{font-size:var(--fs-micro);letter-spacing:.16em;text-transform:uppercase;color:var(--rail-muted);padding:12px 12px 7px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:var(--r-ctl);color:var(--rail-muted);font-weight:500;font-size:var(--fs-sm);transition:background .14s,color .14s;cursor:pointer}
+.nav a svg{width:17px;height:17px;opacity:.9;flex:0 0 auto}
+.nav a:hover{background:var(--rail-2);color:var(--rail-fg)}
+.nav a.is-active{background:oklch(34% 0.055 264);color:#fff;box-shadow:inset 2px 0 0 var(--accent)}
+.nav a .badge{margin-left:auto;font-family:var(--mono);font-size:var(--fs-meta);background:var(--down);color:#fff;border-radius:var(--r-pill);padding:1px 7px;font-variant-numeric:tabular-nums}
+.rail__div{height:1px;background:var(--rail-line);margin:8px 18px}
+.wl{display:flex;flex-direction:column;gap:1px;padding:0 8px}
+.wl__row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;padding:7px 10px;border-radius:var(--r-sm);cursor:default}
+.wl__row:hover{background:var(--rail-2)}
+.wl__sym{font-weight:600;font-size:var(--fs-sm)}.wl__px{font-family:var(--mono);font-size:var(--fs-meta);color:var(--rail-fg)}
+.wl__chg{font-family:var(--mono);font-size:var(--fs-meta);min-width:52px;text-align:right}
+.rail__foot{margin-top:auto;padding:14px 16px;display:flex;align-items:center;gap:11px;border-top:1px solid var(--rail-line)}
+/* Light stop darkened from 62% so the white initials clear AA (3.3:1 -> 4.5:1).
+   The hue is untouched — this is a legibility fix, not a palette change. */
+.avatar{width:32px;height:32px;border-radius:var(--r-round);background:linear-gradient(140deg,oklch(52% 0.13 200),oklch(53% 0.19 264));display:grid;place-items:center;font-weight:700;font-size:var(--fs-meta);color:#fff;flex:0 0 auto}
+.rail__user b{font-size:var(--fs-sm);display:block}.rail__user span{font-size:var(--fs-meta);color:var(--rail-muted)}
+/* No opacity here: --rail-muted already reads as recessive against the rail,
+   and multiplying it by .75 dropped the build stamp to 3.66:1. Where a tone is
+   already chosen for contrast, opacity only takes it back. */
+.rail__build{padding:0 16px 12px;font-size:var(--fs-micro);letter-spacing:.04em;color:var(--rail-muted);font-variant-numeric:tabular-nums}
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:18px;padding:14px 28px;background:var(--topbar-bg);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.topbar__title h1{font-size:var(--fs-xl);font-weight:700;letter-spacing:-.02em}
+/* One line by design. Left to wrap it took two lines even at 1440px, making the
+   topbar 94px of chrome before any data — the same defect the phone had, just
+   less obvious.
+   The flex order below is a priority statement: the two ambient pills were
+   taking 563px of an 1177px bar while the view title got 171 and truncated. The
+   title grows first and yields last; the snapshot pill yields first, because
+   every word of it is also in its title attribute. */
+/* This is the growth the comment below describes and the bar did not have.
+   With every child at flex:0 0 auto nothing absorbed the slack, so the row
+   packed left and left 452px of nothing after the last button on a 1767px bar.
+   The title takes the slack, which puts the search and the group after it
+   against the right edge.
+   It grows but does not shrink: flex:1 1 auto made it shrinkable too, and it
+   then paid for the pills exactly as the search used to - 30px wide at 981px,
+   52px at 1100px, truncating where it never had. The snapshot pill absorbs a
+   tight bar instead, which is what it did before and what it is for: every
+   word of it is also in its title attribute. On a phone the rule flips, since
+   there the title has to be able to yield. */
+.topbar__title{flex:1 0 auto}
+.topbar__title h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar__title p{font-size:var(--fs-meta);color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* No margin-left:auto here any more. An auto margin swallows all free space
+   before flex-grow is ever consulted, so it was pinning the view title to its
+   minimum while the pills kept their full width. The title grows into the gap
+   instead and pushes this group right, which looks identical and ranks right. */
+/* The search was the only child of the topbar allowed to shrink, so it paid for
+   everything else: 96px wide at 1100px and 132px at 1280px, leaving 0px and 36px
+   for text. A decorative subtitle was rigid while the primary control collapsed.
+   The floor is the icon (34) + the placeholder (121) + the badge (62), plus a
+   few px so the placeholder is never one pixel short of fitting. */
+.search{position:relative;width:268px;max-width:34vw;flex:0 1 auto;min-width:224px}
+.search input{width:100%;font-family:var(--font);font-size:var(--fs-sm);padding:9px 12px 9px 34px;border-radius:var(--r-ctl);border:1px solid var(--border-2);background:var(--surface);color:var(--fg);outline:none;transition:border-color .14s,box-shadow .14s}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--faint)}
+/* The shortcut used to live inside the placeholder string, which made it 163px
+   of text in a 158px slot: it truncated to "Jump to anything… Ctr", a hint cut
+   mid-word. A shortcut is a control, not prose - it sits in its own badge and
+   the placeholder is free to be just the invitation. */
+.search__k{position:absolute;right:7px;top:50%;transform:translateY(-50%);pointer-events:none;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);
+  border:1px solid var(--border-2);border-radius:var(--r-sm);padding:2px 6px;line-height:1.4;background:var(--surface-2)}
+.search:focus-within .search__k{opacity:0}
+/* Only the field that actually carries a badge pays for it: #mv-search is the
+   same component without one, and 62px of dead right padding in a 220px filter
+   would cost it a third of its room. */
+#global-search{padding-right:62px}
+.mkt-pill{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-meta);font-weight:600;padding:7px 12px;border-radius:var(--r-pill);border:1px solid var(--border-2);background:var(--surface)}
+.mkt-pill .dot{width:7px;height:7px;border-radius:var(--r-round);background:var(--dot-c,var(--up));position:relative;transition:background-color .4s ease}
+.mkt-pill .dot::after{content:'';position:absolute;inset:-4px;border-radius:var(--r-round);background:var(--dot-c,var(--up));opacity:.35;animation:pulse 2s infinite}
+.mkt-pill .dot.closed::after{display:none}
+@keyframes pulse{0%{transform:scale(.6);opacity:.5}70%{transform:scale(1.8);opacity:0}100%{opacity:0}}
+.mkt-pill .t{font-family:var(--mono);color:var(--muted);font-weight:500}
+.snap-pill{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-family:var(--mono);color:var(--muted);white-space:nowrap;flex:0 1 auto;min-width:0}
+.snap-pill [data-snap-text]{overflow:hidden;text-overflow:ellipsis}
+.mkt-pill{flex:0 0 auto}
+.snap-pill svg{width:13px;height:13px;opacity:.75}
+.snap-pill.warn{color:var(--warn)}.snap-pill.error{color:var(--down)}
+.degraded{margin:0 0 12px;padding:8px 12px;border:1px solid var(--warn);border-radius:var(--r-sm,8px);color:var(--warn);font-size:var(--fs-meta);background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.snap-pill.none{display:none}
+@media (max-width:860px){.snap-pill{display:none}}
+/* flex:0 0 auto matters: these live in the topbar's flex row, which was
+   shrinking them below their declared width — a 44px touch target is only 44px
+   if the layout is not allowed to compress it. */
+.iconbtn{width:38px;height:38px;flex:0 0 auto;border-radius:var(--r-ctl);border:1px solid var(--border-2);background:var(--surface);display:grid;place-items:center;cursor:pointer;color:var(--fg-soft);transition:background .14s,border-color .14s,color .14s}
+.iconbtn:hover{background:var(--surface-2);color:var(--accent);border-color:var(--accent)}
+.iconbtn svg{width:17px;height:17px}.iconbtn.is-on{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.tape{display:flex;gap:0;overflow:hidden;white-space:nowrap;border-bottom:1px solid var(--border);background:var(--surface);-webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}
+.tape__track{display:inline-flex;gap:0;animation:tape 60s linear infinite}
+.tape.paused .tape__track{animation-play-state:paused}
+@keyframes tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tape__item{display:inline-flex;align-items:baseline;gap:8px;padding:9px 18px;border-right:1px solid var(--border);font-size:var(--fs-sm)}
+.tape__item b{font-weight:600}.tape__item .num{font-size:var(--fs-meta)}
+.content{padding:26px 28px 56px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow)}
+[data-theme="dark"] .card{box-shadow:var(--shadow),inset 0 1px 0 oklch(100% 0 0 / .035)}
+.card__hd{display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid var(--border)}
+/* A section heading was the same size as the prose under it -- 14px both, with
+   only the weight between them, across all 20 cards. One step up to --fs-lg is
+   1.14x, which is under the 1.25x a detector wants and is a deliberate choice:
+   --fs-xl would clear the rule at 19px and make a dense dashboard shout, and
+   cost a line of vertical space on every card on a phone. Size and weight
+   together carry it. */
+.card__hd h2{font-size:var(--fs-lg);font-weight:600;letter-spacing:-.01em}.card__hd .sub{font-size:var(--fs-meta);color:var(--muted)}
+.card__bd{padding:18px}
+.chip{font-size:var(--fs-meta);font-weight:500;padding:6px 13px;border-radius:var(--r-pill);border:1px solid var(--border-2);background:var(--surface);color:var(--fg-soft);cursor:pointer;transition:all .14s;white-space:nowrap}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+.chip.is-active{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.chip:disabled{opacity:.38;cursor:not-allowed}
+.chip:disabled:hover{border-color:var(--border-2);color:var(--fg-soft)}
+.tag{font-size:var(--fs-meta);font-weight:600;letter-spacing:.03em;padding:2px 8px;border-radius:var(--r-sm);font-family:var(--mono)}
+.tag--up{background:var(--up-soft);color:var(--up)}.tag--down{background:var(--down-soft);color:var(--down)}.tag--neu{background:var(--surface-3);color:var(--muted)}
+.delta{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500}
+.delta svg{width:11px;height:11px}
+.btn{font-family:var(--font);font-size:var(--fs-sm);font-weight:600;padding:9px 16px;border-radius:var(--r-ctl);border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);cursor:pointer;transition:filter .14s,transform .05s}
+.btn:hover{filter:brightness(1.07)}.btn:active{transform:translateY(1px)}
+.btn--ghost{background:var(--surface);color:var(--fg-soft);border-color:var(--border-2)}
+.btn--ghost:hover{border-color:var(--accent);color:var(--accent);filter:none}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.kpi{padding:16px 18px;position:relative;overflow:hidden}
+/* A tile that opens its own derivation has to look answerable. The cue is the
+   hairline and the lift on approach, not a link colour: --accent is for
+   interaction, and nine indigo tiles would be a wall of it. */
+[data-kpi]{cursor:pointer;transition:border-color .14s,box-shadow .14s,transform .14s}
+[data-kpi]:hover{border-color:var(--border-2);box-shadow:var(--shadow-tip);transform:translateY(-1px)}
+[data-kpi]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[data-kpi]::after{content:"";position:absolute;right:12px;top:12px;width:6px;height:6px;border-radius:var(--r-round);
+  background:var(--faint);opacity:0;transition:opacity .14s}
+[data-kpi]:hover::after,[data-kpi]:focus-visible::after{opacity:1}
+@media (prefers-reduced-motion:reduce){[data-kpi]:hover{transform:none}}
+.kpi__label{font-size:var(--fs-micro);color:var(--muted);letter-spacing:.04em;text-transform:uppercase;font-weight:500}
+.kpi__val{font-family:var(--mono);font-size:var(--fs-num-lg);font-weight:600;letter-spacing:-.02em;margin-top:7px}
+.kpi__sub{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:var(--fs-sm)}
+.kpi--hero{grid-column:span 2;grid-row:span 2;display:flex;flex-direction:column;padding:20px 22px}
+.kpi--hero .kpi__val{font-size:var(--fs-hero);letter-spacing:-.03em;margin-top:10px}
+.kpi__story{font-size:var(--fs-sm);color:var(--fg-soft);margin-top:10px;line-height:1.55;max-width:52ch}
+.kpi__spark{margin-top:auto;padding-top:12px}
+.kpi__spark-label{font-size:var(--fs-micro);color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:2px}
+.kpi__spark svg{width:100%;height:54px;display:block}
+.row2{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;margin-bottom:20px}
+/* Two equal columns, as a class rather than an inline style: inline wins over
+   every media query, so these stayed side by side at 320px. */
+.row2--pair{grid-template-columns:1fr 1fr}
+.tbl-wrap{overflow-x:auto}
+table.tbl{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
+.tbl thead th{text-align:right;font-size:var(--fs-micro);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:11px 14px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0;background:var(--surface);z-index:1}
+.tbl thead th:first-child{text-align:left}
+.tbl thead th .arrow{opacity:0;margin-left:4px;font-size:var(--fs-micro)}
+.tbl thead th.sorted .arrow{opacity:1;color:var(--accent)}
+.tbl thead th:hover{color:var(--fg)}
+.tbl tbody td{padding:11px 14px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
+.tbl tbody td:first-child{text-align:left}.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tbody tr{transition:background .12s}.tbl tbody tr:hover{background:var(--surface-2)}
+.sym-cell{display:flex;align-items:center;gap:11px}
+.sym-badge{width:34px;height:34px;border-radius:var(--r-ctl);flex:0 0 auto;display:grid;place-items:center;font-weight:700;font-size:var(--fs-micro);color:#fff;font-family:var(--mono);position:relative;overflow:hidden}
+.sym-logo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;padding:3px;border-radius:inherit}
+.sym-cell .nm{display:flex;flex-direction:column;line-height:1.25}
+.sym-cell .nm b{font-size:var(--fs-sm)}.sym-cell .nm span{font-size:var(--fs-meta);color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis}
+td.price{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500}
+.spark-cell svg{width:84px;height:28px;vertical-align:middle}
+.heat{display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(128px,1fr))}
+.heat__tile{border-radius:var(--r-sm);padding:12px 13px;color:var(--heat-ink);position:relative;overflow:hidden;min-height:78px;display:flex;flex-direction:column;justify-content:space-between;cursor:default;transition:transform .12s}
+.heat__tile:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
+.heat__tile b{font-size:var(--fs-base);font-weight:700}.heat__tile .nm{font-size:var(--fs-micro)}
+.heat__tile .pc{font-family:var(--mono);font-size:var(--fs-lg);font-weight:600;align-self:flex-end}
+.heat__sector-title{grid-column:1 / -1;font-size:var(--fs-micro);font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border-2);display:flex;gap:10px;align-items:baseline}
+.heat__sector-title:first-child{margin-top:0;padding-top:0;border-top:0}
+/* The legend has to be the scale it describes. Its stops were hardcoded to the
+   old single range, so a theme-aware scale left it showing colours the map no
+   longer produces — the two endpoints are the formula at m=1, the middle is the
+   below-noise-floor neutral. */
+.heat-legend{flex:1 1 100px;max-width:220px;min-width:70px;height:8px;border-radius:var(--r-pill);
+  background:linear-gradient(90deg,oklch(64% .20 26),oklch(72% .015 260),oklch(64% .20 152))}
+[data-theme="dark"] .heat-legend{background:linear-gradient(90deg,oklch(36% .19 26),oklch(38% .012 260),oklch(36% .19 152))}
+.mvlist{display:flex;flex-direction:column}
+/* minmax(0,1fr), not 1fr: a bare 1fr keeps min-width:auto and refuses to go
+   below its content, which is what pushed this row 103px past a 320px
+   viewport. The name ellipsises instead of forcing the row wider. */
+.mv{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:11px 6px;border-bottom:1px solid var(--border)}
+.mv:last-child{border-bottom:0}
+.mv__rank{font-family:var(--mono);font-size:var(--fs-meta);color:var(--faint);width:18px}
+.mv__sym{min-width:0}
+.mv__sym b{font-size:var(--fs-sm)}
+.mv__sym span{font-size:var(--fs-meta);color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mv__px{font-family:var(--mono);font-size:var(--fs-sm)}
+.mv__chg{font-family:var(--mono);font-size:var(--fs-sm);font-weight:600;min-width:64px;text-align:right}
+.feed{display:flex;flex-direction:column}
+.fitem{display:grid;grid-template-columns:40px 1fr auto;gap:14px;padding:15px 18px;border-bottom:1px solid var(--border);position:relative;transition:background .12s,box-shadow .12s}
+.fitem:hover{background:var(--surface-2)}
+/* Unread uses the same leading-edge bar as the active nav item — one accent
+   edge vocabulary at one width, rather than a 2px inset here and a 3px
+   pseudo-element there. The 5% tint carries the block; the bar marks the edge. */
+.fitem.unread{background:color-mix(in oklab,var(--accent) 5%,var(--surface));box-shadow:inset 2px 0 0 var(--accent)}
+.fitem__ic{width:40px;height:40px;border-radius:var(--r);display:grid;place-items:center;flex:0 0 auto}
+.fitem__ic svg{width:18px;height:18px}
+.ic--up{background:var(--up-soft);color:var(--up)}.ic--down{background:var(--down-soft);color:var(--down)}
+.ic--news{background:var(--accent-soft);color:var(--accent)}.ic--info{background:var(--surface-3);color:var(--muted)}
+.fitem__bd h3{font-size:var(--fs-sm);font-weight:600}
+.fitem__bd p{font-size:var(--fs-sm);color:var(--fg-soft);margin-top:3px;max-width:62ch}
+.fitem__meta{display:flex;gap:10px;align-items:center;margin-top:7px;font-size:var(--fs-meta);color:var(--muted)}
+.fitem__meta .src{font-weight:600;color:var(--fg-soft)}
+.fitem__side{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.fitem__time{font-size:var(--fs-meta);color:var(--faint);font-family:var(--mono);white-space:nowrap}
+.markread{font-size:var(--fs-meta);color:var(--muted);background:none;border:0;cursor:pointer;padding:4px 8px;border-radius:var(--r-sm)}
+/* --accent clears AA as text only on --surface; on --surface-3 it is 4.42.
+   The hover keeps its tinted ground and takes --fg for the label. */
+.markread:hover{background:var(--surface-3);color:var(--fg)}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:var(--fs-meta);font-weight:600;color:var(--fg-soft);margin-bottom:6px}
+.field input,.field select{width:100%;font-family:var(--font);font-size:var(--fs-sm);padding:10px 12px;border:1px solid var(--border-2);border-radius:var(--r-ctl);background:var(--surface);color:var(--fg);outline:none;transition:border-color .14s,box-shadow .14s}
+.field .mono-in{font-family:var(--mono)}
+.field input:focus,.field select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.field input.invalid{border-color:var(--down);box-shadow:0 0 0 3px var(--down-soft)}
+.field .err{font-size:var(--fs-meta);color:var(--down);margin-top:5px;min-height:14px}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:var(--fs-sm)}
+.sec-h{display:flex;align-items:center;gap:12px;margin:4px 2px 14px}
+.sec-h h2{font-size:var(--fs-lg);font-weight:700;letter-spacing:-.01em}.sec-h .line{flex:1;height:1px;background:var(--border)}
+.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}.toolbar .spacer{flex:1}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--fg);color:var(--bg);padding:11px 18px;border-radius:var(--r);font-size:var(--fs-sm);font-weight:500;box-shadow:var(--shadow-lg);z-index:100;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;display:flex;align-items:center;gap:9px}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.toast svg{width:16px;height:16px;color:var(--up)}
+/* ── command palette (Ctrl+K) ── */
+.cmdk{position:fixed;inset:0;z-index:90;display:none;align-items:flex-start;justify-content:center;padding-top:11vh;background:var(--scrim);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.cmdk.open{display:flex}
+.cmdk__panel{width:min(560px,92vw);background:var(--surface);border:1px solid var(--border-2);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);overflow:hidden}
+.cmdk__in{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.cmdk__in svg{width:16px;height:16px;color:var(--faint);flex:0 0 auto}
+.cmdk__in input{flex:1;border:0;outline:0;background:transparent;color:var(--fg);font-family:var(--font);font-size:var(--fs-base)}
+.cmdk__list{max-height:46vh;overflow-y:auto;padding:6px}
+.cmdk__sect{font-size:var(--fs-micro);letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:8px 10px 4px}
+.cmdk__item{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:var(--r-sm);cursor:pointer;font-size:var(--fs-sm);color:var(--fg-soft)}
+.cmdk__item b{color:var(--fg);font-weight:600}
+.cmdk__item .px{margin-left:auto;font-family:var(--mono);font-size:var(--fs-meta);color:var(--muted)}
+.cmdk__item.is-sel{background:var(--accent-soft);color:var(--fg)}
+.cmdk__hint{padding:8px 14px;border-top:1px solid var(--border);font-size:var(--fs-meta);color:var(--faint);display:flex;gap:14px}
+/* ── mobile holdings cards + bottom tab bar ── */
+.hcards{display:none}
+.hcard{padding:12px 14px;border-bottom:1px solid var(--border)}
+.hcard:last-child{border-bottom:0}
+.hcard__top{display:flex;align-items:center;gap:11px}
+.hcard__top .tag{margin-left:auto}
+.hcard__row{display:flex;align-items:baseline;justify-content:space-between;margin-top:9px}
+.hcard__row .mv{font-family:var(--mono);font-size:var(--fs-lg);font-weight:600}
+.hcard__meta{font-size:var(--fs-meta);color:var(--muted);margin-top:5px;font-family:var(--mono)}
+.tabbar{display:none;position:fixed;bottom:0;left:0;right:0;z-index:50;background:var(--surface);border-top:1px solid var(--border);grid-template-columns:repeat(5,1fr);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+.tabbar button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:5px 2px;border:0;background:none;color:var(--muted);font-family:var(--font);font-size:var(--fs-micro);font-weight:500;cursor:pointer;border-radius:var(--r-sm)}
+.tabbar button svg{width:18px;height:18px}
+.tabbar button.is-active{color:var(--accent)}
+@media (max-width:980px){.tabbar{display:grid}.content{padding-bottom:96px}}
+@media (max-width:640px){.holdings-wrap{display:none}.hcards{display:flex;flex-direction:column}}
+/* ── a11y: visible focus for keyboard users ── */
+.nav a:focus-visible,.chip:focus-visible,.iconbtn:focus-visible,.btn:focus-visible,.tbl th:focus-visible,.tabbar button:focus-visible,.cmdk__in input:focus-visible,.markread:focus-visible,
+[data-sym][role="button"]:focus-visible,.sym-open:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* The keyboard-operable half of a clickable table row. The row keeps its own
+   click target for the mouse; this is what Tab reaches and what a screen reader
+   announces, so it inherits everything and looks like the text it replaced. */
+.sym-open{display:block;width:100%;font:inherit;color:inherit;text-align:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;border-radius:var(--r-sm)}
+/* A quote that predates the last collection: marked by the clock glyph in the
+   timestamp cell and stepped back to --muted, which still clears AA. Never into
+   --faint — a number you should question has to stay readable to be questioned. */
+.lp-stale td:first-child,.lp-stale td.price{color:var(--muted)}
+/* ── fundamentals metric groups ── */
+.fd-groups{display:grid;grid-template-columns:repeat(3,1fr)}
+.fd-group{padding:0 18px}
+.fd-group:first-child{padding-left:0}
+.fd-group+.fd-group{border-left:1px solid var(--border)}
+.fd-group__t{font-size:var(--fs-micro);color:var(--faint);text-transform:uppercase;letter-spacing:.08em;font-weight:600;margin-bottom:12px}
+.fd-group__grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:860px){.fd-groups{grid-template-columns:1fr;gap:18px}.fd-group{padding:0}.fd-group+.fd-group{border-left:0;border-top:1px solid var(--border);padding-top:16px}}
+.view{display:none}.view.is-active{display:block}
+/* ── motion layer (entrances, flashes; fully disabled under reduced-motion) ── */
+@keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.view.is-active>*{animation:cardIn .38s cubic-bezier(.25,1,.5,1) both}
+.view.is-active>*:nth-child(2){animation-delay:.05s}
+.view.is-active>*:nth-child(3){animation-delay:.1s}
+.view.is-active>*:nth-child(4){animation-delay:.15s}
+.view.is-active>*:nth-child(5){animation-delay:.2s}
+.view.is-active>*:nth-child(6){animation-delay:.25s}
+@keyframes flashUp{0%{background:var(--up-soft)}100%{background:transparent}}
+@keyframes flashDown{0%{background:var(--down-soft)}100%{background:transparent}}
+td.flash-up{animation:flashUp 1.2s ease-out}
+td.flash-down{animation:flashDown 1.2s ease-out}
+.tape{cursor:pointer}
+.tape:hover .tape__track{animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+  .tape__track{animation:none;transform:none}
+  .mkt-pill .dot::after{display:none}
+}
+/* ── risk correlation grid ── */
+.corr{display:grid;gap:3px;font-family:var(--mono);font-size:var(--fs-matrix);font-variant-numeric:tabular-nums}
+.corr__lbl{font-size:var(--fs-matrix);color:var(--muted);align-self:center;text-align:center;font-weight:600}
+.corr__cell{display:grid;place-items:center;min-height:30px;border-radius:var(--r-sm)}
+#risk-tbl tr[data-sym]{cursor:pointer}
+/* ── P&L attribution bars ── */
+.attr-row{display:grid;grid-template-columns:64px 1fr 110px;gap:12px;align-items:center;padding:5px 0;border-radius:var(--r-sm)}
+.attr-row:hover{background:var(--surface-2)}
+.attr-row{cursor:pointer}
+.attr-sym{font-weight:600;font-size:var(--fs-sm);padding-left:4px}
+.attr-track{position:relative;height:14px;background:var(--surface-2);border-radius:var(--r-pill);overflow:hidden}
+.attr-track::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border-2)}
+.attr-bar{position:absolute;top:2px;bottom:2px;border-radius:var(--r-pill)}
+.attr-bar.up{background:var(--up)}.attr-bar.down{background:var(--down)}
+.attr-val{font-size:var(--fs-meta);text-align:right;padding-right:4px}
+/* ── symbol drill-down drawer ── */
+.drawer-scrim{position:fixed;inset:0;background:var(--scrim);z-index:70;opacity:0;pointer-events:none;transition:opacity .2s;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.drawer-scrim.show{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,94vw);background:var(--surface);border-left:1px solid var(--border);box-shadow:var(--shadow-lg);z-index:71;transform:translateX(103%);transition:transform .28s cubic-bezier(.25,1,.5,1);display:flex;flex-direction:column;outline:none}
+.drawer.open{transform:none}
+.drawer__hd{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border);flex:0 0 auto}
+.drawer__hd .nm b{font-size:var(--fs-lg);display:block}.drawer__hd .nm span{font-size:var(--fs-meta);color:var(--muted)}
+.drawer__bd{flex:1;overflow-y:auto;padding:18px;overscroll-behavior:contain}
+.drawer__px{font-family:var(--mono);font-size:var(--fs-num-lg);font-weight:600;letter-spacing:-.02em}
+/* The evidence panel: a sentence, the arithmetic, then the rows it summed. */
+.ev-what{font-size:var(--fs-sm);color:var(--fg-soft);line-height:1.55;margin:2px 0 16px}
+.ev-note{font-size:var(--fs-meta);color:var(--muted);line-height:1.5;margin:12px 0 0}
+.ev-round{font-size:var(--fs-micro);color:var(--faint);line-height:1.45;margin:8px 0 0}
+/* The value is the point of this header; on a phone the subtitle wraps into two
+   lines and pushes against it. The drawer's aria-label still says it in full. */
+@media (max-width:640px){.ev-hd-sub{display:none}}
+.ev-eq{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
+.ev-eq td{padding:5px 0}
+.ev-eq td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.ev-eq .ev-op{width:1.6em;color:var(--faint);font-family:var(--mono);text-align:center}
+.ev-eq .ev-sum td{border-top:1px solid var(--border-2);padding-top:9px;font-weight:600}
+.ev-tbl th,.ev-tbl td{font-size:var(--fs-meta)}
+.drawer__stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px 16px;margin-top:16px}
+.drawer__stats .l{font-size:var(--fs-micro);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.drawer__stats .v{font-family:var(--mono);font-size:var(--fs-lg);font-weight:600;margin-top:2px}
+.drawer__sect{font-size:var(--fs-micro);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:20px 0 10px;display:flex;align-items:baseline;gap:8px}
+.drawer__sect .n{font-family:var(--mono);color:var(--faint);font-weight:500}
+.drawer .tbl tbody td{padding:8px 10px}
+.drawer__news a{color:inherit}.drawer__news a:hover{color:var(--accent)}
+.drawer__foot{display:flex;gap:10px;padding:14px 18px;border-top:1px solid var(--border);flex:0 0 auto}
+.drawer__foot .btn{flex:1}
+#holdings tr[data-sym],.heat__tile[data-sym],.mv[data-sym],.hcard[data-sym],.wl__row[data-sym]{cursor:pointer}
+/* scrim is a fixed overlay at all widths so it never consumes a grid cell */
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:55;opacity:0;pointer-events:none;transition:opacity .2s}
+.scrim.show{opacity:1;pointer-events:auto}
+.alerts-grid{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start}
+/* The grid item above these carried min-width:auto, so a 1fr track resolved
+   to 311.7px inside a 288px grid. Items shrink, and the minis wrap rather
+   than hold a combined min-content wider than the card. */
+.alerts-grid>*{min-width:0}
+.stat-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.stat-mini{flex:1 1 120px;min-width:0;padding:13px 15px}
+/* A stat tile standing on its own is a card. The same tile inside a card is
+   a card in a card - two borders and two shadows describing one boundary.
+   In flow it is a well, not a panel, which is what Flat-Until-Detached says. */
+.stat-mini--well{background:var(--surface-2);border-radius:var(--r-sm)}
+.stat-mini .v{font-family:var(--mono);font-size:var(--fs-num);font-weight:600}.stat-mini .l{font-size:var(--fs-micro);color:var(--muted);margin-top:2px}
+/* Base state for the width-conditional controls. These sit ABOVE the media
+   queries that reveal them: at equal specificity the last rule wins, so a
+   `display:none` written afterwards silently defeats the query. */
+.menu-btn,.search-btn,.rail__close,.hcards-sort{display:none}
+/* Sorting is a control on the desktop table (its column headers) and had no
+   equivalent once the table became cards — the list was sorted but the operator
+   could not say by what. */
+.hcards-sort{align-items:center;gap:8px;padding:12px 14px 4px}
+.hcards-sort label{font-size:var(--fs-micro);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.hcards-sort select{flex:1;min-width:0;cursor:pointer}
+.hcards-sort [data-hc-dir]{font-family:var(--mono);min-width:38px}
+.rail__close{margin-left:auto;border-color:var(--rail-line);background:transparent;color:var(--rail-muted)}
+/* Same hover treatment as a nav row, using the rail's existing values rather
+   than a new one — the close button is part of that vocabulary, not its own. */
+.rail__close:hover{background:var(--rail-2);color:var(--rail-fg)}
+
+@media (max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.row2,.row2--pair{grid-template-columns:1fr}
+  /* Grid items keep min-width:auto, so a card refuses to shrink below its own
+     content and pushes the page wider than the viewport. .main already carries
+     this; the items it contains did not, which is the whole 320px overflow. */
+  .row2>.card{min-width:0}}
+@media (max-width:980px){:root{--rail-w:0px}.app{grid-template-columns:1fr}
+  .rail{position:fixed;left:0;top:0;z-index:60;width:264px;transform:translateX(-100%);transition:transform .22s ease}
+  .rail.open{transform:translateX(0);box-shadow:var(--shadow-lg)}
+  .scrim{position:fixed;inset:0;background:var(--scrim);z-index:55;opacity:0;pointer-events:none;transition:opacity .2s}
+  .scrim.show{opacity:1;pointer-events:auto}.menu-btn{display:grid !important}.search{display:none}.alerts-grid{grid-template-columns:1fr}
+  /* The search field is gone below this width and Ctrl+K needs a keyboard, so
+     without this button the palette — the only way to jump to one symbol — does
+     not exist on a phone. Looking up a number is the phone's whole job. */
+  .search-btn,.rail__close{display:grid}}
+@media (min-width:981px){.menu-btn{display:none}}
+@media (max-width:1200px){
+  /* The subtitle restates what the h1 and the highlighted nav item both already
+     say, and it was holding ~220px rigid while the search collapsed behind it.
+     Decoration yields to the control long before the layout gets tight. */
+  .topbar__title p{display:none}
+  /* At 981px the bar has 718px of room and wanted 805. The market pill was the
+     single largest child at 288px - "Live · 10:28 ET · 17:28 GMT+3" spelled out -
+     against a 218px search and a 77px title. It already knows how to be a dot and
+     a word, with the full clock on its title attribute; it just did not do so
+     until 860px. Ambient context yields before the control and the heading do. */
+  .mkt-pill .sep,.mkt-pill .t{display:none}}
+@media (max-width:860px){
+  /* Below here it must be able to yield, with a floor so it cannot be crushed
+     to a single clipped letter the way it was at 390px. */
+  .topbar__title{flex:1 1 auto;min-width:4.5rem}
+  .topbar{gap:10px}}
+/* ── phone: the check-in comes first ─────────────────────────────────────
+   The Portfolio view ran to 8,444px at 390x844 - ten full screens - and the
+   list of what you actually own started at 4,176px, five screens down, behind
+   a market strip, a returns strip and two charts. A phone visit is almost
+   always the same question: am I up or down, and what moved. So the order is
+   the answer to that question, then the holdings, then everything else; and
+   the eight cards that are reference rather than answer keep their heading
+   and open on request. Desktop is untouched: there is room there for all of
+   it at once, which is the whole reason the two layouts differ. */
+@media (max-width:640px){
+  [data-view-pane="portfolio"].is-active{display:flex;flex-direction:column;gap:20px}
+  /* Spacing is a gap here rather than the ad-hoc margins the sections carry,
+     which would otherwise survive reordering and land in the wrong places.
+     The margins are inline, so this is the one place !important is earned. */
+  [data-view-pane="portfolio"].is-active > *{margin:0 !important}
+  [data-view-pane="portfolio"] .kpis{order:1}
+  [data-view-pane="portfolio"] #attr-row{order:2}
+  [data-view-pane="portfolio"] #holdings-card{order:3}
+  [data-view-pane="portfolio"] #pv-row{order:4}
+  [data-view-pane="portfolio"] #returns-card{order:5}
+  [data-view-pane="portfolio"] #markets-card{order:6}
+  [data-view-pane="portfolio"] #risk-card{order:7}
+  [data-view-pane="portfolio"] #ph-card{order:8}
+  [data-view-pane="portfolio"] #lp-card{order:9}
+  /* The entrance stagger is keyed to DOM position, so under a reorder it
+     animates the page in an order the reader does not see. */
+  .view.is-active > *{animation-delay:0s !important}
+  /* A folded card keeps its heading and loses its body and its header
+     controls - a range chip above a hidden chart is a control with nothing
+     to control. */
+  /* Everything but the heading, not just .card__bd: Latest prices puts its
+     table straight into the card with no body wrapper, and required a second
+     rule for a distinction the reader cannot see. */
+  .foldable:not(.is-open) > *:not(.card__hd){display:none}
+  /* The chip rows carry inline display:flex, which outranks a class selector,
+     so hiding them is the second and last place !important is earned here. */
+  .foldable:not(.is-open) .card__hd > *:not(h2):not(.fold-btn){display:none !important}
+  .foldable .card__hd{cursor:pointer}
+}
+.fold-btn{margin-left:auto;flex:0 0 auto;width:34px;height:34px;display:none;place-items:center;
+  border:0;background:none;color:var(--muted);cursor:pointer;border-radius:var(--r-ctl)}
+@media (max-width:640px){.foldable > .card__hd > .fold-btn{display:grid}}
+.fold-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fold-btn svg{width:18px;height:18px;transition:transform .18s ease}
+.foldable.is-open > .card__hd > .fold-btn svg{transform:rotate(180deg)}
+@media (prefers-reduced-motion:reduce){.fold-btn svg{transition:none}}
+
+@media (max-width:640px){.kpis{grid-template-columns:1fr 1fr;gap:10px}.kpi__val{font-size:var(--fs-num)}.kpi--hero .kpi__val{font-size:var(--fs-hero-sm)}.content{padding:18px 16px 48px}.topbar{padding:12px 16px}.heat{grid-template-columns:repeat(auto-fill,minmax(108px,1fr))}
+  .hcards-sort{display:flex}
+  /* Chip groups in a card header must wrap rather than push the card wider. */
+  .card__hd{flex-wrap:wrap}}
+@media (max-width:560px){
+  /* Orientation beats ambient context, and this was fixed once at 320px and
+     verified only there. The view title is the only child of the topbar that
+     can shrink, so flex takes every squeeze out of it: at 390px - the width
+     most phones actually are - the h1 was 19px wide and "Market Movers" came
+     out as a single letter. The pill costs 113px plus a 10px gap; without it
+     the longest title (137px) fits from 385px up. Market state stays on the
+     pill's title attribute, and the pill itself returns above 560px. */
+  .mkt-pill{display:none}}
+@media (max-width:360px){
+  .topbar{gap:8px;padding:12px}}
+
+/* ── touch input ─────────────────────────────────────────────────────────
+   Keyed to the pointer, not the viewport: a touch laptop needs these as much
+   as a phone, and a phone paired with a mouse does not. */
+@media (pointer:coarse){
+  .iconbtn{width:44px;height:44px}
+  .nav a{min-height:44px}
+  .wl__row{min-height:44px}
+  .chip{min-height:36px;padding:8px 14px}
+  .tbl tbody td{padding-top:14px;padding-bottom:14px}
+  .markread{padding:8px 10px}
+  .fold-btn{width:44px;height:44px}
+  .btn{min-height:44px}
+  .tabbar button{padding:8px 2px}
+  /* iOS Safari force-zooms the page when a focused input is under 16px, which
+     throws the layout out and requires a manual pinch back. */
+  .field input,.field select,.search input,.cmdk__in input,select.chip,#mv-search{font-size:var(--fs-lg)}
+}
+
+/* ── Statistics view ─────────────────────────────────────────────────────
+   Records, the monthly grid and the consistency/streak panels. Numerics use
+   the tabular mono face so columns line up down the grid. */
+.recs{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}
+.rec{border:1px solid var(--border);border-radius:var(--r);padding:13px 15px;background:var(--surface-2)}
+.rec__lbl{font-size:var(--fs-micro);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.rec__val{font-family:var(--mono);font-size:var(--fs-num);font-weight:600;letter-spacing:-.02em;margin-top:5px}
+.rec__when{font-size:var(--fs-meta);color:var(--fg-soft);margin-top:3px}
+.rec__meta{font-size:var(--fs-meta);color:var(--muted);margin-top:2px}
+.rec--up .rec__val{color:var(--up)}
+.rec--down .rec__val{color:var(--down)}
+
+/* Monthly grid. Scrolls horizontally on narrow viewports rather than
+   squeezing twelve columns into an unreadable width. */
+.stbl-wrap{overflow-x:auto}
+.stbl{border-collapse:separate;border-spacing:3px;width:100%;min-width:760px}
+.stbl th{font-size:var(--fs-micro);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:2px 4px;text-align:center}
+.stbl th.stbl__yr,.stbl td.stbl__yr{text-align:left;font-family:var(--mono);font-size:var(--fs-sm);color:var(--fg-soft);min-width:52px}
+.stbl td{font-family:var(--mono);font-size:var(--fs-meta);text-align:center;padding:8px 4px;border-radius:var(--r-sm);background:var(--surface-3);color:var(--faint)}
+.stbl td.on{color:var(--fg)}
+/* Hatching marks a partial period — a part-month is not comparable with a
+   full one, and the grid should say so rather than imply it is. */
+.stbl td.part{background-image:repeating-linear-gradient(135deg,transparent,transparent 4px,oklch(50% .02 260/.18) 4px,oklch(50% .02 260/.18) 8px)}
+.stbl td.tot{font-weight:600;border:1px solid var(--border-2);background:var(--surface-2)}
+
+.hitrow{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}
+.hitrow:last-child{border-bottom:0}
+.hitrow__lbl{width:64px;font-size:var(--fs-sm);color:var(--fg-soft);text-transform:capitalize}
+.hitrow__track{flex:1;height:9px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden;display:flex}
+.hitrow__up{background:var(--up)}
+.hitrow__down{background:var(--down)}
+.hitrow__val{width:118px;text-align:right;font-family:var(--mono);font-size:var(--fs-meta);color:var(--fg-soft)}
+
+.stk{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.stk:last-child{border-bottom:0}
+.stk__lbl{width:104px;font-size:var(--fs-sm);color:var(--muted)}
+.stk__days{font-family:var(--mono);font-size:var(--fs-xl);font-weight:600}
+.stk__meta{font-size:var(--fs-meta);color:var(--muted);min-width:0}
+.stk--up .stk__days{color:var(--up)}
+.stk--down .stk__days{color:var(--down)}
+
+/* ── market overview strip ─────────────────────────────────────
+   Four context cards, not holdings. Collapses to two columns then one; the
+   sparkline is decoration and may be absent (a symbol with one snapshot has no
+   line to draw), so nothing below it depends on its height. */
+/* ── chart axes ──────────────────────────────────────────────────────────
+   The plot is preserveAspectRatio="none", so it is stretched horizontally to
+   fill its column: any <text> inside the viewBox would be stretched with it.
+   Axis labels are therefore HTML over the plot, the way the tooltip already
+   was. The svg is 240px tall against a 240-unit viewBox, so y maps 1:1 to
+   pixels and a tick can be placed at its own coordinate; x is scaled, so the
+   date stops are placed by percentage instead. */
+.pv-wrap{position:relative}
+.pv-y{position:absolute;left:0;top:0;width:var(--pv-gutter,56px);height:240px;pointer-events:none}
+.pv-y span{position:absolute;right:9px;transform:translateY(-50%);white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+.pv-plot{position:relative;margin-left:var(--pv-gutter,56px);cursor:crosshair}
+.pv-x{position:relative;height:18px;margin-top:4px;pointer-events:none}
+.pv-x span{position:absolute;top:0;white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+/* A quarterly strip is three charts wide in one row, so its axis is the two
+   ends and a stated peak rather than a tick for every bar. */
+.bc-hd{display:flex;align-items:baseline;gap:8px;margin-bottom:6px;font-size:var(--fs-meta);color:var(--muted)}
+.bc-peak{margin-left:auto;color:var(--faint);font-size:var(--fs-micro)}
+.bc-x{display:flex;justify-content:space-between;margin-top:4px;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint)}
+/* The drawer chart is 300px tall against a 280-unit viewBox, so unlike the
+   value chart its y does not map 1:1. Both place labels by percentage, which
+   is correct either way and survives a height change. */
+.ph-wrap{position:relative}
+.ph-y{position:absolute;left:0;top:0;width:var(--pv-gutter,56px);height:300px;pointer-events:none}
+.ph-y span{position:absolute;right:9px;transform:translateY(-50%);white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+.ph-plot{position:relative;margin-left:var(--pv-gutter,56px);cursor:crosshair}
+.ph-x{position:relative;height:18px;margin-top:4px;pointer-events:none}
+.ph-x span{position:absolute;top:0;white-space:nowrap;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint);font-variant-numeric:tabular-nums}
+/* The drawer chart is small enough that a tick ladder would crowd the line, so
+   it states its scale at the bounds: dates under the ends, price extent in the
+   footer beside the change. */
+.dc-x{display:flex;justify-content:space-between;margin-top:3px;
+  font-family:var(--mono);font-size:var(--fs-micro);color:var(--faint)}
+.dc-foot{display:flex;align-items:baseline;gap:10px;margin-top:2px;font-size:var(--fs-meta)}
+.dc-hl{margin-left:auto;font-size:var(--fs-micro);color:var(--faint);white-space:nowrap}
+@media (max-width:640px){:root{--pv-gutter:44px}}
+
+.mkt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+/* A well inside a card, like .stat-mini--well: the parent card already draws
+   the boundary, and a second border inside it describes the same edge twice. */
+.mkt{background:var(--surface-2);border-radius:var(--r);padding:13px 14px}
+.mkt__top{display:flex;align-items:baseline;gap:10px}
+.mkt__top b{font-size:var(--fs-base);letter-spacing:-.01em}
+.mkt__pct{margin-left:auto;font-size:var(--fs-sm);font-weight:600;white-space:nowrap}
+.mkt__bot{display:flex;align-items:baseline;gap:10px;margin-top:3px}
+.mkt__bot .num:first-child{font-size:var(--fs-xl);letter-spacing:-.02em}
+.mkt__bot .num:last-child{margin-left:auto;font-size:var(--fs-meta)}
+.mkt .muted{color:var(--muted);font-weight:500}
+.mkt__spark{margin-top:8px;min-height:46px}
+.mkt__spark svg{width:100%;height:46px;display:block}
+
+
+/* Visually hidden, still read: the charts' live regions. */
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* Inspectable line charts: focusable, and a horizontal drag scrubs the plot
+   while a vertical swipe still scrolls the page. */
+.inspectable{touch-action:pan-y}
+.inspectable:focus{outline:none}
+.inspectable:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--r-sm)}
+
+/* Stored price alerts (created on Manage -> Alerts; listed here). */
+.alist{list-style:none;display:flex;flex-direction:column;gap:8px}
+.alist__row{display:flex;align-items:center;gap:10px;font-size:var(--fs-sm)}
+.alist__t{font-family:var(--mono);font-variant-numeric:tabular-nums;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alerts-note{font-size:var(--fs-meta);color:var(--muted);margin-top:12px;line-height:1.5}
+/* Three counters (unread, triggered, watching) share the 340px column. */
+.alerts-grid .stat-row{flex-wrap:nowrap}.alerts-grid .stat-mini{flex:1 1 0}
