@@ -73,7 +73,7 @@ export async function retire(frame) {
 export async function expectNativePage(page, id) {
   const v = NAV.views.find((x) => x.id === id);
   await expect(page.locator('.m2-topbar h1'), `native page ${id} did not render`).toHaveText(v.label);
-  await expect(page).toHaveURL(new RegExp(`[?&]view=${id}(&|$)`));
+  await expect.poll(() => new URL(page.url()).searchParams.get('view'), `the address bar does not say ?view=${id}`).toBe(id);
   await expect(page.locator('[data-testid="stException"]'), `native page ${id} raised an exception`).toHaveCount(0);
 }
 

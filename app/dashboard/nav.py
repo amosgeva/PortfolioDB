@@ -53,51 +53,63 @@ def _check(cond: bool, msg: str) -> None:
         raise NavError(f"{NAV_JSON.name}: {msg}")
 
 
-def validate(doc: dict) -> dict:
-    """Return ``doc`` if both renderers can draw it; raise NavError if not."""
-    icons = doc.get("icons")
-    _check(isinstance(icons, dict) and icons, "no icons")
+def _is_value(v) -> bool:
+    return isinstance(v, str) and bool(_VALUE.match(v))
+
+
+def _validate_shape(name: str, shape) -> None:
+    el = shape.get("el") if isinstance(shape, dict) else None
+    _check(el in SHAPE_ATTRS, f"icon {name!r}: shape {el!r} is not one of {tuple(SHAPE_ATTRS)}")
+    _check(set(shape) == {"el", *SHAPE_ATTRS[el]}, f"icon {name!r}: a {el} has exactly {SHAPE_ATTRS[el]}")
+    for attr in SHAPE_ATTRS[el]:
+        _check(_is_value(shape[attr]), f"icon {name!r}: {el} {attr}={shape[attr]!r}")
+
+
+def _validate_icons(icons) -> None:
+    _check(isinstance(icons, dict) and bool(icons), "no icons")
     for name, icon in icons.items():
         _check(bool(_ID.match(name)), f"icon name {name!r}")
-        _check(isinstance(icon, dict) and tuple(sorted(icon)) == tuple(sorted(ICON_KEYS)),
-               f"icon {name!r} must have exactly {ICON_KEYS}")
+        _check(isinstance(icon, dict) and sorted(icon) == sorted(ICON_KEYS), f"icon {name!r} must have exactly {ICON_KEYS}")
         for key in ICON_KEYS[:4]:
-            _check(isinstance(icon[key], str) and bool(_VALUE.match(icon[key])), f"icon {name!r} {key}")
-        _check(isinstance(icon["shapes"], list) and icon["shapes"], f"icon {name!r} has no shapes")
+            _check(_is_value(icon[key]), f"icon {name!r} {key}")
+        _check(isinstance(icon["shapes"], list) and bool(icon["shapes"]), f"icon {name!r} has no shapes")
         for shape in icon["shapes"]:
-            el = shape.get("el") if isinstance(shape, dict) else None
-            _check(el in SHAPE_ATTRS, f"icon {name!r}: shape {el!r} is not one of {tuple(SHAPE_ATTRS)}")
-            _check(set(shape) == {"el", *SHAPE_ATTRS[el]},
-                   f"icon {name!r}: a {el} has exactly {SHAPE_ATTRS[el]}")
-            for attr in SHAPE_ATTRS[el]:
-                val = shape[attr]
-                _check(isinstance(val, str) and bool(_VALUE.match(val)), f"icon {name!r}: {el} {attr}={val!r}")
+            _validate_shape(name, shape)
 
-    groups = doc.get("groups")
-    _check(isinstance(groups, list) and groups, "no groups")
+
+def _validate_groups(groups) -> list:
+    _check(isinstance(groups, list) and bool(groups), "no groups")
     group_ids = [g.get("id") for g in groups]
     _check(len(set(group_ids)) == len(group_ids), "duplicate group id")
     for g in groups:
         _check(bool(_ID.match(str(g.get("id")))) and isinstance(g.get("label"), str), f"group {g!r}")
         _check(g.get("renderer") in RENDERERS, f"group {g.get('id')!r} renderer must be one of {RENDERERS}")
+    return group_ids
 
-    views = doc.get("views")
-    _check(isinstance(views, list) and views, "no views")
+
+def _validate_view(v: dict, group_ids: list, icons: dict) -> None:
+    vid = v.get("id")
+    _check(isinstance(vid, str) and bool(_ID.match(vid)), f"view id {vid!r}")
+    _check(v.get("group") in group_ids, f"view {vid!r} group {v.get('group')!r}")
+    _check(v.get("icon") in icons, f"view {vid!r} icon {v.get('icon')!r} is not in icons")
+    for key in ("label", "short", "subtitle"):
+        _check(isinstance(v.get(key), str) and bool(v[key].strip()), f"view {vid!r} {key}")
+    _check(isinstance(v.get("badge", False), bool), f"view {vid!r} badge must be true/false")
+
+
+def _validate_views(views, group_ids: list, icons: dict) -> list:
+    _check(isinstance(views, list) and bool(views), "no views")
     ids = [v.get("id") for v in views]
     _check(len(set(ids)) == len(ids), "duplicate view id")
     for v in views:
-        vid = v.get("id")
-        _check(isinstance(vid, str) and bool(_ID.match(vid)), f"view id {vid!r}")
-        _check(v.get("group") in group_ids, f"view {vid!r} group {v.get('group')!r}")
-        _check(v.get("icon") in icons, f"view {vid!r} icon {v.get('icon')!r} is not in icons")
-        for key in ("label", "short", "subtitle"):
-            _check(isinstance(v.get(key), str) and v[key].strip(), f"view {vid!r} {key}")
-        _check(isinstance(v.get("badge", False), bool), f"view {vid!r} badge must be true/false")
+        _validate_view(v, group_ids, icons)
     # The rail draws groups in file order; views must not interleave groups.
     order = [v["group"] for v in views]
     _check(order == sorted(order, key=group_ids.index), "views must be listed group by group, in group order")
+    return ids
 
-    tabbar = doc.get("tabbar")
+
+def _validate_tabbar(tabbar, ids: list) -> None:
     _check(isinstance(tabbar, dict) and set(tabbar) == set(RENDERERS), f"tabbar needs exactly {RENDERERS}")
     for which, entries in tabbar.items():
         _check(isinstance(entries, list) and len(entries) == TABBAR_LEN,
@@ -105,6 +117,15 @@ def validate(doc: dict) -> dict:
         _check(len(set(entries)) == len(entries), f"tabbar.{which} repeats a view")
         for vid in entries:
             _check(vid in ids, f"tabbar.{which}: unknown view {vid!r}")
+
+
+def validate(doc: dict) -> dict:
+    """Return ``doc`` if both renderers can draw it; raise NavError if not."""
+    icons = doc.get("icons")
+    _validate_icons(icons)
+    group_ids = _validate_groups(doc.get("groups"))
+    ids = _validate_views(doc.get("views"), group_ids, icons)
+    _validate_tabbar(doc.get("tabbar"), ids)
     return doc
 
 

@@ -25,26 +25,30 @@ export const VIEWS = NAV.views.map((v) => ({ ...v, native: RENDERER.get(v.group)
 export const TITLES = Object.fromEntries(VIEWS.filter((v) => !v.native).map((v) => [v.id, [v.label, v.subtitle]]));
 const FIRST = VIEWS.find((v) => !v.native).id;
 
+const BADGE = html` <span class="badge">0</span>`;
+
 function railEntry(v) {
-  const badge = v.badge ? html` <span class="badge">0</span>` : '';
-  return v.native
-    ? html`<a data-nav="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}</a>`
-    : html`<a data-view="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}${badge}</a>`;
+  if (v.native) return html`<a data-nav="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}</a>`;
+  return html`<a data-view="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}${v.badge ? BADGE : ''}</a>`;
+}
+
+function railGroup(g) {
+  const entries = VIEWS.filter((v) => v.group === g.id).map(railEntry);
+  return html`<div class="rail__sect" data-rail-group="${g.id}"><div class="rail__label">${g.label}</div><nav class="nav" aria-label="${g.label}">${entries}</nav></div>`;
+}
+
+function tab(v) {
+  return html`<button type="button" data-tab="${v.id}">${icon(v.icon)}<span>${v.short}</span></button>`;
 }
 
 /** Draw the rail's groups and the tab bar from nav.json. */
 export function renderNav() {
   const rail = $('[data-rail-nav]');
-  if (rail) {
-    setHTML(rail, html`${NAV.groups.map((g) => html`<div class="rail__sect" data-rail-group="${g.id}"><div class="rail__label">${g.label}</div><nav class="nav" aria-label="${g.label}">${VIEWS.filter((v) => v.group === g.id).map(railEntry)}</nav></div>`)}`);
-  }
+  if (rail) setHTML(rail, html`${NAV.groups.map(railGroup)}`);
   const bar = $('[data-tabbar]');
   if (bar) {
     const byId = new Map(VIEWS.map((v) => [v.id, v]));
-    setHTML(bar, html`${NAV.tabbar.frame.map((id) => {
-      const v = byId.get(id);
-      return html`<button type="button" data-tab="${v.id}">${icon(v.icon)}<span>${v.short}</span></button>`;
-    })}`);
+    setHTML(bar, html`${NAV.tabbar.frame.map((id) => tab(byId.get(id)))}`);
   }
 }
 
@@ -86,7 +90,7 @@ export function goNative(view) { nativeNav(view); }
 /** Go to any nav.json view, whichever half draws it. */
 export function goTo(id) {
   const v = VIEWS.find((x) => x.id === id);
-  if (v && v.native) goNative(id); else switchView(id);
+  if (v?.native) goNative(id); else switchView(id);
 }
 
 export function initNav() {
@@ -104,7 +108,7 @@ export function restoreView() {
   const initial = session.take('pdb_refresh_view') || app.D.initialView;
   if (initial && initial !== FIRST && item(TITLES, initial)) switchView(initial, true);
   onParent('popstate', (ev) => {
-    const v = (ev.state && ev.state.pdbView) || parentQueryView() || FIRST;
+    const v = ev.state?.pdbView || parentQueryView() || FIRST;
     if (item(TITLES, v)) switchView(v, true);
   });
 }

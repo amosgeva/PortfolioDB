@@ -427,7 +427,7 @@ def _render_rail(active: str, watchlist=None) -> None:
         )
         # Every group, in nav.json's order, the way the front end's rail draws them.
         for group in dash_nav.groups():
-            st.html('<div class="m2-rail-label">' + html.escape(group["label"]) + "</div>")
+            st.html(f'<div class="m2-rail-label">{html.escape(group["label"])}</div>')
             for v in dash_nav.group_views(group["id"]):
                 st.button(v["label"], key=f"m2_nav_{v['id']}", on_click=_go, args=(v["id"],), type="tertiary")
         st.html(

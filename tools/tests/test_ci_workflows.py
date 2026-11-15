@@ -111,10 +111,15 @@ def test_browser_job_runs_the_embedding_against_a_real_server_and_database():
     assert pythons == [_image_python()], f"browser job runs Python {pythons}, the image runs {_image_python()}"
     run = _run_text(job)
     installs = [line for line in run.splitlines() if "pip install" in line and "requirements.txt" in line]
-    assert installs and all("-c app/constraints.txt" in x and "--only-binary :all:" in x for x in installs)
+    assert installs, "browser job installs no requirements"
+    for line in installs:
+        assert "-c app/constraints.txt" in line, f"browser job installs without the lock: {line.strip()}"
+        assert "--only-binary :all:" in line, f"browser job allows sdists: {line.strip()}"
     order = ["app/apply_schema.py", "app/demo_seed.py --yes", "npm ci", "playwright install --with-deps chromium", "npm run e2e"]
     positions = [run.find(s) for s in order]
-    assert -1 not in positions and positions == sorted(positions), f"browser job steps out of order or missing: {order}"
+    assert -1 not in positions, f"browser job is missing a step: {dict(zip(order, positions))}"
+    assert positions == sorted(positions), f"browser job steps out of order: {order}"
+    assert "npx " not in run, "use the locked node_modules/.bin CLI; npx can fetch an unpinned package"
     assert job.get("permissions") is None, "the browser job needs no permissions beyond the workflow's contents: read"
     config = (ROOT / "playwright.config.mjs").read_text(encoding="utf-8")
     for width in ("360", "768", "1440"):

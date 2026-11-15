@@ -76,8 +76,9 @@ def _broken(edit) -> dict:
     (lambda d: d["views"][2].update(label=" "), "label"),
 ])
 def test_validation_refuses_what_a_renderer_could_not_draw(edit, fragment):
+    doc = _broken(edit)
     with pytest.raises(nav.NavError, match=re.escape(fragment)):
-        nav.validate(_broken(edit))
+        nav.validate(doc)
 
 
 def test_the_two_halves_are_the_two_renderers():
@@ -153,7 +154,8 @@ def test_streamlit_app_routes_and_wires_every_view_from_nav_json(db):
     hidden = [b.key for b in frame.button if (b.key or "").startswith("pdb_nav_")]
     assert hidden == [f"pdb_nav_{vid}" for vid in nav.ids_for("native")]
     srcdoc = "\n".join(f.proto.srcdoc for f in frame.get("iframe"))
-    assert "data-rail-nav" in srcdoc and "data-tabbar" in srcdoc
+    assert "data-rail-nav" in srcdoc
+    assert "data-tabbar" in srcdoc
     assert not re.search(r"__[A-Z_]+__", srcdoc.split("const DATA")[0]), "a shell placeholder was left unfilled"
 
     for vid in nav.ids_for("native"):
