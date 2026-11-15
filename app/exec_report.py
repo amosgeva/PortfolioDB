@@ -25,6 +25,7 @@ import exec_report_analytics as analytics
 import exec_report_queries as queries
 import exec_report_render as render
 import ledger_inputs
+import portfolio_kpis as kpis
 import reporting_tz
 from exec_report_analytics import ReportData
 from portfolio import compute_fifo_merged
@@ -39,6 +40,8 @@ _fetch_latest_brief = queries.fetch_latest_brief
 _fetch_fd_metrics = queries.fetch_fd_metrics
 _fetch_earnings_window = queries.fetch_earnings_window
 _fetch_cash = queries.fetch_cash
+_fetch_income = queries.fetch_income
+_fetch_instruments = queries.fetch_instruments
 
 _restate_latest = analytics.restate_latest
 _holdings_at_date = analytics.holdings_at_date
@@ -73,16 +76,34 @@ def gather(conn) -> ReportData:
     lot_rows = ledger.lots
     fifo_pos = compute_fifo_merged(lot_rows)
     latest = _restate_latest(ledger, _fetch_latest_prices(conn))
-    cash_by_account = _fetch_cash(conn)
     eod_by_day = ledger.price_by_day(_fetch_eod_by_day(conn))
+    instruments = list(_fetch_instruments(conn))
+    benchmarks = {r["symbol"] for r in instruments if r.get("benchmark")}
+    # Cash and income in another currency are not dollars: they are left out
+    # of every total and listed instead (audit F-11 / Q-8).
+    cash_rows = [dict(r) for r in _fetch_cash(conn)]
+    cash_by_account = {
+        (r["account"] or "(merged)"): float(r["cash"])
+        for r in cash_rows if kpis.currency_of(r) == kpis.BASE_CURRENCY
+    }
+    income_rows = list(_fetch_income(conn))
+    usd_income, _foreign_income = kpis.split_by_currency(income_rows)
+    income_total = sum((kpis.to_dec(r["amount"]) or kpis.ZERO for r in usd_income), kpis.ZERO)
 
     positions = analytics.price_positions(fifo_pos, latest)
-    as_of = analytics.report_as_of(latest, tz)
+    held_symbols = analytics.held_symbols(positions)
+    # "As of" is when the HOLDINGS were last priced, never a benchmark's quote
+    # (audit F-8); a held symbol quoted on an earlier day is stale: valued at
+    # that quote, listed, and left out of the day's change.
+    as_of = analytics.report_as_of(latest, tz, held_symbols, benchmarks)
     today = as_of.date()
-    totals = analytics.compute_totals(positions, cash_by_account, eod_by_day, today)
+    stale = kpis.stale_quotes({s: v.get("ts") for s, v in latest.items()}, held_symbols, as_of, tz)
+    stale_syms = {e["symbol"] for e in stale}
+    totals = analytics.compute_totals(
+        positions, cash_by_account, eod_by_day, today, lot_rows, income_total, stale_syms
+    )
     acct_alloc = analytics.account_allocation(lot_rows, latest, cash_by_account)
 
-    held_symbols = [s for s in positions[positions["qty"] > 0]["symbol"].tolist()] if not positions.empty else []
     fd_metrics = _fetch_fd_metrics(conn)
     earnings_past, earnings_upcoming = _fetch_earnings_window(conn, held_symbols)
 
@@ -93,13 +114,22 @@ def gather(conn) -> ReportData:
         cash_by_account=cash_by_account,
         account_allocation=acct_alloc,
         equity_curve=_build_equity_curve(lot_rows, eod_by_day),
-        movers=_movers(positions, eod_by_day, today),
+        movers=_movers(positions, eod_by_day, today, stale_syms),
         realized_log=_realized_log(lot_rows),
         advisor_brief=_fetch_latest_brief(conn),
         fd_metrics=fd_metrics,
         earnings_past=earnings_past,
         earnings_upcoming=earnings_upcoming,
         tz_name=tz_name,
+        stale=stale,
+        currency_warnings=kpis.currency_warnings(
+            instruments=instruments,
+            traded_symbols={r["symbol"] for r in lot_rows},
+            held_symbols=held_symbols,
+            income=income_rows,
+            cash=cash_rows,
+        ),
+        cash_rows=cash_rows,
     )
 
 

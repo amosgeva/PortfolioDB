@@ -31,6 +31,7 @@ from typing import Iterator
 
 import ledger_inputs
 import llm
+import portfolio_kpis as kpis
 import settings
 from db import connect, execute, fetch_all, load_config
 from portfolio import compute_fifo_merged
@@ -149,62 +150,86 @@ def _latest_cash(conn) -> list[dict]:
     return fetch_all(
         conn,
         """
-        SELECT DISTINCT ON (account) account, cash, ts, note
+        SELECT DISTINCT ON (account) account, cash, ts, note, currency
         FROM cash_snapshots
         ORDER BY account, ts DESC
         """,
     )
 
 
+def _income_rows(conn) -> list[dict]:
+    return fetch_all(conn, "SELECT symbol, pay_date, amount, currency FROM income")
+
+
+def _instrument_currencies(conn) -> list[dict]:
+    return fetch_all(conn, "SELECT symbol, currency FROM instruments")
+
+
+# Read by the model with the numbers, so it does not reinterpret them.
+SNAPSHOT_NOTES = [
+    "total_unrealized and total_market_value cover priced positions only; a position "
+    "with no quote (unpriced_symbols) has an unknown value, not a loss, and its cost "
+    "is unpriced_cost_basis.",
+    "total_return_pct = " + kpis.TOTAL_RETURN_BASIS + ". It is a money measure; the "
+    "time-weighted return is the performance measure.",
+    "cash_by_account is what the operator last entered, with its as_of date; it is not "
+    "a broker balance. Amounts are USD; anything in currency_warnings is not.",
+]
+
+
 def snapshot_portfolio(conn) -> dict:
     """Single source of truth: FIFO-merged positions + latest prices + cash.
 
-    Lots come through the prepared ledger (post-split units), so the advisor
-    reads the same share counts and average costs the dashboard shows.
+    Lots come through the prepared ledger (post-split units), and so do the
+    latest quotes: a quote stamped before a recorded split is restated, or the
+    advisor would value post-split shares at the pre-split price. The roll-up
+    is portfolio_kpis, the same definitions the dashboard and the executive
+    report use: an unpriced position is reported, not counted as a loss
+    (audit F-12 / Q-2), and total return is over peak net invested capital
+    (audit F-5 / Q-4).
     """
-    lot_rows = ledger_inputs.load(conn).lots
+    ledger = ledger_inputs.load(conn)
+    lot_rows = ledger.lots
     fifo_df = compute_fifo_merged(lot_rows)
-    prices = _latest_prices(conn)
+    prices = {r["symbol"]: r for r in ledger.price_rows(list(_latest_prices(conn).values()))}
     cash_rows = _latest_cash(conn)
+    all_income = _income_rows(conn)
+    usd_income, _foreign = kpis.split_by_currency(all_income)
+    income_total = sum((kpis.to_dec(r["amount"]) or Decimal("0") for r in usd_income), Decimal("0"))
 
     positions: list[PositionView] = []
-    total_mv = Decimal("0")
-    total_cost = Decimal("0")
-
     for _, row in fifo_df.iterrows():
         sym = row["symbol"]
         qty = Decimal(str(row["qty"]))
         open_cost = Decimal(str(row["open_cost"]))
-        avg_cost = Decimal(str(row["avg_cost"]))
-        realized = Decimal(str(row["realized_pnl"]))
-
         snap = prices.get(sym)
-        last = Decimal(str(snap["last_price"])) if snap and snap["last_price"] is not None else None
-        last_ts = snap["ts"] if snap else None
-
+        last = kpis.to_dec(snap["last_price"]) if snap else None
         mv = (last * qty) if last is not None else None
-        unrealized = (mv - open_cost) if mv is not None else None
-
-        if mv is not None:
-            total_mv += mv
-        total_cost += open_cost
-
         positions.append(
             PositionView(
                 symbol=sym,
                 qty=qty,
                 open_cost=open_cost,
-                avg_cost=avg_cost,
-                realized=realized,
+                avg_cost=Decimal(str(row["avg_cost"])),
+                realized=Decimal(str(row["realized_pnl"])),
                 last_price=last,
-                last_ts=last_ts,
+                last_ts=snap["ts"] if snap else None,
                 market_value=mv,
-                unrealized=unrealized,
+                unrealized=(mv - open_cost) if mv is not None else None,
             )
         )
 
-    cash_total = sum((Decimal(str(r["cash"])) for r in cash_rows), Decimal("0"))
-    nav = total_mv + cash_total
+    s = kpis.summary(
+        [{"symbol": p.symbol, "qty": p.qty, "open_cost": p.open_cost,
+          "realized_pnl": p.realized, "last_price": p.last_price} for p in positions],
+        lot_rows,
+        income=income_total,
+    )
+    cash_total = sum(
+        (Decimal(str(r["cash"])) for r in cash_rows if kpis.currency_of(r) == kpis.BASE_CURRENCY),
+        Decimal("0"),
+    )
+    nav = s["market_value"] + cash_total
 
     def _pct(p: PositionView) -> float | None:
         if p.market_value is None or nav == 0:
@@ -213,21 +238,40 @@ def snapshot_portfolio(conn) -> dict:
 
     return {
         "as_of": datetime.now(timezone.utc).isoformat(),
+        "currency": kpis.BASE_CURRENCY,
+        "notes": SNAPSHOT_NOTES,
         "nav": float(nav),
-        "total_market_value": float(total_mv),
-        "total_cost": float(total_cost),
-        "total_unrealized": float(total_mv - total_cost) if total_mv else 0.0,
-        "total_realized": float(sum((p.realized for p in positions), Decimal("0"))),
+        "total_market_value": float(s["market_value"]),
+        "total_cost": float(s["cost_basis"]),
+        "priced_cost_basis": float(s["priced_cost_basis"]),
+        "unpriced_cost_basis": float(s["unpriced_cost_basis"]),
+        "unpriced_symbols": s["unpriced_symbols"],
+        "total_unrealized": float(s["unrealized_pnl"]),
+        "total_unrealized_pct": kpis.as_float(s["unrealized_pct"]),
+        "total_realized": float(s["realized_pnl"]),
+        "invested_capital": float(s["invested_capital"]),
+        "total_return_pct": kpis.as_float(s["total_return_pct"]),
+        "total_return_with_income_pct": kpis.as_float(s["total_return_with_income_pct"]),
+        "total_return_basis": kpis.TOTAL_RETURN_BASIS,
+        "income_total": float(income_total),
         "cash_total": float(cash_total),
         "cash_by_account": [
             {
                 "account": r["account"],
                 "cash": float(r["cash"]),
-                "ts": r["ts"].isoformat() if r["ts"] else None,
+                "currency": kpis.currency_of(r),
+                "as_of": r["ts"].isoformat() if r["ts"] else None,
                 "note": r["note"],
             }
             for r in cash_rows
         ],
+        "currency_warnings": kpis.currency_warnings(
+            instruments=_instrument_currencies(conn),
+            traded_symbols={r["symbol"] for r in lot_rows},
+            held_symbols={p.symbol for p in positions if p.qty > 0},
+            income=all_income,
+            cash=cash_rows,
+        ),
         "positions": [
             {
                 "symbol": p.symbol,
@@ -369,7 +413,9 @@ def parse_brief_text(text: str) -> dict:
 def morning_brief(kind: str = "morning", conversation_id: str = "default") -> dict:
     """One-shot structured brief. Persisted to advisor_briefs."""
     cfg = load_config()
-    with connect(cfg) as conn:
+    # closing(): psycopg2's own `with conn` commits but leaves the connection
+    # open (db.py); every statement here commits itself through execute().
+    with contextlib.closing(connect(cfg)) as conn:
         snap = snapshot_portfolio(conn)
         history = recent_chat(conn, n=10, conversation_id=conversation_id)
 
@@ -396,7 +442,8 @@ def morning_brief(kind: str = "morning", conversation_id: str = "default") -> di
 def chat(question: str, conversation_id: str = "default") -> Iterator[str]:
     """Stream a chat response, saving both sides to chat_log."""
     cfg = load_config()
-    with connect(cfg) as conn:
+    # Closed when the stream finishes or the caller drops the generator.
+    with contextlib.closing(connect(cfg)) as conn:
         snap = snapshot_portfolio(conn)
         history = recent_chat(conn, n=30, conversation_id=conversation_id)
         save_chat(conn, "user", question, conversation_id)
@@ -461,7 +508,7 @@ def _cmd_ask(args) -> int:
 
 def _cmd_snapshot(args) -> int:
     cfg = load_config()
-    with connect(cfg) as conn:
+    with contextlib.closing(connect(cfg)) as conn:
         snap = snapshot_portfolio(conn)
     print(json.dumps(snap, indent=2))
     return 0

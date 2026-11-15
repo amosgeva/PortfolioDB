@@ -34,6 +34,12 @@ def _fmt_pct(v) -> str:
     return f"{v:+.2f}%"
 
 
+def _fmt_weight(v) -> str:
+    if v is None or pd.isna(v):
+        return "—"
+    return f"{v:.2f}%"
+
+
 def _fmt_mcap(v) -> str:
     """Compact market cap: $2.8T / $89B / $450M."""
     if v is None or pd.isna(v):
@@ -82,6 +88,21 @@ def _kpi(label: str, value: str, delta: str | None = None, cls: str = "neu") -> 
     )
 
 
+def _day_label(d: ReportData) -> str:
+    """Which session the day change is, said outright: the holdings' latest
+    session, compared with their previous one (audit F-8). On a Saturday that
+    reads "on Fri, Nov 13", not "today"."""
+    return f"on {d.as_of.strftime('%a, %b %d')}"
+
+
+def _day_delta_html(d: ReportData) -> str:
+    t = d.totals
+    if t.get("day_chg") is None:
+        return "Day change n/a (no previous session on file)"
+    return (f"{_fmt_money(t['day_chg'], signed=True)} ({_fmt_pct(t['day_pct'])}) "
+            f"{escape(_day_label(d))}")
+
+
 def _section_header(d: ReportData) -> str:
     aum = d.totals["aum"]
     return f"""
@@ -94,7 +115,7 @@ def _section_header(d: ReportData) -> str:
         <div class="aum-label">Total AUM</div>
         <div class="aum-value">{_fmt_money(aum)}</div>
         <div class="aum-delta {_color(d.totals['day_chg'])}">
-          {_fmt_money(d.totals['day_chg'], signed=True)} ({_fmt_pct(d.totals['day_pct'])}) today
+          {_day_delta_html(d)}
         </div>
       </div>
     </header>"""
@@ -102,17 +123,53 @@ def _section_header(d: ReportData) -> str:
 
 def _section_kpis(d: ReportData) -> str:
     t = d.totals
+    unpriced = t.get("unpriced_cost") or 0.0
+    cost_note = f"incl. {_fmt_money(unpriced)} unpriced" if unpriced else None
+    invested_note = f"on {_fmt_money(t.get('invested'))} invested"
+    if t.get("total_return_partial"):
+        invested_note += " · excl. unpriced"
+    day_note = _fmt_pct(t["day_pct"]) + " " + _day_label(d) if t.get("day_chg") is not None else "n/a"
     cards = [
-        _kpi("Market Value", _fmt_money(t["value"])),
-        _kpi("Cost Basis", _fmt_money(t["cost"])),
+        _kpi("Market Value", _fmt_money(t["value"]), "priced positions" if unpriced else None),
+        _kpi("Cost Basis", _fmt_money(t["cost"]), cost_note),
         _kpi("Unrealized P&L", _fmt_money(t["unrl"], signed=True), _fmt_pct(t["unrl_pct"]), _color(t["unrl"])),
         _kpi("Realized P&L", _fmt_money(t["realized"], signed=True), None, _color(t["realized"])),
-        _kpi("Total Return %", _fmt_pct(t["total_return_pct"]), None, _color(t["total_return_pct"])),
-        _kpi("Cash", _fmt_money(t["cash"])),
-        _kpi("Day Δ", _fmt_money(t["day_chg"], signed=True), _fmt_pct(t["day_pct"]), _color(t["day_chg"])),
+        _kpi("Total Return", _fmt_pct(t["total_return_pct"]), invested_note, _color(t["total_return_pct"])),
+        _kpi("Cash (as entered)", _fmt_money(t["cash"])),
+        _kpi("Day Δ", _fmt_money(t["day_chg"], signed=True), day_note, _color(t["day_chg"])),
         _kpi("Week Δ", _fmt_money(t["week_chg"], signed=True), _fmt_pct(t["week_pct"]), _color(t["week_chg"])),
     ]
     return f'<section class="section"><h2>Key Metrics</h2><div class="kpi-grid">{"".join(cards)}</div></section>'
+
+
+def _section_notices(d: ReportData) -> str:
+    """What the figures above leave out or carry forward, said where they are
+    read: unpriced positions (F-12), stale quotes (F-8), other currencies (F-11)."""
+    items = []
+    t = d.totals
+    if t.get("unpriced_symbols"):
+        items.append(
+            f"<li><strong>Unpriced:</strong> {escape(', '.join(t['unpriced_symbols']))} — no quote on file. "
+            f"Their cost ({_fmt_money(t.get('unpriced_cost'))}) is in the cost basis; they are left out of "
+            "market value, unrealized P&amp;L and total return, not counted as a loss.</li>"
+        )
+    if d.stale:
+        tz = ZoneInfo(d.tz_name)
+        parts = ", ".join(
+            f"{escape(e['symbol'])} ({e['ts'].astimezone(tz).strftime('%Y-%m-%d')})" for e in d.stale
+        )
+        items.append(
+            f"<li><strong>Stale prices:</strong> {parts} — valued at their last quote, which predates "
+            f"{escape(d.as_of.strftime('%Y-%m-%d'))}, and left out of the day's change.</li>"
+        )
+    for w in d.currency_warnings:
+        items.append(f"<li><strong>Currency:</strong> {escape(w['message'])}</li>")
+    if not items:
+        return ""
+    return (
+        '<section class="section notices"><h2>Read With These Figures</h2>'
+        f'<ul class="notice-list">{"".join(items)}</ul></section>'
+    )
 
 
 def _section_holdings(d: ReportData) -> str:
@@ -134,7 +191,7 @@ def _section_holdings(d: ReportData) -> str:
             f'<td class="num">{_fmt_money(r["open_cost"])}</td>'
             f'<td class="num {_color(unr)}">{_fmt_money(unr, signed=True)}</td>'
             f'<td class="num {_color(unr_pct)}">{_fmt_pct(unr_pct)}</td>'
-            f'<td class="num">{r["weight"]:.2f}%</td>'
+            f'<td class="num">{_fmt_weight(r["weight"])}</td>'
             f'<td class="num fd">{_fmt_ratio(fd.get("pe_ratio"))}</td>'
             f'<td class="num fd">{_fmt_growth_pct(fd.get("revenue_growth"))}</td>'
             f'<td class="num fd">{_fmt_mcap(fd.get("market_cap"))}</td></tr>'
@@ -467,23 +524,43 @@ def _section_realized(d: ReportData) -> str:
 
 
 def _section_cash(d: ReportData) -> str:
-    if not d.cash_by_account:
+    """Cash as the operator entered it, with the date of each entry (U-4).
+
+    It is a typed figure, not a broker balance, and it can be weeks old; the
+    date is what tells the reader how much to trust it. A balance in another
+    currency is shown but not totalled.
+    """
+    if not d.cash_by_account and not d.cash_rows:
         return ""
-    rows = "".join(
-        f'<tr><td>{escape(a)}</td><td class="num">{_fmt_money(v)}</td></tr>'
-        for a, v in sorted(d.cash_by_account.items(), key=lambda kv: -kv[1])
-    )
+    tz = ZoneInfo(d.tz_name)
+    entered = {(r.get("account") or "(merged)"): r for r in d.cash_rows}
+    rows = []
+    for a, v in sorted(d.cash_by_account.items(), key=lambda kv: -kv[1]):
+        ts = (entered.get(a) or {}).get("ts")
+        when = ts.astimezone(tz).strftime("%Y-%m-%d") if ts is not None else "—"
+        rows.append(f'<tr><td>{escape(a)}</td><td>{when}</td><td class="num">{_fmt_money(v)}</td></tr>')
+    for r in d.cash_rows:
+        cur = str(r.get("currency") or "USD").upper()
+        if cur == "USD":
+            continue
+        ts = r.get("ts")
+        when = ts.astimezone(tz).strftime("%Y-%m-%d") if ts is not None else "—"
+        rows.append(
+            f'<tr><td>{escape(r.get("account") or "(merged)")}</td><td>{when}</td>'
+            f'<td class="num">{float(r["cash"]):,.2f} {escape(cur)} (not in total)</td></tr>'
+        )
     total = sum(d.cash_by_account.values())
     return f"""
     <section class="section">
-      <h2>Cash Positions</h2>
+      <h2>Cash Positions (as entered)</h2>
       <table class="data compact">
-        <thead><tr><th>Account</th><th class="num">Cash</th></tr></thead>
-        <tbody>{rows}
-          <tr class="total"><td><strong>Total</strong></td>
+        <thead><tr><th>Account</th><th>Entered</th><th class="num">Cash</th></tr></thead>
+        <tbody>{"".join(rows)}
+          <tr class="total"><td><strong>Total</strong></td><td></td>
             <td class="num"><strong>{_fmt_money(total)}</strong></td></tr>
         </tbody>
       </table>
+      <p class="small-note">Balances are what was last entered per account, not a broker feed.</p>
     </section>"""
 
 
@@ -568,6 +645,8 @@ table.data.small { font-size: 10.5px; }
   vertical-align: middle;
 }
 table.data .fd { color: #4a5568; font-size: 11px; }
+.notice-list { margin: 0; padding-left: 18px; font-size: 12px; color: #2d3748; line-height: 1.5; }
+.notice-list li { margin-bottom: 4px; }
 @media print {
   body { background: white; }
   .report { box-shadow: none; max-width: 100%; padding: 12px; }
@@ -587,6 +666,7 @@ def render_document(d: ReportData, plotly_js: str) -> str:
     sections = [
         _section_header(d),
         _section_kpis(d),
+        _section_notices(d),
         _section_advisor_brief(d),
         _section_holdings(d),
         _section_allocation(d),

@@ -110,7 +110,15 @@ def install_demo(monkeypatch, rows: dict) -> None:
         return dict(by_day)
 
     def cash(conn):
-        return {r["account"]: float(r["cash"]) for r in rows["cash"]}
+        return [dict(r) for r in rows["cash"]]
+
+    def income(conn):
+        return [dict(r) for r in rows.get("income", [])]
+
+    def instruments(conn):
+        syms = {r["symbol"] for r in snaps} | {r["symbol"] for r in rows["lots"]}
+        return [{"symbol": s, "currency": rows.get("currencies", {}).get(s, "USD"),
+                 "benchmark": s in rows["benchmarks"]} for s in sorted(syms)]
 
     def brief(conn):
         return {"id": 1, "ts": FROZEN_NOW - timedelta(hours=2), "kind": "morning",
@@ -135,6 +143,9 @@ def install_demo(monkeypatch, rows: dict) -> None:
     monkeypatch.setattr(exec_report, "_fetch_latest_prices", latest_prices)
     monkeypatch.setattr(exec_report, "_fetch_eod_by_day", eod_by_day)
     monkeypatch.setattr(exec_report, "_fetch_cash", cash)
+    if hasattr(exec_report, "_fetch_income"):
+        monkeypatch.setattr(exec_report, "_fetch_income", income)
+        monkeypatch.setattr(exec_report, "_fetch_instruments", instruments)
     monkeypatch.setattr(exec_report, "_fetch_latest_brief", brief)
     monkeypatch.setattr(exec_report, "_fetch_fd_metrics", fd_metrics)
     monkeypatch.setattr(exec_report, "_fetch_earnings_window", earnings)

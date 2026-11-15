@@ -162,13 +162,25 @@ def fetch_earnings_window(conn, symbols: list[str], past_days: int = 60, upcomin
     return past, upcoming
 
 
-def fetch_cash(conn) -> dict[str, float]:
-    rows = fetch_all(
+def fetch_cash(conn) -> list[dict]:
+    """Latest cash entry per account, with when it was entered and its currency."""
+    return fetch_all(
         conn,
         """
-        SELECT DISTINCT ON (account) account, cash
+        SELECT DISTINCT ON (account) account, cash, ts, currency
         FROM cash_snapshots
         ORDER BY account, ts DESC
         """,
     )
-    return {(r["account"] or "(merged)"): float(r["cash"]) for r in rows}
+
+
+def fetch_income(conn) -> list[dict]:
+    """Every income record's amount, date and currency (for the USD totals)."""
+    return fetch_all(conn, "SELECT symbol, pay_date, amount, currency FROM income")
+
+
+def fetch_instruments(conn) -> list[dict]:
+    """Registry flags the report needs: currency, and whether a symbol is a
+    market-overview benchmark (context, never a holding: its quotes must not
+    decide the report's "as of" or its previous session, audit F-8)."""
+    return fetch_all(conn, "SELECT symbol, currency, benchmark FROM instruments")
