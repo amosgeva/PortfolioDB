@@ -57,7 +57,7 @@ export function renderMovers() {
 const heatState = { sector: 'All', query: '' };
 function sectors() {
   const set = {};
-  list().forEach((s) => { set[s.sector || 'Other'] = 1; });
+  list().forEach((s) => { const key = s.sector || 'Other'; set[key] = 1; });
   return Object.keys(set).sort((a, b) => a.localeCompare(b));
 }
 function tileHTML(s) {
@@ -89,7 +89,7 @@ function renderChips() {
   const host = $('#sector-chips');
   if (!host) return;
   const chips = ['All'].concat(sectors());
-  setHTML(host, html`${chips.map((c) => html`<button type="button" class="chip ${c === heatState.sector ? 'is-active' : ''}" data-sector="${c}" aria-pressed="${c === heatState.sector}">${c}</button>`)}`);
+  setHTML(host, html`${chips.map((c) => html`<button type="button" class="chip ${c === heatState.sector ? 'is-active' : ''}" data-sector="${c}" aria-pressed="${String(c === heatState.sector)}">${c}</button>`)}`);
   $all('[data-sector]', host).forEach((b) => b.addEventListener('click', () => {
     heatState.sector = b.getAttribute('data-sector'); renderChips(); renderHeat();
   }));

@@ -182,8 +182,13 @@ needs a schema step says so under **Upgrading**.
   (`html` in `app/dashboard/static/src/core/html.js`); a symbol, note,
   account, news title or fundamentals field containing `<img onerror=…>`,
   quotes or `&#60;` entities renders as text. ESLint fails the build on any
-  other `innerHTML`/`insertAdjacentHTML`/`document.write`, and a jsdom test
-  walks every view with a hostile payload. Links must be `http(s)`.
+  other `innerHTML`/`insertAdjacentHTML`/`document.write`, in dotted or
+  computed form, on any use of the template other than as a tag, and on
+  inline disable comments. At run time the template refuses event-handler
+  attributes and script-capable elements in its literal text, holes in
+  unquoted attributes, tag names or comments, and URL attributes that did not
+  come through `safeUrl`. A jsdom test walks every view with a hostile
+  payload. Links must be `http(s)`.
 - **Security: CSV exports neutralise formulas.** A text cell starting with
   `= + - @`, a tab or a carriage return is prefixed with `'` in the positions
   and lots exports; numbers stay numeric.

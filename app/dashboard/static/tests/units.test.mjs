@@ -35,14 +35,14 @@ test('html cannot be fed a concatenated string, and setHTML takes only html outp
 });
 
 test('safeUrl admits http(s), and data images only when asked', () => {
-  assert.equal(safeUrl('https://example.com/a?b=1'), 'https://example.com/a?b=1');
-  assert.equal(safeUrl(' http://x.test '), 'http://x.test');
+  assert.equal(String(safeUrl('https://example.com/a?b=1')), 'https://example.com/a?b=1');
+  assert.equal(String(safeUrl(' http://x.test ')), 'http://x.test');
   for (const u of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', ' javascript:x', 'vbscript:x', 'data:text/html,<b>', '/relative', '//host/x', null, 5]) {
     assert.equal(safeUrl(u), null, String(u));
   }
   assert.equal(safeUrl('data:image/png;base64,AAAA'), null);
-  assert.equal(safeUrl('data:image/png;base64,AAAA', { allowDataImage: true }), 'data:image/png;base64,AAAA');
-  assert.equal(safeUrl('data:image/svg+xml;base64,PHN2Zz4=', { allowDataImage: true }), 'data:image/svg+xml;base64,PHN2Zz4=');
+  assert.equal(String(safeUrl('data:image/png;base64,AAAA', { allowDataImage: true })), 'data:image/png;base64,AAAA');
+  assert.equal(String(safeUrl('data:image/svg+xml;base64,PHN2Zz4=', { allowDataImage: true })), 'data:image/svg+xml;base64,PHN2Zz4=');
   assert.equal(safeUrl('data:image/png;base64,AA" onerror="x', { allowDataImage: true }), null);
 });
 
@@ -143,4 +143,38 @@ test('topNavigate refuses anything but this page’s own ?view= query (no open r
   for (const bad of ['javascript:alert(1)', 'https://evil.example/', '//evil.example', '/path', '?view=x&next=https://e', '?view=<b>']) {
     assert.equal(topNavigate(bad), undefined, bad);
   }
+});
+test('QA B2: a frozen array with a frozen raw built from runtime text cannot become markup', () => {
+  // The exact reproduction from qa-pr-122.md. The shape check alone accepts
+  // it (it is indistinguishable at run time), so the literal-text policy has
+  // to refuse the handler; the lint rules forbid the call shape outright.
+  const text = '<img src="x" onerror="window.__qaPwned=1">';
+  const raw = Object.freeze([text]);
+  const forged = Object.freeze(Object.assign([text], { raw }));
+  assert.throws(() => html(forged), /template literal text is not allowed/);
+  for (const t of ['<script>alert(1)</script>', '<svg onload=alert(1)>', '<iframe src=x>', '<a href="javascript:alert(1)">x</a>',
+    '<div ONMOUSEOVER = "x">', '<iframe srcdoc="x">', '<form><button formaction="x">', '<math><mi xlink:href="x">', '<!-- x -->']) {
+    const r = Object.freeze([t]);
+    assert.throws(() => html(Object.freeze(Object.assign([t], { raw: r }))), /not allowed/, t);
+  }
+});
+
+test('html enforces interpolation contexts (QA B2: unquoted and handler holes)', () => {
+  const evil = 'x onmouseover=alert(1)';
+  assert.throws(() => html`<div data-x=${evil}>safe</div>`, /unquoted attribute value/);
+  assert.throws(() => html`<div data-x= ${evil}>`, /unquoted attribute value/);
+  assert.throws(() => html`<img src="x" onerror="${evil}">`, /not allowed/);
+  assert.throws(() => html`<div data-${evil}="1">`, /attribute name/);
+  assert.throws(() => html`<${'img'} src="x">`, /tag name/);
+  // Tag position (an attribute list) takes html`` output only.
+  assert.throws(() => html`<div ${'onclick=alert(1)'}>`, /only html`` output/);
+  assert.equal(html`<div ${html`data-a="1"`}>`.s, '<div data-a="1">');
+  assert.equal(html`<div ${''} class="a">`.s, '<div  class="a">');
+  // URL attributes take safeUrl() values only.
+  assert.throws(() => html`<a href="${'https://example.com'}">x</a>`, /needs a safeUrl\(\) value/);
+  assert.throws(() => html`<img src="${'data:image/png;base64,AAAA'}">`, /needs a safeUrl/);
+  assert.equal(html`<a href="${safeUrl('https://e.test/?a=1&b="2"')}">x</a>`.s, '<a href="https://e.test/?a=1&amp;b=&quot;2&quot;">x</a>');
+  assert.equal(html`<a href="${null}">x</a>`.s, '<a href="">x</a>');
+  // Text and quoted values are escaped as before.
+  assert.equal(html`<p title='${evil}"'>${evil}</p>`.s, '<p title=\'x onmouseover=alert(1)"\'>x onmouseover=alert(1)</p>');
 });

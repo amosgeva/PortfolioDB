@@ -26,7 +26,7 @@ function render() {
   const rows = items.map((c, i) => {
     const head = c.sect !== lastSect ? html`<div class="cmdk__sect" role="presentation">${c.sect}</div>` : '';
     lastSect = c.sect;
-    return html`${head}<div class="cmdk__item${i === sel ? ' is-sel' : ''}" id="${'cmdk-opt-' + i}" data-ci="${i}" role="option" aria-selected="${i === sel}"><b>${c.label}</b>${c.detail ? html`<span style="font-size:var(--fs-meta);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.detail}</span>` : ''}${c.px ? html`<span class="px ${c.upDn ? 'up' : 'down'}">${c.px}</span>` : ''}</div>`;
+    return html`${head}<div class="cmdk__item${i === sel ? ' is-sel' : ''}" id="${'cmdk-opt-' + i}" data-ci="${i}" role="option" aria-selected="${String(i === sel)}"><b>${c.label}</b>${c.detail ? html`<span style="font-size:var(--fs-meta);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.detail}</span>` : ''}${c.px ? html`<span class="px ${c.upDn ? 'up' : 'down'}">${c.px}</span>` : ''}</div>`;
   });
   setHTML(listEl, rows.length ? html`${rows}` : html`<div class="empty">No matches.</div>`);
   if (items.length) input.setAttribute('aria-activedescendant', 'cmdk-opt-' + sel); else input.removeAttribute('aria-activedescendant');

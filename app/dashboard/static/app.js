@@ -510,6 +510,7 @@
 
   // app/dashboard/static/src/core/html.js
   var SAFE = /* @__PURE__ */ new WeakSet();
+  var SAFE_URL = /* @__PURE__ */ new WeakSet();
   function mark(s) {
     const o = Object.freeze({ s });
     SAFE.add(o);
@@ -518,23 +519,122 @@
   function isSafe(v) {
     return v !== null && typeof v === "object" && SAFE.has(v);
   }
+  function isSafeUrl(v) {
+    return v !== null && typeof v === "object" && SAFE_URL.has(v);
+  }
   var ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" };
   function esc(v) {
     return String(v == null ? "" : v).replace(/[&<>"'`]/g, (c) => ESC[c]);
   }
+  var empty = (v) => v === null || v === void 0 || v === false || v === "";
   function part(v) {
-    if (v === null || v === void 0 || v === false) return "";
+    if (empty(v)) return "";
     if (isSafe(v)) return v.s;
+    if (isSafeUrl(v)) return esc(v.u);
     if (Array.isArray(v)) return v.map(part).join("");
     return esc(v);
   }
+  var DENY_LITERAL = [
+    // An event-handler attribute, wherever it is spelled (an attribute-list
+    // fragment like symTrigger's is plain text until it is spliced into a tag).
+    /(^|[\s"'/`])on[a-z]+\s*=/i,
+    // Elements that run script, load documents or rewrite the page.
+    /<\s*\/?\s*(script|iframe|frame|frameset|object|embed|applet|base|meta|link|form|style|template|noscript|math|animate|set|foreignobject|handler)\b/i,
+    /javascript:|vbscript:|livescript:|data:text\/html|srcdoc|formaction|xlink:href|<!--/i
+  ];
+  var URL_ATTRS = /* @__PURE__ */ new Set(["href", "src", "action", "formaction", "srcset", "poster", "background", "cite", "data", "ping", "xlink:href"]);
+  function classify(strings) {
+    const holes = [];
+    let st = "text", attr = "";
+    for (let i = 0; i < strings.length; i++) {
+      const s = strings[i];
+      for (let j = 0; j < s.length; j++) {
+        const c = s[j];
+        switch (st) {
+          case "text":
+            if (c === "<" && (j === s.length - 1 ? i < strings.length - 1 : /[a-zA-Z/!]/.test(s[j + 1]))) st = "tagname";
+            break;
+          case "tagname":
+            if (c === ">") st = "text";
+            else if (/\s/.test(c)) st = "tag";
+            break;
+          case "tag":
+            if (c === ">") st = "text";
+            else if (c === "/") {
+            } else if (!/\s/.test(c)) {
+              st = "attrname";
+              attr = c.toLowerCase();
+            }
+            break;
+          case "attrname":
+            if (c === "=") st = "beforevalue";
+            else if (c === ">") st = "text";
+            else if (/\s/.test(c)) st = "afterattr";
+            else attr += c.toLowerCase();
+            break;
+          case "afterattr":
+            if (c === "=") st = "beforevalue";
+            else if (c === ">") st = "text";
+            else if (!/\s/.test(c)) {
+              st = "attrname";
+              attr = c.toLowerCase();
+            }
+            break;
+          case "beforevalue":
+            if (c === '"') st = "dq";
+            else if (c === "'") st = "sq";
+            else if (c === ">") st = "text";
+            else if (!/\s/.test(c)) st = "unquoted";
+            break;
+          case "dq":
+            if (c === '"') st = "tag";
+            break;
+          case "sq":
+            if (c === "'") st = "tag";
+            break;
+          case "unquoted":
+            if (/\s/.test(c)) st = "tag";
+            else if (c === ">") st = "text";
+            break;
+          default:
+            break;
+        }
+      }
+      if (i < strings.length - 1) {
+        if (st === "text") holes.push({ kind: "text" });
+        else if (st === "dq" || st === "sq") holes.push({ kind: URL_ATTRS.has(attr) ? "url" : "attr", attr });
+        else if (st === "tag" || st === "afterattr") holes.push({ kind: "tag" });
+        else holes.push({ kind: "bad", why: st === "tagname" ? "a tag name" : st === "attrname" ? "an attribute name" : "an unquoted attribute value" });
+      }
+    }
+    return holes;
+  }
+  var PLANS = /* @__PURE__ */ new WeakMap();
+  function plan(strings) {
+    let p = PLANS.get(strings);
+    if (p) return p;
+    const literal = strings.join("\0");
+    for (const re of DENY_LITERAL) {
+      if (re.test(literal)) throw new TypeError("html: template literal text is not allowed (" + re.source.slice(0, 40) + "…)");
+    }
+    p = classify(strings);
+    PLANS.set(strings, p);
+    return p;
+  }
   function isTemplateStrings(strings) {
-    return Array.isArray(strings) && Object.isFrozen(strings) && Array.isArray(strings.raw) && Object.isFrozen(strings.raw);
+    return Array.isArray(strings) && Object.isFrozen(strings) && Array.isArray(strings.raw) && Object.isFrozen(strings.raw) && strings.raw.length === strings.length && strings.every((s) => typeof s === "string");
   }
   function html(strings, ...values) {
     if (!isTemplateStrings(strings)) throw new TypeError("html must be used as a tagged template");
+    const holes = plan(strings);
     let out = strings[0];
-    for (let i = 0; i < values.length; i++) out += part(values[i]) + strings[i + 1];
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i], h = holes[i];
+      if (h.kind === "bad") throw new TypeError("html: interpolation into " + h.why + " is not supported");
+      if (h.kind === "tag" && !empty(v) && !isSafe(v)) throw new TypeError("html: only html`` output may be interpolated into a tag");
+      if (h.kind === "url" && !empty(v) && !isSafeUrl(v)) throw new TypeError("html: " + h.attr + " needs a safeUrl() value");
+      out += part(v) + strings[i + 1];
+    }
     return mark(out);
   }
   function setHTML(el3, content) {
@@ -547,9 +647,12 @@
   function safeUrl(u, { allowDataImage = false } = {}) {
     if (typeof u !== "string") return null;
     const t = u.trim();
-    if (SAFE_SCHEMES.test(t)) return t;
-    if (allowDataImage && DATA_IMAGE.test(t)) return t;
-    return null;
+    if (!SAFE_SCHEMES.test(t) && !(allowDataImage && DATA_IMAGE.test(t))) return null;
+    const o = Object.freeze({ u: t, toString() {
+      return t;
+    } });
+    SAFE_URL.add(o);
+    return o;
   }
 
   // app/dashboard/static/src/ui/icons.js
@@ -672,28 +775,34 @@
   }
   function nyseHolidays(year) {
     const out = {};
+    const put = (day, name) => {
+      out[day] = name;
+    };
     const y = year;
-    if (dow(y, 1, 1) !== 6) out[observed(y, 1, 1)] = "New Year’s Day";
-    out[ymd(y, 1, nthWeekday(y, 1, 1, 3))] = "Martin Luther King Jr. Day";
-    out[ymd(y, 2, nthWeekday(y, 2, 1, 3))] = "Washington’s Birthday";
+    if (dow(y, 1, 1) !== 6) put(observed(y, 1, 1), "New Year’s Day");
+    put(ymd(y, 1, nthWeekday(y, 1, 1, 3)), "Martin Luther King Jr. Day");
+    put(ymd(y, 2, nthWeekday(y, 2, 1, 3)), "Washington’s Birthday");
     const [em, ed] = easter(y);
-    out[shift(y, em, ed, -2)] = "Good Friday";
-    out[ymd(y, 5, lastWeekday(y, 5, 1))] = "Memorial Day";
-    if (y >= 2022) out[observed(y, 6, 19)] = "Juneteenth";
-    out[observed(y, 7, 4)] = "Independence Day";
-    out[ymd(y, 9, nthWeekday(y, 9, 1, 1))] = "Labor Day";
-    out[ymd(y, 11, nthWeekday(y, 11, 4, 4))] = "Thanksgiving Day";
-    out[observed(y, 12, 25)] = "Christmas Day";
+    put(shift(y, em, ed, -2), "Good Friday");
+    put(ymd(y, 5, lastWeekday(y, 5, 1)), "Memorial Day");
+    if (y >= 2022) put(observed(y, 6, 19), "Juneteenth");
+    put(observed(y, 7, 4), "Independence Day");
+    put(ymd(y, 9, nthWeekday(y, 9, 1, 1)), "Labor Day");
+    put(ymd(y, 11, nthWeekday(y, 11, 4, 4)), "Thanksgiving Day");
+    put(observed(y, 12, 25), "Christmas Day");
     return out;
   }
   function nyseEarlyCloses(year) {
     const out = {};
+    const put = (day, name) => {
+      out[day] = name;
+    };
     const y = year;
     const j3 = dow(y, 7, 3);
-    if (j3 >= 1 && j3 <= 4) out[ymd(y, 7, 3)] = "Independence Day eve";
-    out[ymd(y, 11, nthWeekday(y, 11, 4, 4) + 1)] = "Day after Thanksgiving";
+    if (j3 >= 1 && j3 <= 4) put(ymd(y, 7, 3), "Independence Day eve");
+    put(ymd(y, 11, nthWeekday(y, 11, 4, 4) + 1), "Day after Thanksgiving");
     const x24 = dow(y, 12, 24);
-    if (x24 >= 1 && x24 <= 4) out[ymd(y, 12, 24)] = "Christmas Eve";
+    if (x24 >= 1 && x24 <= 4) put(ymd(y, 12, 24), "Christmas Eve");
     return out;
   }
   var MIN = { pre: 4 * 60, open: 9 * 60 + 30, close: 16 * 60, early: 13 * 60, after: 20 * 60, earlyAfter: 17 * 60 };
@@ -859,7 +968,7 @@
   function logoUrl(sym) {
     const cached = safeUrl((app.D.logos || {})[sym], { allowDataImage: true });
     if (cached) return cached;
-    if (app.cfg.logoCdn) return CDN + encodeURIComponent(sym) + "?format=png&size=64";
+    if (app.cfg.logoCdn) return safeUrl(CDN + encodeURIComponent(sym) + "?format=png&size=64");
     return null;
   }
   function symBadge(sym) {
@@ -1754,7 +1863,7 @@
       const stale = age > STALE_MS;
       if (stale) staleCount++;
       const days = Math.round(age / DAY_MS);
-      return html`<tr${stale ? html` class="lp-stale" title="${"Last collected " + days + " days before the most recent snapshot"}"` : ""}><td><b>${r.symbol}</b></td><td class="price">${px(r.last)}</td><td class="num" style="color:var(--muted)">${px(r.bid)}</td><td class="num" style="color:var(--muted)">${px(r.ask)}</td><td class="num" style="color:var(--muted)">${r.source}</td><td class="num" style="color:var(--muted)">${stale ? html`${CLOCK} ` : ""}${r.ts}</td></tr>`;
+      return html`<tr ${stale ? html` class="lp-stale" title="${"Last collected " + days + " days before the most recent snapshot"}"` : ""}><td><b>${r.symbol}</b></td><td class="price">${px(r.last)}</td><td class="num" style="color:var(--muted)">${px(r.bid)}</td><td class="num" style="color:var(--muted)">${px(r.ask)}</td><td class="num" style="color:var(--muted)">${r.source}</td><td class="num" style="color:var(--muted)">${stale ? html`${CLOCK} ` : ""}${r.ts}</td></tr>`;
     })}`);
     setText($("#lp-sub"), rows.length + " symbols" + (staleCount ? " · " + staleCount + " not refreshed in the last 4 days" : ""));
   }
@@ -1953,7 +2062,7 @@
     const rows = items.map((c, i) => {
       const head = c.sect !== lastSect ? html`<div class="cmdk__sect" role="presentation">${c.sect}</div>` : "";
       lastSect = c.sect;
-      return html`${head}<div class="cmdk__item${i === sel ? " is-sel" : ""}" id="${"cmdk-opt-" + i}" data-ci="${i}" role="option" aria-selected="${i === sel}"><b>${c.label}</b>${c.detail ? html`<span style="font-size:var(--fs-meta);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.detail}</span>` : ""}${c.px ? html`<span class="px ${c.upDn ? "up" : "down"}">${c.px}</span>` : ""}</div>`;
+      return html`${head}<div class="cmdk__item${i === sel ? " is-sel" : ""}" id="${"cmdk-opt-" + i}" data-ci="${i}" role="option" aria-selected="${String(i === sel)}"><b>${c.label}</b>${c.detail ? html`<span style="font-size:var(--fs-meta);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.detail}</span>` : ""}${c.px ? html`<span class="px ${c.upDn ? "up" : "down"}">${c.px}</span>` : ""}</div>`;
     });
     setHTML(listEl, rows.length ? html`${rows}` : html`<div class="empty">No matches.</div>`);
     if (items.length) input.setAttribute("aria-activedescendant", "cmdk-opt-" + sel);
@@ -2569,7 +2678,8 @@
   function sectors() {
     const set = {};
     list().forEach((s) => {
-      set[s.sector || "Other"] = 1;
+      const key = s.sector || "Other";
+      set[key] = 1;
     });
     return Object.keys(set).sort((a, b) => a.localeCompare(b));
   }
@@ -2601,7 +2711,7 @@
     const host = $("#sector-chips");
     if (!host) return;
     const chips = ["All"].concat(sectors());
-    setHTML(host, html`${chips.map((c) => html`<button type="button" class="chip ${c === heatState.sector ? "is-active" : ""}" data-sector="${c}" aria-pressed="${c === heatState.sector}">${c}</button>`)}`);
+    setHTML(host, html`${chips.map((c) => html`<button type="button" class="chip ${c === heatState.sector ? "is-active" : ""}" data-sector="${c}" aria-pressed="${String(c === heatState.sector)}">${c}</button>`)}`);
     $all("[data-sector]", host).forEach((b) => b.addEventListener("click", () => {
       heatState.sector = b.getAttribute("data-sector");
       renderChips();

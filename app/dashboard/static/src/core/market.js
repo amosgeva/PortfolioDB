@@ -54,30 +54,32 @@ function observed(y, m, d) {
 /** Full-day NYSE closures in `year`, as { 'YYYY-MM-DD': name }. */
 export function nyseHolidays(year) {
   const out = {};
+  const put = (day, name) => { out[day] = name; };
   const y = year;
-  if (dow(y, 1, 1) !== 6) out[observed(y, 1, 1)] = 'New Year’s Day';
-  out[ymd(y, 1, nthWeekday(y, 1, 1, 3))] = 'Martin Luther King Jr. Day';
-  out[ymd(y, 2, nthWeekday(y, 2, 1, 3))] = 'Washington’s Birthday';
+  if (dow(y, 1, 1) !== 6) put(observed(y, 1, 1), 'New Year’s Day');
+  put(ymd(y, 1, nthWeekday(y, 1, 1, 3)), 'Martin Luther King Jr. Day');
+  put(ymd(y, 2, nthWeekday(y, 2, 1, 3)), 'Washington’s Birthday');
   const [em, ed] = easter(y);
-  out[shift(y, em, ed, -2)] = 'Good Friday';
-  out[ymd(y, 5, lastWeekday(y, 5, 1))] = 'Memorial Day';
-  if (y >= 2022) out[observed(y, 6, 19)] = 'Juneteenth';
-  out[observed(y, 7, 4)] = 'Independence Day';
-  out[ymd(y, 9, nthWeekday(y, 9, 1, 1))] = 'Labor Day';
-  out[ymd(y, 11, nthWeekday(y, 11, 4, 4))] = 'Thanksgiving Day';
-  out[observed(y, 12, 25)] = 'Christmas Day';
+  put(shift(y, em, ed, -2), 'Good Friday');
+  put(ymd(y, 5, lastWeekday(y, 5, 1)), 'Memorial Day');
+  if (y >= 2022) put(observed(y, 6, 19), 'Juneteenth');
+  put(observed(y, 7, 4), 'Independence Day');
+  put(ymd(y, 9, nthWeekday(y, 9, 1, 1)), 'Labor Day');
+  put(ymd(y, 11, nthWeekday(y, 11, 4, 4)), 'Thanksgiving Day');
+  put(observed(y, 12, 25), 'Christmas Day');
   return out;
 }
 
 /** 13:00 ET early closes in `year`, as { 'YYYY-MM-DD': reason }. */
 export function nyseEarlyCloses(year) {
   const out = {};
+  const put = (day, name) => { out[day] = name; };
   const y = year;
   const j3 = dow(y, 7, 3);
-  if (j3 >= 1 && j3 <= 4) out[ymd(y, 7, 3)] = 'Independence Day eve';
-  out[ymd(y, 11, nthWeekday(y, 11, 4, 4) + 1)] = 'Day after Thanksgiving';
+  if (j3 >= 1 && j3 <= 4) put(ymd(y, 7, 3), 'Independence Day eve');
+  put(ymd(y, 11, nthWeekday(y, 11, 4, 4) + 1), 'Day after Thanksgiving');
   const x24 = dow(y, 12, 24);
-  if (x24 >= 1 && x24 <= 4) out[ymd(y, 12, 24)] = 'Christmas Eve';
+  if (x24 >= 1 && x24 <= 4) put(ymd(y, 12, 24), 'Christmas Eve');
   return out;
 }
 

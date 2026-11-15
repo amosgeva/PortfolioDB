@@ -135,7 +135,7 @@ export function renderLatestPrices() {
     const stale = age > STALE_MS;
     if (stale) staleCount++;
     const days = Math.round(age / F.DAY_MS);
-    return html`<tr${stale ? html` class="lp-stale" title="${'Last collected ' + days + ' days before the most recent snapshot'}"` : ''}><td><b>${r.symbol}</b></td><td class="price">${px(r.last)}</td><td class="num" style="color:var(--muted)">${px(r.bid)}</td><td class="num" style="color:var(--muted)">${px(r.ask)}</td><td class="num" style="color:var(--muted)">${r.source}</td><td class="num" style="color:var(--muted)">${stale ? html`${CLOCK} ` : ''}${r.ts}</td></tr>`;
+    return html`<tr ${stale ? html` class="lp-stale" title="${'Last collected ' + days + ' days before the most recent snapshot'}"` : ''}><td><b>${r.symbol}</b></td><td class="price">${px(r.last)}</td><td class="num" style="color:var(--muted)">${px(r.bid)}</td><td class="num" style="color:var(--muted)">${px(r.ask)}</td><td class="num" style="color:var(--muted)">${r.source}</td><td class="num" style="color:var(--muted)">${stale ? html`${CLOCK} ` : ''}${r.ts}</td></tr>`;
   })}`);
   setText($('#lp-sub'), rows.length + ' symbols' + (staleCount ? ' · ' + staleCount + ' not refreshed in the last 4 days' : ''));
 }

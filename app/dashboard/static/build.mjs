@@ -20,6 +20,7 @@ import { build } from 'esbuild';
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { eslintrc } from './tools/eslintrc.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const lf = (s) => s.replace(/\r\n/g, '\n');
@@ -69,7 +70,13 @@ export async function bundleJs() {
 export async function outputs() {
   const fonts = fontsCss();
   const css = fonts + '\n' + read('tokens.css') + '\n' + read('src/styles/app.css');
-  return { 'fonts/fonts.css': fonts, 'app.css': css.endsWith('\n') ? css : css + '\n', 'app.js': await bundleJs() };
+  return {
+    'fonts/fonts.css': fonts,
+    'app.css': css.endsWith('\n') ? css : css + '\n',
+    'app.js': await bundleJs(),
+    // Codacy's ESLint 8 reads an eslintrc; it is rendered from eslint.config.mjs.
+    '../../../.eslintrc.json': eslintrc(),
+  };
 }
 
 async function main() {

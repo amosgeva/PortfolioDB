@@ -43,7 +43,7 @@ const CDN = 'https://assets.parqet.com/logos/symbol/';
 export function logoUrl(sym) {
   const cached = safeUrl((app.D.logos || {})[sym], { allowDataImage: true });
   if (cached) return cached;
-  if (app.cfg.logoCdn) return CDN + encodeURIComponent(sym) + '?format=png&size=64';
+  if (app.cfg.logoCdn) return safeUrl(CDN + encodeURIComponent(sym) + '?format=png&size=64');
   return null;
 }
 
