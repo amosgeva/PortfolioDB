@@ -298,7 +298,8 @@ CREATE INDEX IF NOT EXISTS advisor_briefs_ts_idx
 
 -- Runtime settings (added in migrations/001_settings.sql). One row per
 -- setting; read through app/settings.py with precedence DB → env → default.
--- Secrets never live here — they stay in .env (the dashboard has no auth).
+-- Secrets never live here — they stay in .env (the dashboard has no accounts;
+-- its write pages share one password).
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
