@@ -13,13 +13,21 @@ adding a Makefile target leaves the docs quietly incomplete, and nothing on a
 Linux CI runner notices. That is the whole risk the Windows work took on, so it
 gets a test rather than a good intention.
 
-These are pure text assertions over tracked files. No Docker, no network, no
-Postgres -- they run in the fast suite on every pull request.
+Most of these are pure text assertions over tracked files. The one that checks
+the documented commands *match* the recipes (audit K-5 -- before it, a row only
+had to name the target) asks GNU make itself to expand each recipe with
+`make -n`, because reimplementing make's variable expansion in a test is how
+the test and the Makefile would start to disagree. It needs `make`, which every
+CI runner has; it skips where there is none. No Docker, no network, no Postgres.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -71,6 +79,114 @@ def test_every_target_is_documented_or_wrapped(target):
         f"Makefile target '{target}' appears in neither docs/commands.md nor pdb.ps1. "
         "Add the docker compose equivalent to docs/commands.md."
     )
+
+
+# ── the documented command must be the command (audit K-5) ───────────────────
+
+_ROW = re.compile(r"^\|\s*`(?P<make>[^`]+)`\s*\|(?P<runs>.*)\|\s*$", re.MULTILINE)
+_MAKE_CELL = re.compile(
+    r'^(?P<target>[a-z][a-z-]*)(?:\s+ARGS=(?:"(?P<quoted>[^"]*)"|(?P<word>\S+)))?\s*$'
+)
+_SPAN = re.compile(r"`(docker compose [^`]+)`")
+_SEPARATORS = set(";&|<>()")
+
+
+def _doc_rows() -> list[tuple[str, str | None, str]]:
+    """(target, ARGS or None, runs-cell) for every two-column table row."""
+    rows = []
+    for m in _ROW.finditer(COMMANDS_DOC.read_text(encoding="utf-8")):
+        cell = _MAKE_CELL.match(m["make"].strip())
+        if not cell or cell["target"] == "make":  # the "| `make` | Runs |" header
+            continue
+        args = cell["quoted"] if cell["quoted"] is not None else cell["word"]
+        rows.append((cell["target"], args, m["runs"]))
+    assert rows, "docs/commands.md has no command tables left to check"
+    return rows
+
+
+def _compose_invocations(shell_text: str) -> list[list[str]]:
+    """Every `docker compose ...` simple command in a piece of shell, as argv.
+
+    Tokenised the way sh would split words (quotes removed, so `"…"` and `'…'`
+    compare equal, as they do to the program receiving them). An invocation
+    runs until the first operator: `;`, `&&`, `|`, a redirection. A recipe's
+    backslash-newline continuations are joined first, and whitespace inside each
+    word is collapsed so a multi-line `sh -c` script compares by content.
+    """
+    text = re.sub(r"\\\n[ \t]*", " ", shell_text)
+    tokens: list[str] = []
+    for line in text.splitlines():  # one recipe line, one shell command list
+        lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens += [" ".join(t.split()) for t in lex] + [";"]
+    out, i = [], 0
+    while i < len(tokens) - 1:
+        if tokens[i] == "docker" and tokens[i + 1] == "compose":
+            j = i
+            while j < len(tokens) and not (tokens[j] and set(tokens[j]) <= _SEPARATORS):
+                j += 1
+            out.append(tokens[i:j])
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def _make_dry_run(target: str, args: str | None) -> str:
+    env = {k: v for k, v in os.environ.items() if k not in ("ARGS", "PASSWORD", "COMPOSE", "MAKEFLAGS")}
+    cmd = ["make", "--no-print-directory", "-n", target, "COMPOSE=docker compose"]
+    if args is not None:
+        cmd.append(f"ARGS={args}")
+    out = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True,
+                         encoding="utf-8", timeout=60)
+    assert out.returncode == 0, f"make -n {target} failed:\n{out.stderr}"
+    return out.stdout
+
+
+_HAVE_MAKE = shutil.which("make") is not None
+
+
+@pytest.mark.skipif(not _HAVE_MAKE, reason="GNU make is not installed here (CI has it)")
+@pytest.mark.parametrize(
+    "target,args,runs",
+    _doc_rows(),
+    ids=lambda v: v if isinstance(v, str) and len(v) < 40 else None,
+)
+def test_documented_commands_match_the_recipes(target, args, runs):
+    """Each row's `docker compose` commands are exactly what `make` runs.
+
+    Same commands, same order, same arguments. A recipe that grows a flag, or a
+    row nobody updated, fails here instead of sending a Windows reader to run
+    something the Makefile no longer does.
+    """
+    documented = [inv for span in _SPAN.findall(runs) for inv in _compose_invocations(span)]
+    recipe = _compose_invocations(_make_dry_run(target, args))
+    assert recipe, f"make -n {target} runs no docker compose command; is the row in the right table?"
+    assert documented == recipe, (
+        f"docs/commands.md row for `{target}` does not match the Makefile.\n"
+        f"  documented: {[' '.join(map(shlex.quote, d)) for d in documented]}\n"
+        f"  make runs:  {[' '.join(map(shlex.quote, r)) for r in recipe]}"
+    )
+
+
+def test_compose_invocation_parser_reads_what_sh_would():
+    """The comparison above is only as good as this split; pin its behaviour."""
+    got = _compose_invocations(
+        "PORTFOLIODB_VERSION=$(git rev-parse --short HEAD 2>/dev/null || echo dev) "
+        "docker compose -f a.yml build\n"
+        "{ sed -n x f; docker compose run --rm -T d pip freeze; } > out && mv out f\n"
+        "docker compose run --rm d sh -c '\\\n  echo  hi && \\\n  cd /app'\n"
+        "docker compose run --rm d python ask 'what'\\''s up'\n"
+    )
+    assert got == [
+        ["docker", "compose", "-f", "a.yml", "build"],
+        ["docker", "compose", "run", "--rm", "-T", "d", "pip", "freeze"],
+        ["docker", "compose", "run", "--rm", "d", "sh", "-c", "echo hi && cd /app"],
+        ["docker", "compose", "run", "--rm", "d", "python", "ask", "what's up"],
+    ]
+    # Quote style is not a difference; an extra argument is.
+    assert _compose_invocations('docker compose run x "a b"') == _compose_invocations("docker compose run x 'a b'")
+    assert _compose_invocations("docker compose run x a b") != _compose_invocations("docker compose run x 'a b'")
 
 
 @pytest.mark.parametrize("target", sorted(WRAPPED))

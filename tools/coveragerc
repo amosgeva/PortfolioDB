@@ -1,0 +1,13 @@
+# Coverage settings for CI's database job (.github/workflows/ci.yml), which
+# measures the app suite, the MCP fast suite and the reconciliation suite into
+# one data file and prints the combined report. Measured and shown, not gated:
+# a threshold invites tests written to move a number.
+[run]
+omit =
+    */tests/*
+    */conftest.py
+
+[report]
+skip_empty = true
+sort = cover
+precision = 1

@@ -2,7 +2,9 @@
 # your machine. Compose merges it over docker-compose.yml automatically, so you
 # never have to edit the committed file and fight it on every `git pull`.
 #
-# Two common cases:
+# Copying this file as it stands changes where the database lives and nothing
+# else. In particular it does not widen network exposure: every port stays on
+# 127.0.0.1 until you uncomment the block at the bottom.
 
 services:
   postgres:
@@ -16,14 +18,14 @@ services:
       # in there while the container is running.
       - ./data:/var/lib/postgresql/data
 
-  dashboard:
-    # Publish on a different host port, or bind to localhost only so the
-    # dashboard is not reachable from the LAN (it has no authentication —
-    # see docs/exposure.md).
-    #
-    # `!override` matters: without it Compose *adds* this entry next to the
-    # base file's "8501:8501" instead of replacing it, and the dashboard stays
-    # open on every interface while this file says localhost. Needs Compose
-    # 2.24.4 or newer. To stop publishing a port entirely, use `ports: !reset []`.
-    ports: !override
-      - "127.0.0.1:8501:8501"
+  # ── Opt-in: reach the dashboard from other machines on your LAN ──────────
+  # The dashboard has no login of its own and can add and delete trades, so
+  # read docs/exposure.md first — a tunnel or an authenticating proxy is safer
+  # than this. If you still want it, uncomment the three lines below.
+  #
+  # `!override` matters: without it Compose *adds* this entry next to the base
+  # file's loopback one instead of replacing it. Needs Compose 2.24.4 or newer.
+  #
+  # dashboard:
+  #   ports: !override
+  #     - "8501:8501"

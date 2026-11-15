@@ -1,0 +1,38 @@
+# The in-repo Python lint (audit C-6), run by CI and by the pre-commit hook:
+#
+#   ruff check --config tools/ruff.toml .
+#
+# Deliberately not at the repo root as ruff.toml / pyproject.toml: Codacy runs
+# its own ruff and reads a root config if one exists, which would quietly swap
+# the rule set it gates pull requests on for this narrower one. Here, the two
+# stay independent.
+#
+# Conservative on purpose. Every rule below is a likely bug rather than a style
+# preference, and the tree passes all of them today, so a failure means new
+# code, not old debt. Widen it one rule at a time, with the tree clean first.
+
+target-version = "py314"
+extend-exclude = ["archive", "docs/internal"]
+
+[lint]
+select = [
+    "E9",     # syntax errors, and code that cannot be compiled
+    "F",      # pyflakes: undefined names, unused imports/variables, redefinitions
+    "W6",     # invalid escape sequences in strings
+    "E711",   # comparison to None with ==
+    "E712",   # comparison to True/False with ==
+    "E721",   # type comparison with == instead of isinstance
+    "E722",   # bare `except:` (catches KeyboardInterrupt and SystemExit)
+    "B006",   # mutable default argument
+    "B008",   # function call in a default argument
+    "B015",   # comparison whose result is discarded
+    "B017",   # pytest.raises(Exception): passes on any error
+    "B018",   # expression statement with no effect
+    "PLE",    # pylint errors: wrong format strings, bad __all__, and the like
+    "T10",    # leftover debugger breakpoints
+    "S307",   # eval()
+    "S506",   # yaml.load without a safe loader
+]
+# Not yet: B023 (a closure capturing a loop variable) and B904 (raise without
+# `from` inside except) each flag existing code in app/ — three sites in all.
+# They are real candidates; enable them in the change that fixes those sites.

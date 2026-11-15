@@ -94,6 +94,33 @@ Describe 'pdb.ps1 init' {
         finally { Remove-Item -Recurse -Force $sb }
     }
 
+    It 'generates a dashboard password' {
+        $sb = New-Sandbox
+        try {
+            Invoke-Pdb -Sandbox $sb | Out-Null
+            (Get-Key $sb 'PORTFOLIODB_DASHBOARD_PASSWORD').Length | Should -Be 20
+        }
+        finally { Remove-Item -Recurse -Force $sb }
+    }
+
+    It 'adds the dashboard password to an .env from before 1.8.0 that has no line for it' {
+        $sb = New-Sandbox -NoTemplate
+        try {
+            $lines = @(
+                'POSTGRES_PASSWORD=same'
+                'PORTFOLIODB_PASSWORD=same'
+                'PORTFOLIODB_MCP_TOKEN=keepme'
+            )
+            [System.IO.File]::WriteAllText((Join-Path $sb '.env'), ($lines -join "`n") + "`n")
+            $r = Invoke-Pdb -Sandbox $sb
+            $r.ExitCode | Should -Be 0
+            (Get-Key $sb 'PORTFOLIODB_DASHBOARD_PASSWORD').Length | Should -Be 20
+            Get-Key $sb 'PORTFOLIODB_MCP_TOKEN' | Should -Be 'keepme'
+            Get-Key $sb 'POSTGRES_PASSWORD' | Should -Be 'same'
+        }
+        finally { Remove-Item -Recurse -Force $sb }
+    }
+
     It 'generates a different secret each run' {
         $a = New-Sandbox
         $b = New-Sandbox
