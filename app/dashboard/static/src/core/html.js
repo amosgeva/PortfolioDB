@@ -72,8 +72,11 @@ export function join(items, sep) {
 export function setHTML(el, content) {
   if (!el) return;
   if (!isSafe(content)) throw new TypeError('setHTML accepts html`` output only');
-  // eslint-disable-next-line no-restricted-syntax -- the single audited sink
-  el.innerHTML = content.s;
+  // The single audited sink: content.s exists only on html`` output, whose
+  // every interpolation was escaped. Static analysers flag the shape, not the
+  // flow, hence the two suppressions on exactly this line and nowhere else.
+  // eslint-disable-next-line no-restricted-syntax
+  el.innerHTML = content.s; // nosemgrep
 }
 
 const SAFE_SCHEMES = /^(https?:)\/\//i;

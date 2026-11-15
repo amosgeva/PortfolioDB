@@ -398,7 +398,9 @@
     btn.click();
     return true;
   }
+  var SAFE_QS = /^\?view=[a-z_]+(&r=\d+)?$/;
   function topNavigate(qs) {
+    if (!SAFE_QS.test(String(qs))) return;
     const d = parentDoc();
     if (d) {
       const a = d.createElement("a");
@@ -1020,10 +1022,9 @@
     fundamentals: ["Fundamentals", "Company profile, financials, filings and ownership"],
     history: ["History", "Every recorded lot and snapshot run"]
   };
-  var firstShow = {};
-  var shown = {};
+  var firstShow = /* @__PURE__ */ new Map();
   function onFirstShow(view, fn) {
-    firstShow[view] = fn;
+    firstShow.set(view, fn);
   }
   function currentView() {
     const p = $(".view.is-active");
@@ -1047,9 +1048,10 @@
     const t = TITLES[view];
     setText($("[data-title]"), t[0]);
     setText($("[data-subtitle]"), t[1]);
-    if (firstShow[view] && !shown[view]) {
-      shown[view] = true;
-      firstShow[view]();
+    const lazy = firstShow.get(view);
+    if (lazy) {
+      firstShow.delete(view);
+      lazy();
     }
     openRail(false);
     try {
@@ -2743,8 +2745,8 @@
   function renderFeed() {
     const host = $("#feed");
     if (!host) return;
-    const shown2 = items2.filter(passes);
-    setHTML(host, shown2.length ? html`${shown2.map(itemHTML)}` : html`<div class="empty">Nothing here yet.</div>`);
+    const shown = items2.filter(passes);
+    setHTML(host, shown.length ? html`${shown.map(itemHTML)}` : html`<div class="empty">Nothing here yet.</div>`);
     $all("[data-read]", host).forEach((b) => b.addEventListener("click", () => {
       markRead([b.getAttribute("data-read")]);
       renderFeed();

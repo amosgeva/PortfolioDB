@@ -15,10 +15,9 @@ export const TITLES = {
   history: ['History', 'Every recorded lot and snapshot run'],
 };
 
-const firstShow = {};
-const shown = {};
+const firstShow = new Map();
 /** Run `fn` the first time `view` is opened (lazy, expensive renders). */
-export function onFirstShow(view, fn) { firstShow[view] = fn; }
+export function onFirstShow(view, fn) { firstShow.set(view, fn); }
 
 export function currentView() {
   const p = $('.view.is-active');
@@ -41,7 +40,8 @@ export function switchView(name, skipHistory) {
   const t = TITLES[view];
   setText($('[data-title]'), t[0]);
   setText($('[data-subtitle]'), t[1]);
-  if (firstShow[view] && !shown[view]) { shown[view] = true; firstShow[view](); }
+  const lazy = firstShow.get(view);
+  if (lazy) { firstShow.delete(view); lazy(); }
   openRail(false);
   try { window.scrollTo(0, 0); } catch (e) { /* not implemented in every host */ }
   if (!skipHistory) syncUrl(view);

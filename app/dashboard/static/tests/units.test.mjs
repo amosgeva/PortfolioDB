@@ -136,3 +136,11 @@ test('splitMovers filters by sign before slicing (X-7)', () => {
   assert.deepEqual(r.gainers.map((s) => s.sym), ['A']);
   assert.deepEqual(r.losers.map((s) => s.sym), ['B']);
 });
+
+test('topNavigate refuses anything but this page’s own ?view= query (no open redirect)', async () => {
+  const { topNavigate } = await import('../src/core/host.js');
+  // These return before touching window: the guard runs first.
+  for (const bad of ['javascript:alert(1)', 'https://evil.example/', '//evil.example', '/path', '?view=x&next=https://e', '?view=<b>']) {
+    assert.equal(topNavigate(bad), undefined, bad);
+  }
+});

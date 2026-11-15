@@ -98,7 +98,13 @@ export function softRefresh(view) {
 
 /** Navigate the top page. The frame is sandboxed without top navigation, but
  *  it may click an anchor it creates in the parent, which navigates itself. */
+// Only a same-page query string built by this file's callers ('?view=…',
+// '&r=<ms>') may be navigated to; anything else - an absolute URL, a scheme,
+// a path - is refused rather than followed.
+const SAFE_QS = /^\?view=[a-z_]+(&r=\d+)?$/;
+
 export function topNavigate(qs) {
+  if (!SAFE_QS.test(String(qs))) return;
   const d = parentDoc();
   if (d) {
     const a = d.createElement('a');
@@ -106,7 +112,8 @@ export function topNavigate(qs) {
     d.body.appendChild(a); a.click(); d.body.removeChild(a);
     return;
   }
-  try { window.open(qs, '_self'); } catch (e) { window.location.href = qs; }
+  // qs passed SAFE_QS above: a same-origin query string, not an open redirect.
+  try { window.open(qs, '_self'); } catch (e) { window.location.href = qs; } // nosemgrep
 }
 
 /** Open a native Streamlit page: the parent's hidden nav button when it has
