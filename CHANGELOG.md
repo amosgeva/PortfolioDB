@@ -16,6 +16,56 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.7.7] — 2026-11-15
+
+A maintenance release, a month after 1.7.6. The image scan had started failing
+again: the base image fell behind Debian security updates, and the pip it ships
+lagged. Those findings are fixed, and every Python dependency moves to its
+newest release, including two major versions. No figure is computed
+differently. As for 1.7.6, real ledger output under the old and the new
+dependency sets was identical. No schema change and no migration.
+
+**Upgrading**
+
+- Nothing to do: `docker compose pull` and restart.
+- Running from source instead: `pip install -r app/requirements.txt` (with
+  `-c app/constraints.txt` for the exact tested set). The ranges now admit
+  anthropic 2.x and python-dateutil 4, which needs Python 3.11 or newer.
+- If you route the Anthropic advisor through a proxy with
+  `ANTHROPIC_BASE_URL`: anthropic 2.x sends the key as an
+  `Authorization: Bearer` header instead of `x-api-key`. Check that the proxy
+  accepts it.
+
+### Security
+
+- **The base image moves to the current `python:3.14-slim` digest**, which
+  carries Debian's latest security updates. zlib is upgraded explicitly from
+  `trixie-security`, because even the current base still ships a zlib with two
+  HIGH advisories.
+- **pip is upgraded to 26.3 before the install.** The base image's pip 26.2.x
+  bundles its own certifi, which still trusts the compromised emSign root
+  certificates, and pip uses it to verify its own downloads. 26.3 also updates
+  the msgpack and urllib3 bundled with pip, so their `.trivyignore` entries are
+  removed. One entry remains, pip's bundled setuptools, with the reason.
+- **supercronic v0.2.51, built with Go 1.27.3.** Go 1.27.2 carried a HIGH
+  `crypto/x509` advisory that the scan reports against the scheduler's binary.
+  The new binary is pinned by sha256.
+
+### Changed
+
+- **Dependencies at their newest releases**, as resolved and locked in
+  `app/constraints.txt`: anthropic 2.8, python-dateutil 4.0, streamlit 1.67,
+  pandas 3.1, openai 3.51, fastmcp 4.2, yfinance 1.8, and their transitive
+  dependencies. Pillow moves to 13, which streamlit now allows. Advisor,
+  dashboard, report and MCP behaviour is unchanged. python-dateutil 4 changed
+  how some timestamps parse, so the snapshot parser was compared on 176 inputs
+  under both versions; every result matched.
+- `keyring`, `jaraco.*`, `more-itertools`, `multitasking`, `six`,
+  `SecretStorage` and `jeepney` are no longer in the image: none of the new
+  versions require them. Install them yourself if your own code in the image
+  imports them.
+- The image-publish workflow's `docker/login-action` moves to v4.8.0.
+
 ## [1.7.6] — 2026-10-20
 
 A maintenance release. The published image is rebuilt on a current base and
@@ -1570,7 +1620,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.6...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.7...HEAD
+[1.7.7]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.7
 [1.7.6]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.6
 [1.7.5]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.5
 [1.7.4]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.4
