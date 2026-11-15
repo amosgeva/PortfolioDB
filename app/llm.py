@@ -11,10 +11,11 @@ Two code paths, not N:
 
 Provider and model are runtime-switchable from the Settings page
 (DB → env → default via app/settings.py). **API keys are env-only** — they
-never live in the database because the dashboard has no auth.
+never live in the database: the dashboard has no accounts, only one shared
+password in front of its write pages (and before 1.8.0 not even that).
 
 **The base URL is env-only too** (``LLM_BASE_URL``), and for the same reason.
-It used to be a Settings-page field, and the page has no login: anyone who
+It used to be a Settings-page field, when the page had no login: anyone who
 could open the dashboard could point ``openai`` at a server they controlled
 and trigger a brief, and the OpenAI-compatible client would send them
 ``OPENAI_API_KEY`` as a Bearer header (audit F01, 2026-09-09). A URL typed

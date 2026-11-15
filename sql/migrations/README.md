@@ -1,8 +1,12 @@
 # Migrations
 
 Numbered, forward-only migrations for databases that predate a schema change.
-Fresh installs never need these — `sql/schema.sql` always describes the full
-current schema (and stays `IF NOT EXISTS`-idempotent).
+`sql/schema.sql` aims to describe the full current schema (and stays
+`IF NOT EXISTS`-idempotent), but a fresh database is installed the same way as
+an existing one: `apply_schema.py` runs and records every migration there too,
+and some still add something on a fresh database (003, for example, adds the
+named NaN check on `price_snapshots.volume`). Install with `apply_schema.py`,
+not with `schema.sql` alone.
 
 ## Applying them
 
@@ -56,3 +60,4 @@ run `apply_schema.py` against the result.)
 | `003_finite_numeric_checks.sql` | `<> 'NaN'` checks on every numeric ledger column. |
 | `004_symbol_check.sql` | `instruments_symbol_format`: what a symbol may be (= `symbol_paths.SYMBOL_FILENAME_RE`). |
 | `005_corporate_actions_ratio_finite.sql` | `corporate_actions` ratio not NaN and consistent with `kind`; `price_snapshots.last_price > 0`. |
+| `006_price_alerts_and_lot_audit.sql` | `price_alerts` (Manage → Alerts) and `lot_deletions` (the audit row for each lot deleted from the Manage page). |

@@ -12,7 +12,8 @@ Fail-soft by design: any problem reaching the database (no password, DB
 down, table missing) silently yields the env/default path, and the failure
 is cached for the TTL so pure modules importing this transitively don't
 retry a dead connection on every call. Secrets never live here — they stay
-in .env, because the dashboard has no auth.
+in .env, because the dashboard has no accounts, only one shared password in
+front of its write pages.
 
 Lazy: importing this module touches nothing. The first ``get()`` reads the
 table, through a connection source that defaults to the application's

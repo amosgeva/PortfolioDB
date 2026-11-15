@@ -14,10 +14,12 @@ database, and the key is never shown in the UI.
 Resolution order for provider and model: Settings page → env var → default.
 The base URL is `LLM_BASE_URL` → the provider's default, and nothing else.
 
-Why the base URL is not a Settings field: the dashboard has no login, and the
-base URL is where the OpenAI-compatible client sends the API key. A URL that
-anyone who can open the page could type in would let them collect
-`OPENAI_API_KEY` with one advisor request. So it is set where the key is set.
+Why the base URL is not a Settings field: the base URL is where the
+OpenAI-compatible client sends the API key, and the dashboard's write pages are
+guarded by one shared password, not by accounts. A URL that anyone holding that
+password — or anyone who could reach the page before the password existed —
+could type in would let them collect `OPENAI_API_KEY` with one advisor request.
+So it is set where the key is set.
 On top of that, a vendor's named key only ever travels to that vendor:
 pointing `openai` or `openrouter` at another server with `LLM_BASE_URL` sends
 the generic `LLM_API_KEY` instead (and fails with a clear message if there is

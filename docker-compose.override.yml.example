@@ -19,8 +19,8 @@ services:
       - ./data:/var/lib/postgresql/data
 
   # ── Opt-in: reach the dashboard from other machines on your LAN ──────────
-  # The dashboard has no login of its own and can add and delete trades, so
-  # read docs/exposure.md first — a tunnel or an authenticating proxy is safer
+  # The dashboard's read-only views have no login, and its write pages share
+  # one password (PORTFOLIODB_DASHBOARD_PASSWORD), so read docs/exposure.md first — a tunnel or an authenticating proxy is safer
   # than this. If you still want it, uncomment the three lines below.
   #
   # `!override` matters: without it Compose *adds* this entry next to the base
