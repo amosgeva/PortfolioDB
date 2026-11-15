@@ -181,11 +181,16 @@ jobs:
       # into a failure, so this job cannot go green by skipping. Same
       # working-directory rule as the suites they live in; `-rs` prints any
       # skip that does happen.
+      #
+      # The whole app suite, not a list of named files: a list is how the
+      # Streamlit AppTest modules (the only tests that execute the dashboard
+      # pages) went unrun here after 1.7.6 (audit T-1). Any module that needs
+      # the database now runs in this job by default.
       - name: SQL integration tests (app suite, from app/)
         working-directory: app
         env:
           PORTFOLIODB_TESTS_REQUIRE_DB: '1'
-        run: python -m pytest tests/test_dedupe_guards.py tests/test_fd_store.py -q -rs
+        run: python -m pytest tests/ -q -rs
 
       - name: SQL integration tests (MCP data-quality detectors, from the root)
         env:

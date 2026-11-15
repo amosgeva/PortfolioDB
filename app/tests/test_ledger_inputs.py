@@ -573,6 +573,9 @@ def test_no_reader_queries_lots_behind_the_loaders_back():
         "add_lot.py", "sell_lot.py", "import_csv_history.py", "demo_seed.py",   # writers / dedupe checks
         "snapshot_prices.py",            # which symbols to collect, not a valuation
         "check_splits.py", "apply_schema.py", "modern2_native.py", "streamlit_app.py",
+        # The Manage page's writes: delete-with-audit, find-by-id, and which
+        # named accounts hold a symbol (the oversell check itself uses the loader).
+        "native_writes.py",
         "data_quality.py", "market_overview.py", "fd_weekly_enrichment.py",
         # Symbol universes (is the net quantity positive?), not valuations — a
         # split never changes the sign of a position.

@@ -17,7 +17,6 @@ import json
 import os
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
@@ -49,6 +48,7 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 import modern2_native
+import native_jobs
 from dashboard import payload as dash_payload
 from dashboard import queries as dash_queries
 from db import load_config
@@ -75,6 +75,9 @@ st.markdown(
       /* hidden control the in-iframe refresh icon clicks for a soft rerun
          (kept off-screen rather than display:none so the click still fires) */
       .st-key-bg_refresh { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; }
+      /* hidden controls the in-iframe rail clicks to open a native page in
+         this same session (a rerun, not a page load) */
+      .st-key-pdb_nav { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -136,7 +139,7 @@ def put_conn(conn):
 # ═══════════════════════════════════════════════════════════
 
 NEWS_STALE_HOURS = 4          # only fetch on refresh if news is older than this
-NEWS_FETCH_THROTTLE_S = 1200  # ...and at most once per 20 min per session
+NEWS_FETCH_THROTTLE_S = 1200  # ...and at most once per 20 min for the whole process
 
 
 def _news_age_hours() -> float | None:
@@ -178,20 +181,30 @@ def _fetch_news_now() -> tuple[bool, str]:
         return False, str(exc)
 
 
-def maybe_refresh_news() -> None:
-    """Called by the topbar refresh: fetch fresh news if it's stale, throttled."""
+def _news_job() -> None:
+    """Background body: fetch, then drop the cached payload so the next render
+    shows the new headlines. Raises on failure so the job records it."""
+    ok, output = _fetch_news_now()
+    build_payload.clear()
+    if not ok:
+        raise RuntimeError((output or "news fetch failed").strip()[-400:])
+
+
+def maybe_refresh_news() -> native_jobs.StartResult | None:
+    """Called by the topbar refresh: fetch fresh news if it's stale.
+
+    Non-blocking and process-wide (audit N-10): the fetch runs on a background
+    thread, and starts at most once per NEWS_FETCH_THROTTLE_S whichever
+    session or tab asks. It used to run in the page's own thread for up to
+    180 s, throttled per browser session, so a second tab started it again.
+    """
     try:
         age = _news_age_hours()
     except Exception:
-        return
+        return None
     if age is not None and age < NEWS_STALE_HOURS:
-        return
-    last = st.session_state.get("_news_fetch_at", 0.0)
-    if time.time() - last < NEWS_FETCH_THROTTLE_S:
-        return
-    st.session_state["_news_fetch_at"] = time.time()
-    with st.spinner("Fetching latest news…"):
-        _fetch_news_now()
+        return None
+    return native_jobs.start("news", _news_job, min_interval_s=NEWS_FETCH_THROTTLE_S)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -338,7 +351,14 @@ else:
     # to trigger a soft websocket rerun with fresh data — no full page reload.
     if st.button("refresh", key="bg_refresh"):
         build_payload.clear()  # keep the 900s fundamentals cache (weekly data)
-        maybe_refresh_news()  # top up stale news from Financial Datasets (cache-first)
+        maybe_refresh_news()  # top up stale news in the background (cache-first)
+    # Hidden controls: the iframe rail's Manage / Advisor / Data Health entries
+    # click these (via the parent DOM, like bg_refresh) so opening a native page
+    # is a rerun in this session, not a page load (audit N-5). The callback sets
+    # ?view=, so the address bar and a reload still agree.
+    with st.container(key="pdb_nav"):
+        for _native in ("manage", "advisor", "health"):
+            st.button(_native, key=f"pdb_nav_{_native}", on_click=modern2_native._go, args=(_native,))
     # First paint of a session (cold cache / hard reload): show the branded
     # skeleton while the payload builds. Soft refreshes skip it — the previous
     # view stays on screen while data rebuilds (the iframe toasts progress).
