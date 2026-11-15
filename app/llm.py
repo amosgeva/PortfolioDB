@@ -272,13 +272,16 @@ def _require_key(p: str) -> str | None:
 
 
 def _anthropic_client():
+    # As in _openai_client below: this module IS the LLM integration point, so
+    # the Anthropic SDK usage that Codacy's AI-usage rule reports is intentional
+    # and reviewed. Each such line carries a nosemgrep marker naming that rule.
     try:
-        import anthropic
+        import anthropic  # nosemgrep: ai.python.detect-anthropic.detect-anthropic
     except ImportError as e:
         raise RuntimeError(
             "anthropic package not installed. Run: pip install -r requirements.txt"
         ) from e
-    return anthropic.Anthropic(api_key=_require_key("anthropic"))
+    return anthropic.Anthropic(api_key=_require_key("anthropic"))  # nosemgrep: ai.python.detect-anthropic.detect-anthropic
 
 
 def _openai_client(p: str, http_client: Any = None):
@@ -313,7 +316,8 @@ def complete(system_blocks: list[dict], messages: list[dict], *, max_tokens: int
     """One-shot completion → the response text."""
     p = provider()
     if p == "anthropic":
-        resp = _anthropic_client().messages.create(
+        # The intended Anthropic call (see _anthropic_client).
+        resp = _anthropic_client().messages.create(  # nosemgrep: ai.python.detect-anthropic.detect-anthropic
             model=model(p),
             max_tokens=max_tokens,
             system=system_blocks,
@@ -336,7 +340,8 @@ def stream(system_blocks: list[dict], messages: list[dict], *, max_tokens: int =
     p = provider()
     if p == "anthropic":
         client = _anthropic_client()
-        with client.messages.stream(
+        # The intended Anthropic call (see _anthropic_client).
+        with client.messages.stream(  # nosemgrep: ai.python.detect-anthropic.detect-anthropic
             model=model(p),
             max_tokens=max_tokens,
             system=system_blocks,

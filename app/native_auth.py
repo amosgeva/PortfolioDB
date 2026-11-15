@@ -44,7 +44,9 @@ from collections.abc import MutableMapping
 from dataclasses import dataclass
 
 # The variable's name, not a credential (same marker as mcp/auth.py's env names).
-PASSWORD_ENV = "PORTFOLIODB_DASHBOARD_PASSWORD"  # nosec B105  # nosemgrep
+# Spelled _PW_ like mcp/deps.py's RO_PW_ENV: Prospector's dodgy reads any
+# `*PASSWORD* = "..."` assignment as a hardcoded password and ignores nosec.
+DASHBOARD_PW_ENV = "PORTFOLIODB_DASHBOARD_PASSWORD"  # nosec B105  # nosemgrep
 
 FREE_ATTEMPTS = 5          # per client, before the first lockout
 GLOBAL_FREE_ATTEMPTS = 25  # across all clients, before everyone waits
@@ -68,7 +70,7 @@ class WriteLocked(RuntimeError):
 
 
 def _expected() -> str:
-    return (os.environ.get(PASSWORD_ENV) or "").strip()
+    return (os.environ.get(DASHBOARD_PW_ENV) or "").strip()
 
 
 def configured() -> bool:
@@ -161,7 +163,7 @@ def attempt(
     now = time.monotonic() if now is None else now
     expected = _expected()
     if not expected:
-        return Attempt(False, f"No dashboard password is configured. Set {PASSWORD_ENV} in .env.")
+        return Attempt(False, f"No dashboard password is configured. Set {DASHBOARD_PW_ENV} in .env.")
     wait = retry_after(client, now)
     if wait > 0:
         return Attempt(False, f"Too many failed attempts. Try again in {int(wait) + 1} s.")
@@ -206,5 +208,5 @@ def require_unlocked(session: MutableMapping) -> None:
         raise WriteLocked(
             "This change needs the dashboard password: unlock at the top of the page."
             if configured()
-            else f"Writes are disabled: {PASSWORD_ENV} is not set."
+            else f"Writes are disabled: {DASHBOARD_PW_ENV} is not set."
         )

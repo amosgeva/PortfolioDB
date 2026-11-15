@@ -19,7 +19,7 @@ are already off and the published port decides who reaches it.)
 import contextlib
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 — one call, _fetch_news_now(): fixed argv, no shell
 import sys
 from datetime import datetime, timezone
 from html import escape
