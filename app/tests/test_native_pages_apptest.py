@@ -333,12 +333,12 @@ def test_added_lot_is_stored_exactly_and_a_duplicate_is_not_reported_as_added(db
 
     at = _fill_lot(at, symbol=SYM, qty="0.12345678", price="184.37", fees="0.1", notes="second fill")
     assert not any("Added" in s.value for s in at.success)
-    assert at.warning and at.warning[0].value.startswith("Already recorded — not added")
+    assert at.warning and at.warning[0].value.startswith("DUPLICATE — NOT RECORDED")
     assert len(_lots(db)) == 1
 
 
 @pytest.mark.parametrize("field,value,fragment", [
-    ("symbol", "<b>x", "not a symbol"),
+    ("symbol", "<b>x", "not a valid symbol"),
     ("price", "NaN", "NaN"),
     ("qty", "0", "greater than 0"),
     ("price", "1e15", "too large"),
@@ -357,7 +357,7 @@ def test_oversell_is_questioned_and_only_recorded_on_confirmation(db, password):
     _seed_lot(db, qty="5")
     at = _unlocked("manage")
     at = _fill_lot(at, side="SELL", qty="10", price="12", new_account=ACCT)
-    assert "Check this sale" in at.warning[0].value
+    assert "Check this lot" in at.warning[0].value
     assert any("holds 5" in m.value for m in at.markdown)
     assert [r[0] for r in _lots(db)] == ["BUY"]  # nothing recorded yet
 
@@ -376,7 +376,7 @@ def test_sale_without_account_is_questioned_when_the_shares_are_in_a_named_accou
     at = _fill_lot(at, side="SELL", qty="1", price="12")
     joined = "\n".join(m.value for m in at.markdown)
     assert f"held in {ACCT} (5)" in joined
-    assert "with no account" in joined
+    assert "in (no account)" in joined
     assert [r[0] for r in _lots(db)] == ["BUY"]
 
 
@@ -384,9 +384,41 @@ def test_sale_within_the_position_records_without_a_prompt(db, password):
     _seed_lot(db, qty="5")
     at = _unlocked("manage")
     at = _fill_lot(at, side="SELL", qty="2", price="12", new_account=ACCT)
-    assert not any("Check this sale" in w.value for w in at.warning)
+    assert not any("Check this lot" in w.value for w in at.warning)
     assert not any("unreachable" in w.value for w in at.warning), "the settings table should be live here"
     assert [r[0] for r in _lots(db)] == ["BUY", "SELL"]
+
+
+def test_a_lot_outside_the_usd_scope_is_questioned_like_the_cli_refuses_it(db, password):
+    # ledger_writes.currency_scope_problem: the CLIs refuse without
+    # --allow-non-usd; the page asks for confirmation instead.
+    _q(db, "INSERT INTO instruments(symbol, currency) VALUES (%s, 'EUR')", (SYM2,))
+    at = _unlocked("manage")
+    at = _fill_lot(at, symbol=SYM2, qty="1", price="10")
+    assert "Check this lot" in at.warning[0].value
+    assert any("registered as trading in EUR" in m.value and "USD-only" in m.value for m in at.markdown)
+    assert _lots(db, SYM2) == []
+    at = _ok(at.button(key="m2_sell_confirm").click().run())
+    assert len(_lots(db, SYM2)) == 1
+
+
+def test_alert_collection_rule_matches_the_collector(db):
+    """native_writes.is_collected must say exactly what the collector fetches
+    (snapshot_prices.held_or_watched_symbols), for every registered symbol."""
+    import native_writes as nw
+    import snapshot_prices
+
+    _seed_lot(db, qty="5")                                    # held
+    _q(db, "INSERT INTO instruments(symbol, watchlist) VALUES (%s, FALSE)", (SYM2,))  # neither
+    conn = connect_for_tests(skip=pytest.skip, fail=pytest.fail)
+    try:
+        collected = set(snapshot_prices.held_or_watched_symbols(conn))
+        symbols = [r["symbol"] for r in nw.fetch_all(conn, "SELECT symbol FROM instruments")]
+        mismatches = [s for s in symbols if nw.is_collected(conn, s) != (s in collected)]
+    finally:
+        conn.close()
+    assert SYM in collected and SYM2 not in collected
+    assert mismatches == []
 
 
 # ── A-9: deletion with an audit row ───────────────────────────────────────
@@ -435,7 +467,7 @@ def test_watchlist_add_and_remove(db, password):
 
     at.text_input(key="m2_wl_sym").input("../x")
     at = _ok(at.button(key="m2_wl_submit").click().run())
-    assert any("not a symbol" in e.value for e in at.error)
+    assert any("not a valid symbol" in e.value for e in at.error)
 
 
 def test_cash_is_stored_exactly(db, password):

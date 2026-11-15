@@ -654,13 +654,9 @@ def _record_lot(get_conn, put_conn, lot: nw.LotInput) -> None:
         _done("success", f"Added {_lot_summary(lot)}.")
         return
     # The dedupe index (symbol, account, side, date, quantity, price) already
-    # held this fill, so nothing was written. Say so — never "Added" (N-2).
-    _done(
-        "warning",
-        f"Already recorded — not added: {_lot_summary(lot)} matches a lot in the ledger "
-        "(same symbol, account, side, date, quantity and price). If this really is a second "
-        "fill, record the two as one lot with the combined quantity.",
-    )
+    # held this fill, so nothing was written. Say so — never "Added" (N-2) —
+    # in the same words the CLIs use.
+    _done("warning", nw.duplicate_message(lot))
 
 
 def _render_trades(get_conn, put_conn, unlocked: bool, account_options: list[str]) -> None:
@@ -700,7 +696,7 @@ def _render_trades(get_conn, put_conn, unlocked: bool, account_options: list[str
         else:
             conn = get_conn()
             try:
-                warnings = nw.sell_warnings(conn, lot)
+                warnings = nw.lot_warnings(conn, lot)
             finally:
                 put_conn(conn)
             if warnings:
@@ -711,7 +707,7 @@ def _render_trades(get_conn, put_conn, unlocked: bool, account_options: list[str
     pending = ss.get("m2_pending_sell")
     if pending:
         lot = pending["lot"]
-        st.warning("**Check this sale before it is recorded.** " + _lot_summary(lot))
+        st.warning("**Check this lot before it is recorded.** " + _lot_summary(lot))
         for w in pending["warnings"]:
             st.markdown(f"- {_esc_md(w)}")
         c1, c2 = st.columns(2)

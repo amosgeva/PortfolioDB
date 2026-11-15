@@ -33,6 +33,7 @@ from datetime import date
 from decimal import Decimal
 
 import ledger_numbers
+import ledger_writes
 import oversell
 import symbol_paths
 from db import fetch_all, run
@@ -59,24 +60,10 @@ def transaction(get_conn: Callable, put_conn: Callable) -> Iterator:
 
 
 def normalize_symbol(raw) -> str:
-    """Uppercase, strip, and refuse anything that is not a symbol.
-
-    ``symbol_paths.normalize_symbol`` is the shared rule once it exists; until
-    then this applies the same allowlist through ``is_safe_symbol``. Either
-    way the error is a ValueError with a message fit to show.
-    """
-    shared = getattr(symbol_paths, "normalize_symbol", None)
-    if shared is not None:
-        return shared(raw)
-    sym = (raw or "").strip().upper() if isinstance(raw, str) else ""
-    if not sym:
-        raise ValueError("Symbol is required.")
-    if not symbol_paths.is_safe_symbol(sym):
-        raise ValueError(
-            f"{sym!r} is not a symbol: use A–Z, 0–9 and . - = ^ _ "
-            "(up to 32 characters, starting with a letter, digit or ^)."
-        )
-    return sym
+    """The ledger's one symbol rule (``symbol_paths.normalize_symbol``): strip,
+    uppercase, and refuse anything not shaped like a ticker. ValueError with a
+    message fit to show."""
+    return symbol_paths.normalize_symbol(raw)
 
 
 def parse_fees(raw) -> Decimal:
@@ -130,52 +117,62 @@ def parse_lot(*, symbol, account, side, trade_date, quantity, price, fees, notes
 
 
 def add_lot(conn, lot: LotInput) -> bool:
-    """Insert one lot (and its instrument row). True if a row was inserted,
-    False if the dedupe index already held an identical fill."""
-    run(conn, "INSERT INTO instruments(symbol) VALUES (%s) ON CONFLICT (symbol) DO NOTHING", (lot.symbol,))
-    inserted = run(
-        conn,
-        """
-        INSERT INTO lots(symbol, account, side, trade_date, quantity, price, fees, notes)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT DO NOTHING
-        """,
-        (lot.symbol, lot.account, lot.side, lot.trade_date, lot.quantity, lot.price, lot.fees, lot.notes),
+    """Insert one lot (and its instrument row) through the shared writer.
+    True if a row was inserted, False if the dedupe index already held an
+    identical fill — then nothing was written."""
+    ledger_writes.ensure_instrument(conn, lot.symbol)
+    return ledger_writes.insert_lot(
+        conn, symbol=lot.symbol, account=lot.account, side=lot.side, trade_date=lot.trade_date,
+        quantity=lot.quantity, price=lot.price, fees=lot.fees, notes=lot.notes,
     )
-    return inserted == 1
+
+
+def duplicate_message(lot: LotInput) -> str:
+    """The shared wording for a fill the dedupe index refused (the CLIs say the same)."""
+    return ledger_writes.duplicate_lot_message(
+        symbol=lot.symbol, account=lot.account, side=lot.side, trade_date=lot.trade_date,
+        quantity=lot.quantity, price=lot.price,
+    )
 
 
 def _plain(d: Decimal) -> str:
     return format(d.normalize(), "f")
 
 
-def sell_warnings(conn, lot: LotInput) -> list[str]:
-    """What the operator should see before a SELL is recorded (audit N-7).
+def lot_warnings(conn, lot: LotInput) -> list[str]:
+    """What the operator should see, and confirm, before a lot is recorded.
 
-    Two mistakes this catches, both of which FIFO would otherwise absorb
-    silently: a sale bigger than the position in that account, and a sale with
-    no account while the shares sit in a named one — FIFO matches within one
-    (symbol, account) stream, so such a sale reduces nothing.
+    * Outside the USD-only scope (``ledger_writes.currency_scope_problem``):
+      the CLIs refuse unless told ``--allow-non-usd``; here the operator
+      confirms instead.
+    * A SELL bigger than the position in that account, or one that starves a
+      sale already recorded later (``oversell.check_sell``; audit N-7).
+    * A SELL with no account while the shares sit in a named one: FIFO matches
+      within one (symbol, account) stream, so such a sale reduces nothing.
+      ``account=None`` is the unassigned stream, never "every account".
+    * A SELL that closes the last shares of an unwatched symbol with armed
+      price alerts, which then stop being checked (audit U-1).
     """
-    if lot.side != "SELL":
-        return []
     warnings: list[str] = []
+    problem = ledger_writes.currency_scope_problem(conn, lot.symbol)
+    if problem:
+        warnings.append(
+            f"{problem}. PortfolioDB is USD-only — it has no FX conversion, so this position "
+            "would be added to every total as if its price were in dollars. Record it in USD "
+            "(converted price) unless you accept that."
+        )
+    if lot.side != "SELL":
+        return warnings
     if lot.account is None:
         rows = fetch_all(
             conn,
             "SELECT DISTINCT account FROM lots WHERE symbol = %s AND account IS NOT NULL ORDER BY 1",
             (lot.symbol,),
         )
-        named = {
-            r["account"]: oversell.open_quantity(conn, lot.symbol, r["account"], lot.trade_date)
-            for r in rows
+        held_named = {
+            r["account"]: q for r in rows
+            if (q := oversell.open_quantity(conn, lot.symbol, r["account"], lot.trade_date)) > 0
         }
-        held_named = {a: q for a, q in named.items() if q > 0}
-        # oversell.open_quantity(account=None) is every account together (the
-        # loader treats None as "no filter"), so the no-account stream is the
-        # total less the named ones.
-        total = oversell.open_quantity(conn, lot.symbol, None, lot.trade_date)
-        held_none = total - sum(named.values(), Decimal(0))
         if held_named:
             where = ", ".join(f"{a} ({_plain(q)})" for a, q in held_named.items())
             warnings.append(
@@ -183,28 +180,22 @@ def sell_warnings(conn, lot: LotInput) -> list[str]:
                 "within one account, so this one will not reduce that position. Pick the "
                 "account the shares are in."
             )
-        if lot.quantity > held_none:
-            warnings.append(
-                f"Selling {_plain(lot.quantity)} {lot.symbol} with no account, but the ledger "
-                f"holds {_plain(held_none)} with no account as of {lot.trade_date.isoformat()}. "
-                "Shorts are not supported: the excess is dropped and realized P&L understated."
-            )
-        return warnings + _stranded_by_sale(conn, lot)
-    msg = oversell.oversell_warning(conn, lot.symbol, lot.account, lot.trade_date, lot.quantity)
+    check = oversell.check_sell(conn, lot.symbol, lot.account, lot.trade_date, lot.quantity)
+    msg = check.message()
     if msg:
-        warnings.append(msg.removeprefix("WARNING: "))
-    warnings += _stranded_by_sale(conn, lot)
+        warnings.append(msg.replace("WARNING: ", ""))
+    warnings += _stranded_by_sale(conn, lot, reduces_by=min(lot.quantity, check.held))
     return warnings
 
 
-def _stranded_by_sale(conn, lot: LotInput) -> list[str]:
+def _stranded_by_sale(conn, lot: LotInput, reduces_by: Decimal) -> list[str]:
     """A sale that closes the last shares of an unwatched symbol stops its
     price collection, and with it every armed alert on it."""
     watched = fetch_all(conn, "SELECT watchlist FROM instruments WHERE symbol = %s", (lot.symbol,))
     if watched and watched[0]["watchlist"]:
         return []
     held = net_quantity(conn, lot.symbol)
-    if held <= 0 or held - lot.quantity > 0:
+    if held <= 0 or reduces_by <= 0 or held - reduces_by > 0:
         return []
     n = armed_alert_count(conn, lot.symbol)
     if not n:
@@ -260,7 +251,7 @@ def recent_deletions(conn, limit: int = 10) -> list[dict]:
 
 
 def set_watchlist(conn, symbol: str, on: bool) -> None:
-    run(conn, "INSERT INTO instruments(symbol) VALUES (%s) ON CONFLICT (symbol) DO NOTHING", (symbol,))
+    ledger_writes.ensure_instrument(conn, symbol)
     run(conn, "UPDATE instruments SET watchlist = %s, updated_at = now() WHERE symbol = %s", (on, symbol))
 
 
@@ -276,13 +267,13 @@ def record_cash(conn, account: str, cash: Decimal, note: str | None) -> None:
 
 
 # The collector's own rule for which symbols it fetches
-# (snapshot_prices.py, the holdings run): a positive net quantity across all
-# accounts, or the watchlist flag. Net quantity is the raw signed sum there,
-# and so here — a split never changes its sign. Keep the two in step until
-# the net-quantity readers share one helper (audit R-1).
+# (snapshot_prices.held_or_watched_symbols): a positive open quantity by the engines'
+# rules (ledger_inputs.open_symbols), or the watchlist flag. The SQL mirror of
+# that open quantity is lot_open_quantities() in schema.sql, which a database
+# test holds to the Python engines (audit R-1); it is used here so the alert
+# list can join on it.
 _NET_QTY_SQL = """
-    SELECT COALESCE(SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END), 0) AS qty
-    FROM lots WHERE symbol = %s
+    SELECT COALESCE(SUM(quantity), 0) AS qty FROM lot_open_quantities() WHERE symbol = %s
 """
 
 
@@ -359,8 +350,7 @@ def list_alerts(conn) -> list[dict]:
         conn,
         """
         WITH pos AS (
-          SELECT symbol, SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END) AS qty
-          FROM lots GROUP BY symbol
+          SELECT symbol, SUM(quantity) AS qty FROM lot_open_quantities() GROUP BY symbol
         )
         SELECT a.id, a.symbol, a.direction, a.level, a.note, a.active, a.created_at,
                (COALESCE(p.qty, 0) > 0 OR COALESCE(i.watchlist, FALSE)) AS collected

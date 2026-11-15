@@ -71,6 +71,9 @@ def db(monkeypatch):
     # tests have none. test_oversell_is_warned_about_and_still_written below
     # exercises the importer's side of it.
     monkeypatch.setattr(imp.oversell, "oversell_warning", lambda *a, **k: None)
+    # The registered-currency check reads instruments through a real cursor;
+    # test_ledger_sql.py covers it against PostgreSQL.
+    monkeypatch.setattr(imp.ledger_writes, "currency_scope_problem", lambda conn, sym: None)
     return log
 
 

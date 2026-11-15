@@ -187,9 +187,9 @@ def test_parse_lot_is_exact_decimal():
     ("price", "0", "greater than 0"),
     ("price", "abc", "not a number"),
     ("fees", "-1", "at least 0"),
-    ("symbol", "<script>", "not a symbol"),
-    ("symbol", "", "required"),
-    ("symbol", "../../etc", "not a symbol"),
+    ("symbol", "<script>", "not a valid symbol"),
+    ("symbol", "", "empty"),
+    ("symbol", "../../etc", "not a valid symbol"),
 ])
 def test_parse_lot_refuses_bad_input(field, value, msg):
     args = dict(symbol="NVDA", account=None, side="BUY", trade_date=date(2026, 1, 2),
@@ -221,6 +221,14 @@ def test_schema_sql_mirrors_migration_006(table):
         return " ".join(body.split())
 
     assert block("sql/schema.sql") == block("sql/migrations/006_price_alerts_and_lot_audit.sql")
+
+
+def test_schema_header_and_mcp_schema_version_agree():
+    # sql/migrations/README.md: a migration bumps both together.
+    header = (APP.parent / "sql" / "schema.sql").read_text(encoding="utf-8").splitlines()[0]
+    cutoff = (APP / "mcp" / "services" / "cutoff.py").read_text(encoding="utf-8")
+    version = re.search(r'^SCHEMA_VERSION = "([\d.]+)"', cutoff, re.M).group(1)
+    assert header == f"-- PortfolioDB schema v{version}"
 
 
 def test_on_screen_tables_neutralise_text_too():

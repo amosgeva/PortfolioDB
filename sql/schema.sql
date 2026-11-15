@@ -1,10 +1,17 @@
--- PortfolioDB schema v0.4
+-- PortfolioDB schema v0.6
 -- Append-only snapshots, lot-based cost basis, FIFO P&L
 --
 -- Every numeric ledger column carries a `<> 'NaN'` check besides its sign
 -- check: PostgreSQL's numeric NaN sorts above every finite value, so
 -- `quantity > 0` alone admits it (migration 003, audit F09). Infinity needs no
 -- check — NUMERIC(20,8) cannot hold it.
+--
+-- This file is re-applied on every upgrade (app/apply_schema.py runs it before
+-- the migrations), so everything in it is idempotent: tables and indexes are
+-- IF NOT EXISTS, and the functions, views and triggers at the end are
+-- CREATE OR REPLACE — they reach an existing database from here, with no
+-- migration. Constraints on existing tables arrive by migration
+-- (sql/migrations/), and are repeated inline below for fresh installs.
 
 BEGIN;
 
@@ -20,7 +27,11 @@ CREATE TABLE IF NOT EXISTS instruments (
   -- Health by this flag. See sql/migrations/002_market_benchmarks.sql.
   benchmark     BOOLEAN NOT NULL DEFAULT FALSE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- What a symbol may be: the pattern of app/symbol_paths.py
+  -- (SYMBOL_FILENAME_RE). A symbol is rendered into the dashboard and becomes a
+  -- file name; markup is not a ticker (audit A-3/D-2, migration 004).
+  CONSTRAINT instruments_symbol_format CHECK (symbol ~ '^[A-Z0-9^][A-Z0-9.=^_-]{0,31}$')
 );
 
 -- Region allocation (Pick 5): nullable country code, seedable from
@@ -51,14 +62,34 @@ CREATE TABLE IF NOT EXISTS lots (
 -- Prevent accidental duplicate lot inserts during imports.
 -- `side` MUST be part of the key: without it a BUY and a SELL sharing
 -- symbol/account/date/qty/price collide and ON CONFLICT DO NOTHING silently
--- drops the second trade.
+-- drops the second trade. Every writer reports a refused duplicate rather than
+-- claiming success (app/ledger_writes.py; audit N-2/D-1).
 CREATE UNIQUE INDEX IF NOT EXISTS lots_dedupe_idx
   ON lots(symbol, COALESCE(account,''), side, trade_date, quantity, price);
+
+-- `IF NOT EXISTS` never replaces an index that exists under the same name, so
+-- a database created before `side` joined the key kept the old one — and kept
+-- dropping the second of a same-day BUY/SELL pair (audit D-3). Rebuild it when
+-- its definition lacks `side`; adding a column only loosens a unique key, so
+-- the rebuild cannot fail on existing rows.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes
+             WHERE schemaname = current_schema() AND indexname = 'lots_dedupe_idx'
+               AND indexdef NOT LIKE '%side%') THEN
+    DROP INDEX lots_dedupe_idx;
+    CREATE UNIQUE INDEX lots_dedupe_idx
+      ON lots(symbol, COALESCE(account,''), side, trade_date, quantity, price);
+    RAISE NOTICE 'lots_dedupe_idx rebuilt with side in the key';
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS price_snapshots (
   ts            TIMESTAMPTZ NOT NULL,
   symbol        TEXT NOT NULL REFERENCES instruments(symbol) ON UPDATE CASCADE ON DELETE RESTRICT,
-  last_price    NUMERIC(20,8) NOT NULL CHECK (last_price >= 0),
+  -- Strictly positive: a zero quote is a vendor fault, and one stored zero
+  -- zeroed every value and return computed across it (audit F-15, migration 005).
+  last_price    NUMERIC(20,8) NOT NULL CONSTRAINT price_snapshots_last_price_positive CHECK (last_price > 0),
   bid           NUMERIC(20,8) CHECK (bid >= 0),
   ask           NUMERIC(20,8) CHECK (ask >= 0),
   source        TEXT NOT NULL DEFAULT 'yfinance',
@@ -130,6 +161,20 @@ CREATE TABLE IF NOT EXISTS income (
 CREATE UNIQUE INDEX IF NOT EXISTS income_dedupe_idx
   ON income(symbol, COALESCE(account,''), kind, pay_date, amount);
 
+-- Same self-repair as lots_dedupe_idx, for a database created before `kind`
+-- joined this key.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes
+             WHERE schemaname = current_schema() AND indexname = 'income_dedupe_idx'
+               AND indexdef NOT LIKE '%kind%') THEN
+    DROP INDEX income_dedupe_idx;
+    CREATE UNIQUE INDEX income_dedupe_idx
+      ON income(symbol, COALESCE(account,''), kind, pay_date, amount);
+    RAISE NOTICE 'income_dedupe_idx rebuilt with kind in the key';
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS income_pay_date_idx ON income(pay_date);
 
 -- Corporate actions, and the register of investigated price discontinuities.
@@ -170,7 +215,14 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
   adjust_lots   BOOLEAN NOT NULL DEFAULT TRUE,
   source        TEXT NOT NULL DEFAULT 'manual',
   notes         TEXT,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- NaN satisfies `ratio > 0` (it sorts above every number), and the kind has
+  -- to agree with the ratio: a SPLIT adds shares, a REVERSE_SPLIT removes
+  -- them, NONE is the identity (audit D-4, migration 005).
+  CONSTRAINT corporate_actions_ratio_not_nan CHECK (ratio <> 'NaN'::numeric),
+  CONSTRAINT corporate_actions_kind_ratio CHECK (
+    (kind = 'SPLIT' AND ratio > 1) OR (kind = 'REVERSE_SPLIT' AND ratio < 1)
+    OR (kind = 'NONE' AND ratio = 1))
 );
 
 -- One action per (symbol, kind, ex_date). Ratio is deliberately NOT in the key:
@@ -178,16 +230,26 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
 CREATE UNIQUE INDEX IF NOT EXISTS corporate_actions_dedupe_idx
   ON corporate_actions(symbol, kind, ex_date);
 
--- Widen the kind constraint on databases created before 'NONE' existed.
-ALTER TABLE corporate_actions DROP CONSTRAINT IF EXISTS corporate_actions_kind_check;
-ALTER TABLE corporate_actions ADD CONSTRAINT corporate_actions_kind_check
-  CHECK (kind IN ('SPLIT','REVERSE_SPLIT','NONE'));
+-- Widen the kind constraint on databases created before 'NONE' existed. Only
+-- when it is actually narrower: dropping and re-adding it on every run took an
+-- exclusive lock and re-validated the table each time (audit D-3).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'corporate_actions_kind_check'
+                   AND pg_get_constraintdef(oid) LIKE '%NONE%') THEN
+    ALTER TABLE corporate_actions DROP CONSTRAINT IF EXISTS corporate_actions_kind_check;
+    ALTER TABLE corporate_actions ADD CONSTRAINT corporate_actions_kind_check
+      CHECK (kind IN ('SPLIT','REVERSE_SPLIT','NONE'));
+  END IF;
+END $$;
 
 -- Was this row confirmed against an authoritative source, or is it a machine
 -- guess awaiting review? The collector records vendor-reported splits with
--- reviewed=FALSE; a human sets it TRUE after checking. Nothing keys off this
--- yet beyond the data-quality report, but an unreviewed row adjusting cost
--- basis is exactly the mistake worth surfacing.
+-- reviewed=FALSE, and such a row APPLIES TO NOTHING — neither prices nor lots —
+-- until a human confirms it (check_splits.py --approve; audit F-3). Rows
+-- entered by hand (source = 'manual') are the operator's own record and apply
+-- as entered. See corporate_actions_in_effect below.
 ALTER TABLE corporate_actions ADD COLUMN IF NOT EXISTS reviewed BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS snapshot_runs (
@@ -263,5 +325,147 @@ CREATE TABLE IF NOT EXISTS lot_deletions (
 
 CREATE INDEX IF NOT EXISTS lot_deletions_deleted_at_idx
   ON lot_deletions (deleted_at DESC);
+-- Migration bookkeeping, written by app/apply_schema.py: which file under
+-- sql/migrations/ was applied, when, and the sha256 of its text (line endings
+-- normalised). A file whose checksum changes after it was applied is reported
+-- loudly on the next run (audit D-3). Applying the files by hand with psql
+-- still works — they stay idempotent — it just leaves this table empty, and
+-- the next apply_schema.py run applies and records them.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  filename    TEXT PRIMARY KEY,
+  checksum    TEXT NOT NULL,
+  applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ───────────── corporate actions in effect, and the one SQL net quantity ─────────────
+--
+-- Everything below is CREATE OR REPLACE, so it reaches an existing database
+-- whenever this file is re-applied. Each mirrors Python and a database test
+-- (app/tests/test_ledger_sql.py) holds the two to the same answers:
+--   corporate_actions_in_effect  ⇔  corporate_actions.effective_actions()
+--   lot_open_quantities()        ⇔  holdings.net_quantities(ledger_inputs.load())
+
+-- A recorded action takes effect when it is reviewed or was entered by hand,
+-- and is not a second record of an event a better-ranked row describes (same
+-- symbol, kind and ratio within 7 days — corporate_actions.DUPLICATE_WINDOW_DAYS;
+-- ranked reviewed, then manual, then earlier ex-date). Audit F-3, F-16.
+CREATE OR REPLACE VIEW corporate_actions_in_effect AS
+SELECT a.*
+FROM corporate_actions a
+WHERE (a.reviewed OR a.source = 'manual')
+  AND NOT EXISTS (
+    SELECT 1 FROM corporate_actions b
+    WHERE b.id <> a.id
+      AND (b.reviewed OR b.source = 'manual')
+      AND b.symbol = a.symbol AND b.kind = a.kind AND b.ratio = a.ratio
+      AND a.ratio <> 1
+      AND abs(b.ex_date - a.ex_date) <= 7
+      AND (CASE WHEN b.reviewed THEN 0 ELSE 1 END,
+           CASE WHEN b.source = 'manual' THEN 0 ELSE 1 END,
+           b.ex_date)
+        < (CASE WHEN a.reviewed THEN 0 ELSE 1 END,
+           CASE WHEN a.source = 'manual' THEN 0 ELSE 1 END,
+           a.ex_date)
+  );
+
+-- Exact product of split ratios (numeric_mul is numeric * numeric).
+CREATE OR REPLACE AGGREGATE pdb_product(numeric) (
+  SFUNC = numeric_mul, STYPE = numeric, INITCOND = '1'
+);
+
+-- Open quantity per (symbol, account) by the engines' rules (audit R-1, F-1):
+-- lots restated into post-split units by the actions in effect (dated on or
+-- before as_of, when given); processed in ledger_core.processing_key order —
+-- date, every BUY before any SELL that day, then id; and a SELL truncated at
+-- the open quantity, as FIFO does (shorts are unsupported). The truncated walk
+-- q_n = max(0, q_{n-1} + d_n) is computed in closed form as
+-- S_n - min(0, min_k S_k) over the plain running sums S_k. Closed streams are
+-- omitted. Sum by symbol for the per-symbol figure:
+--   SELECT symbol, SUM(quantity) FROM lot_open_quantities() GROUP BY symbol
+CREATE OR REPLACE FUNCTION lot_open_quantities(as_of date DEFAULT NULL)
+RETURNS TABLE (symbol text, account text, quantity numeric)
+LANGUAGE sql STABLE AS $fn$
+  WITH acts AS (
+    SELECT e.symbol, e.ex_date, e.ratio
+    FROM corporate_actions_in_effect e
+    WHERE e.adjust_lots AND (as_of IS NULL OR e.ex_date <= as_of)
+  ), prepared AS (
+    SELECT l.id, l.symbol, l.account, l.trade_date, l.side,
+           l.quantity * COALESCE(
+             (SELECT pdb_product(a.ratio) FROM acts a
+              WHERE a.symbol = l.symbol AND l.trade_date < a.ex_date), 1) AS qty
+    FROM lots l
+    WHERE as_of IS NULL OR l.trade_date <= as_of
+  ), walked AS (
+    SELECT p.symbol, p.account,
+           CASE WHEN p.side = 'BUY' THEN p.qty ELSE -p.qty END AS delta,
+           SUM(CASE WHEN p.side = 'BUY' THEN p.qty ELSE -p.qty END) OVER (
+             PARTITION BY p.symbol, p.account
+             ORDER BY p.trade_date, (p.side = 'SELL'), p.id
+             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running
+    FROM prepared p
+  )
+  SELECT w.symbol, w.account, SUM(w.delta) - LEAST(0, MIN(w.running))
+  FROM walked w
+  GROUP BY w.symbol, w.account
+  HAVING SUM(w.delta) - LEAST(0, MIN(w.running)) <> 0
+$fn$;
+
+-- One split recorded twice is applied twice; refuse the second record at the
+-- door (audit F-16). Same window and matching as the view above. NONE rows
+-- (ratio 1) are inert and exempt.
+CREATE OR REPLACE FUNCTION corporate_actions_refuse_near_duplicate()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+  other RECORD;
+BEGIN
+  IF NEW.ratio = 1 THEN
+    RETURN NEW;
+  END IF;
+  SELECT c.id, c.ex_date INTO other
+  FROM corporate_actions c
+  WHERE c.id <> NEW.id AND c.symbol = NEW.symbol AND c.kind = NEW.kind
+    AND c.ratio = NEW.ratio AND abs(c.ex_date - NEW.ex_date) <= 7
+  LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION '% % % on % repeats the corporate action on % (id %): one split recorded twice would be applied twice',
+      NEW.symbol, NEW.kind, NEW.ratio, NEW.ex_date, other.ex_date, other.id
+      USING ERRCODE = 'unique_violation',
+            HINT = 'Correct the existing row instead of adding another.';
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+DROP TRIGGER IF EXISTS corporate_actions_near_duplicate ON corporate_actions;
+CREATE TRIGGER corporate_actions_near_duplicate
+  BEFORE INSERT OR UPDATE OF symbol, kind, ex_date, ratio ON corporate_actions
+  FOR EACH ROW EXECUTE FUNCTION corporate_actions_refuse_near_duplicate();
+
+-- A migration that adds a CHECK to a table with existing rows adds it NOT
+-- VALID (enforced for new rows at once) and then validates; when an existing
+-- row fails, the constraint is left unvalidated with a warning (migrations
+-- 004, 005). Migrations run once, so the retry lives here, in the file every
+-- upgrade re-applies: each run tries again, and keeps saying which constraint
+-- still has offending rows until they are fixed.
+DO $$
+DECLARE
+  c RECORD;
+BEGIN
+  FOR c IN
+    SELECT conrelid::regclass AS tbl, conname
+    FROM pg_constraint
+    WHERE contype = 'c' AND NOT convalidated
+      AND connamespace = current_schema()::regnamespace
+  LOOP
+    BEGIN
+      EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', c.tbl, c.conname);
+      RAISE NOTICE 'constraint % on % is now validated', c.conname, c.tbl;
+    EXCEPTION WHEN check_violation THEN
+      RAISE WARNING 'constraint % on % is enforced for new rows but existing rows still violate it; fix them and re-run apply_schema.py',
+        c.conname, c.tbl;
+    END;
+  END LOOP;
+END $$;
 
 COMMIT;

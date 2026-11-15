@@ -76,7 +76,8 @@ def test_the_gate_is_the_only_skip_in_the_sql_modules():
     from pathlib import Path
 
     app_dir = Path(__file__).resolve().parents[1]
-    for rel in ("tests/test_dedupe_guards.py", "tests/test_fd_store.py", "mcp/tests/test_data_quality_sql.py"):
+    for rel in ("tests/test_dedupe_guards.py", "tests/test_fd_store.py", "tests/test_ledger_sql.py",
+                "mcp/tests/test_data_quality_sql.py"):
         text = (app_dir / rel).read_text(encoding="utf-8")
         assert "connect_for_tests(skip=pytest.skip, fail=pytest.fail)" in text, rel
         assert not re.search(r"pytest\.skip\(f?\"DB ", text), f"{rel} skips on its own again"

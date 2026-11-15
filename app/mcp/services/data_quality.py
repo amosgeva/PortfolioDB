@@ -430,11 +430,11 @@ def _targeted_symbols(cutoff: Cutoff) -> set[str]:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                -- lot_open_quantities(as_of): the engines' net quantity in
+                -- SQL (sql/schema.sql; audit R-1).
                 WITH pos AS (
-                  SELECT symbol,
-                         SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) AS qty
-                  FROM lots
-                  WHERE trade_date <= %s
+                  SELECT symbol, SUM(quantity) AS qty
+                  FROM lot_open_quantities(%s)
                   GROUP BY symbol
                 )
                 SELECT i.symbol
@@ -532,7 +532,7 @@ def _orphan_sells(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                   SELECT symbol, account, trade_date, id, side, quantity,
                          SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END)
                            OVER (PARTITION BY symbol, COALESCE(account,'')
-                                 ORDER BY trade_date, id) AS running
+                                 ORDER BY trade_date, (side = 'SELL'), id) AS running
                   FROM lots
                   WHERE trade_date <= %s
                 )
@@ -540,7 +540,7 @@ def _orphan_sells(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                        symbol, account, trade_date, id, quantity, running
                 FROM ordered
                 WHERE running < -0.00000001
-                ORDER BY symbol, trade_date, id
+                ORDER BY symbol, trade_date, (side = 'SELL'), id
                 """,
                 (cutoff.trade_date,),
             )

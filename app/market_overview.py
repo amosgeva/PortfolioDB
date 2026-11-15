@@ -26,6 +26,7 @@ import logging
 
 import reporting_tz
 import settings
+import symbol_paths
 from db import execute, fetch_all
 
 log = logging.getLogger(__name__)
@@ -63,6 +64,12 @@ def configured() -> list[tuple[str, str]]:
         symbol, _, label = entry.partition(":")
         symbol = symbol.strip().upper()
         if not symbol or symbol in seen:
+            continue
+        if not symbol_paths.is_safe_symbol(symbol):
+            # The collector registers each benchmark as an instrument, and the
+            # database refuses a symbol that is not shaped like one (migration
+            # 004). Skip it here rather than fail the whole benchmark run.
+            log.warning("market_overview_symbols: skipping %r — not a valid symbol", symbol)
             continue
         seen.add(symbol)
         out.append((symbol, label.strip() or _fallback_label(symbol)))
