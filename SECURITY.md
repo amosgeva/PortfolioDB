@@ -49,8 +49,8 @@ Every image `publish.yml` pushes to `ghcr.io/amosgeva/portfoliodb` is scanned
 before it is pushed (Trivy; any fixable finding of high or critical severity
 fails the publish), signed with [cosign](https://docs.sigstore.dev/) using the
 workflow's GitHub-issued OpenID Connect (OIDC) identity, so no long-lived key
-exists to leak, and carries a software bill of materials (SBOM) and SLSA build
-provenance. To check that an image was built by this repository's publish
+exists to leak, and carries a software bill of materials (SBOM) and SLSA
+(Supply-chain Levels for Software Artifacts) build provenance. To check that an image was built by this repository's publish
 workflow:
 
 ```bash

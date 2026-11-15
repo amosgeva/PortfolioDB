@@ -174,6 +174,17 @@ needs a schema step says so under **Upgrading**.
   install that set `LLM_MODEL` (or the model on the Settings page) is
   unaffected; one on the `openai` provider with no model set moves to
   `gpt-6.1-sol`, which is in the same output price tier.
+- Security floors raised to the secure release, because a scanner resolves
+  the lowest version a specifier allows: `fastmcp>=4.2` (was 3.3, which
+  carries GHSA-7xgj-8392-5q4r) in `app/requirements.txt`, and
+  `Pillow>=13.0.0` (was 12.3, which carries the October 2026 batch of
+  decoder CVEs) in `tools/requirements.txt`. The lock already pins
+  fastmcp 4.2.0 and Pillow 13.0.0, so the image is unchanged. Together with
+  the clean-ups below, this clears the 91 issues Codacy reported on `main`:
+  inline `nosec`/`nosemgrep` markers on the reviewed `subprocess` imports and
+  Anthropic calls, `native_auth.PASSWORD_ENV` renamed `DASHBOARD_PW_ENV` (the
+  variable name, not a secret), and shorter sentences, defined acronyms and a
+  role statement in `CLAUDE.md` for its prose linter.
 
 ### Fixed
 

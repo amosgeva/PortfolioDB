@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import subprocess
+import subprocess  # nosec B404 — one call, collect_fresh_prices(): fixed argv, no shell
 import sys
 from contextlib import closing
 from dataclasses import dataclass

@@ -18,13 +18,13 @@ PW = "correct horse ✓ battery"  # non-ASCII on purpose: compare_digest on str 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
     auth.reset_throttle()
-    monkeypatch.delenv(auth.PASSWORD_ENV, raising=False)
+    monkeypatch.delenv(auth.DASHBOARD_PW_ENV, raising=False)
     yield
     auth.reset_throttle()
 
 
 def _set(monkeypatch, value=PW):
-    monkeypatch.setenv(auth.PASSWORD_ENV, value)
+    monkeypatch.setenv(auth.DASHBOARD_PW_ENV, value)
 
 
 def test_unset_password_means_locked_not_open():
@@ -32,7 +32,7 @@ def test_unset_password_means_locked_not_open():
     assert not auth.configured()
     assert not auth.is_unlocked(session)
     res = auth.attempt("", session)
-    assert not res.ok and auth.PASSWORD_ENV in res.message
+    assert not res.ok and auth.DASHBOARD_PW_ENV in res.message
     with pytest.raises(auth.WriteLocked, match="not set"):
         auth.require_unlocked(session)
 
