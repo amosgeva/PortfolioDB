@@ -32,6 +32,9 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+import corporate_actions
+import holdings
+import ledger_inputs
 import ledger_numbers
 import ledger_writes
 import oversell
@@ -184,18 +187,42 @@ def lot_warnings(conn, lot: LotInput) -> list[str]:
     msg = check.message()
     if msg:
         warnings.append(msg.replace("WARNING: ", ""))
-    warnings += _stranded_by_sale(conn, lot, reduces_by=min(lot.quantity, check.held))
+    warnings += _stranded_by_sale(conn, lot)
     return warnings
 
 
-def _stranded_by_sale(conn, lot: LotInput, reduces_by: Decimal) -> list[str]:
+def held_today_with(conn, lot: LotInput) -> tuple[Decimal, Decimal]:
+    """Today's open quantity of ``lot.symbol``, without and with ``lot``.
+
+    Both figures come from one prepared ledger in today's share units, by the
+    engines' ordering and truncation rules: the existing lots as
+    ``ledger_inputs.load`` restates them, plus the candidate restated with the
+    same corporate actions and placed after every lot already on its date
+    (where its id will put it) — the construction ``oversell.check_sell``
+    uses. A trade-date quantity is never compared with a restated one: a
+    backdated sale of 10 before a 2:1 split closes a position that reads 20
+    today (QA R3-B1).
+    """
+    ledger = ledger_inputs.load(conn, symbol=lot.symbol)
+    candidate = corporate_actions.adjust_lot_rows(
+        [{"id": float("inf"), "symbol": lot.symbol, "account": lot.account, "side": lot.side,
+          "trade_date": lot.trade_date, "quantity": lot.quantity, "price": lot.price,
+          "fees": lot.fees}],
+        ledger.actions,
+    )[0]
+    before = holdings.open_quantities(ledger.lots).get(lot.symbol, Decimal(0))
+    after = holdings.open_quantities(ledger.lots + [candidate]).get(lot.symbol, Decimal(0))
+    return before, after
+
+
+def _stranded_by_sale(conn, lot: LotInput) -> list[str]:
     """A sale that closes the last shares of an unwatched symbol stops its
     price collection, and with it every armed alert on it."""
     watched = fetch_all(conn, "SELECT watchlist FROM instruments WHERE symbol = %s", (lot.symbol,))
     if watched and watched[0]["watchlist"]:
         return []
-    held = net_quantity(conn, lot.symbol)
-    if held <= 0 or reduces_by <= 0 or held - reduces_by > 0:
+    before, after = held_today_with(conn, lot)
+    if before <= 0 or after > 0:
         return []
     n = armed_alert_count(conn, lot.symbol)
     if not n:

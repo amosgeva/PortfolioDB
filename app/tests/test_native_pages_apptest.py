@@ -94,6 +94,7 @@ def _wipe(conn) -> None:
         cur.execute("DELETE FROM lots WHERE symbol IN %s", (syms,))
         cur.execute("DELETE FROM lot_deletions WHERE lot->>'symbol' IN %s", (syms,))
         cur.execute("DELETE FROM cash_snapshots WHERE account = %s", (ACCT,))
+        cur.execute("DELETE FROM corporate_actions WHERE symbol IN %s", (syms,))
         cur.execute("DELETE FROM instruments WHERE symbol IN %s", (syms,))
 
 
@@ -861,6 +862,64 @@ def test_selling_the_last_shares_of_an_unwatched_armed_symbol_asks_first(db, pas
     at = _unlocked("manage")
     at = _fill_lot(at, side="SELL", qty="5", price="12", new_account=ACCT)
     assert any("1 armed alert" in m.value for m in at.markdown)
+    assert [r[0] for r in _lots(db)] == ["BUY"]
+
+
+def _split(db, kind: str, ratio: str, ex_date: date) -> None:
+    _q(db, "INSERT INTO corporate_actions(symbol, kind, ex_date, ratio, adjust_prices, adjust_lots, "
+           "source, reviewed) VALUES (%s, %s, %s, %s, TRUE, TRUE, 'manual', TRUE)",
+       (SYM, kind, ex_date, Decimal(ratio)))
+
+
+def _sell_on(at: AppTest, qty: str, day: date) -> AppTest:
+    at.date_input(key="m2_lot_date").set_value(day)
+    return _fill_lot(at, side="SELL", qty=qty, price="12", new_account=ACCT)
+
+
+def test_backdated_full_sale_across_a_forward_split_still_asks_first(db, password):
+    """QA R3-B1. 10 bought, a 2:1 split after, then all 10 sold on a date
+    before the split: today that position reads 20 and the sale closes it.
+    Comparing the trade-date 10 with today's 20 missed that."""
+    _seed_lot(db, qty="10", trade_date=date(2026, 11, 2))
+    _split(db, "SPLIT", "2", date(2026, 11, 12))
+    _q(db, "INSERT INTO price_alerts(symbol, direction, level) VALUES (%s, 'above', 100)", (SYM,))
+    at = _sell_on(_unlocked("manage"), "10", date(2026, 11, 10))
+    assert any("closes the position" in m.value and "1 armed alert" in m.value for m in at.markdown),         [m.value for m in at.markdown]
+    assert [r[0] for r in _lots(db)] == ["BUY"], "the sale was stored without confirmation"
+    # The confirmation path keeps the server-side gate.
+    at = _ok(at.button(key="m2_lock").click().run())
+    assert at.button(key="m2_sell_confirm").disabled
+    at = _ok(_forged(at.button(key="m2_sell_confirm")).click().run())
+    assert [r[0] for r in _lots(db)] == ["BUY"]
+
+
+def test_partial_sale_across_a_reverse_split_does_not_ask(db, password):
+    """The reverse of R3-B1: 10 bought, a 1:2 reverse split after (5 today),
+    5 sold before it. 5 of 10 is half the position, 2.5 remain today and the
+    symbol stays collected, so there is nothing to confirm."""
+    _seed_lot(db, qty="10", trade_date=date(2026, 11, 2))
+    _split(db, "REVERSE_SPLIT", "0.5", date(2026, 11, 12))
+    _q(db, "INSERT INTO price_alerts(symbol, direction, level) VALUES (%s, 'above', 100)", (SYM,))
+    at = _sell_on(_unlocked("manage"), "5", date(2026, 11, 10))
+    assert not any("Check this lot" in w.value for w in at.warning), [m.value for m in at.markdown]
+    assert [r[0] for r in _lots(db)] == ["BUY", "SELL"]
+    import native_writes as nw
+
+    conn = connect_for_tests(skip=pytest.skip, fail=pytest.fail)
+    try:
+        assert nw.net_quantity(conn, SYM) == Decimal("2.5")
+        assert nw.is_collected(conn, SYM)
+    finally:
+        conn.close()
+
+
+def test_full_sale_after_a_reverse_split_still_asks_first(db, password):
+    # 10 bought, reverse 1:2 (5 today), all 5 sold after it: closes the position.
+    _seed_lot(db, qty="10", trade_date=date(2026, 11, 2))
+    _split(db, "REVERSE_SPLIT", "0.5", date(2026, 11, 12))
+    _q(db, "INSERT INTO price_alerts(symbol, direction, level) VALUES (%s, 'above', 100)", (SYM,))
+    at = _sell_on(_unlocked("manage"), "5", date(2026, 11, 13))
+    assert any("closes the position" in m.value for m in at.markdown)
     assert [r[0] for r in _lots(db)] == ["BUY"]
 
 
