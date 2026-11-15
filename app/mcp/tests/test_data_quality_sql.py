@@ -104,7 +104,9 @@ def add_action(conn, symbol, kind, ex_date, ratio):
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO corporate_actions(symbol, kind, ex_date, ratio, source) "
-            "VALUES (%s, %s, %s, %s, 'test')",
+            # A hand-entered record: in effect at once. A machine-recorded one
+            # (any other source, unreviewed) is pending and adjusts nothing.
+            "VALUES (%s, %s, %s, %s, 'manual')",
             (symbol, kind, ex_date, ratio),
         )
     conn.commit()
@@ -172,6 +174,22 @@ class TestOrphanSells:
         add_lot(conn, "ZZDQA", "SELL", date(2026, 2, 5), 20, 55)
         add_action(conn, "ZZDQA", "SPLIT", date(2026, 3, 1), 2)
         assert "ZZDQA" in dq._orphan_sells(cutoff_at(date(2026, 2, 28)))
+
+    def test_a_pending_split_adjusts_nothing_and_is_reported(self, conn, dq):
+        """A machine-recorded, unreviewed split is not in effect: the sale of
+        20 after it is still an oversell, and the split is reported as pending
+        review rather than as unrecorded."""
+        add_lot(conn, "ZZDQA", "BUY", date(2026, 1, 5), 10, 100)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO corporate_actions(symbol, kind, ex_date, ratio, source) "
+                "VALUES ('ZZDQA', 'SPLIT', %s, 2, 'yfinance')", (date(2026, 1, 20),),
+            )
+        conn.commit()
+        add_lot(conn, "ZZDQA", "SELL", date(2026, 2, 5), 20, 55)
+        assert "ZZDQA" in dq._orphan_sells(cutoff_at())
+        pending = dq._pending_splits(cutoff_at())
+        assert pending["ZZDQA"]["ex_date"] == "2026-01-20"
 
     def test_sell_before_buy_in_date_order_is_orphaned(self, conn, dq):
         add_lot(conn, "ZZDQA", "SELL", date(2026, 1, 5), 5, 110)
