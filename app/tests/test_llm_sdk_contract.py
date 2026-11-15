@@ -149,7 +149,10 @@ class TestAnthropicSdk:
 
         req = anthropic_server.requests[-1]
         assert req.method == "POST" and req.url.path == "/v1/messages"
-        assert req.headers["x-api-key"] == "sk-ant-test"
+        # anthropic 2.x sends the key as a bearer token (API version
+        # 2026-10-21); 1.x sent it as x-api-key. Either way, exactly once.
+        sent = [req.headers.get("x-api-key"), req.headers.get("authorization")]
+        assert [v for v in sent if v] in (["sk-ant-test"], ["Bearer sk-ant-test"])
         body = anthropic_server.body
         assert body["model"] == "claude-test"
         assert body["max_tokens"] == 321
