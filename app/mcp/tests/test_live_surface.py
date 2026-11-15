@@ -68,6 +68,7 @@ def admin():
 def _wipe(cur):
     cur.execute("DELETE FROM lots WHERE symbol = %s", (SYM,))
     cur.execute("DELETE FROM income WHERE symbol = %s", (SYM,))
+    cur.execute("DELETE FROM corporate_actions WHERE symbol = %s", (SYM,))
     cur.execute("DELETE FROM price_snapshots WHERE symbol = %s", (SYM,))
     cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s)", (ACCT, EUR_ACCT))
     cur.execute("DELETE FROM instruments WHERE symbol = %s", (SYM,))
@@ -573,3 +574,74 @@ def test_cash_balance_tool_is_usd_only(admin, fixtures):
     finally:
         with admin.cursor() as cur:
             cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s)", (ACCT, EUR_ACCT))
+
+
+# ────────────────────────── QA round 2: one action set per request ──────────────────────────
+
+
+@pytest.fixture
+def split_approved_mid_request(admin, fixtures, monkeypatch):
+    """After the request's first read of the corporate actions, commit a 2:1
+    split of SYM (dated between its lots and the latest quote) from another
+    connection — a split approved while the request is in flight. A pre-split
+    quote is added so the split changes what the request computes."""
+    import corporate_actions
+
+    today = datetime.now(timezone.utc)
+    with admin.cursor() as cur:
+        cur.execute("INSERT INTO price_snapshots(ts, symbol, last_price, source) VALUES "
+                    "(%s, %s, 100, 'test')", (today - timedelta(days=30), SYM))
+    real = corporate_actions.fetch_actions
+    state = {"armed": False, "fired": False}
+
+    def fetch(conn):
+        result = real(conn)
+        if state["armed"] and not state["fired"]:
+            state["fired"] = True
+            with admin.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO corporate_actions(symbol, kind, ex_date, ratio, source, reviewed) "
+                    "VALUES (%s, 'SPLIT', %s, 2, 'manual', TRUE)",
+                    (SYM, today.date() - timedelta(days=20)),
+                )
+        return result
+
+    monkeypatch.setattr(corporate_actions, "fetch_actions", fetch)
+    from app.mcp.services import positions
+
+    positions.clear_frame_cache()
+    yield state
+    with admin.cursor() as cur:
+        cur.execute("DELETE FROM corporate_actions WHERE symbol = %s", (SYM,))
+        cur.execute("DELETE FROM price_snapshots WHERE symbol = %s AND last_price = 100", (SYM,))
+    positions.clear_frame_cache()
+
+
+def test_value_history_is_consistent_when_a_split_is_approved_mid_request(
+    admin, split_approved_mid_request
+):
+    """Lots and prices come from one action set: the answer equals the one
+    computed with no split at all (the state the request started in), never
+    20 restated shares at an unadjusted pre-split price."""
+    from app.mcp.services import prices
+
+    since = (datetime.now(timezone.utc) - timedelta(days=35)).date()
+    baseline = prices.portfolio_value_history(since, holdings_basis="historical")
+    split_approved_mid_request["armed"] = True
+    raced = prices.portfolio_value_history(since, holdings_basis="historical")
+    assert split_approved_mid_request["fired"], "the split was never committed mid-request"
+    assert raced == baseline
+
+
+def test_drawdown_comparison_basis_is_consistent_when_a_split_is_approved_mid_request(
+    admin, split_approved_mid_request
+):
+    """The current_constant basis values today's quantities (positions frame)
+    at historical prices: both must use the same actions."""
+    from app.mcp.services import analytics
+
+    baseline = analytics.drawdown_stats(holdings_basis="current_constant")
+    split_approved_mid_request["armed"] = True
+    raced = analytics.drawdown_stats(holdings_basis="current_constant")
+    assert split_approved_mid_request["fired"]
+    assert raced == baseline

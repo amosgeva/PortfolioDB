@@ -13,7 +13,8 @@ from typing import Any
 
 from psycopg2 import sql
 
-from app.mcp.deps import consistent_read, get_conn
+from app.mcp.deps import get_conn
+from app.mcp.deps import consistent_read
 from app.mcp.services import common
 from app.mcp.services.cutoff import LOCAL_TZ, tz_name
 
