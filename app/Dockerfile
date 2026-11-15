@@ -15,7 +15,7 @@
 # pulled" were only nominally the same. The digest below is the multi-arch
 # index; Dependabot (.github/dependabot.yml) proposes the bump when the tag
 # moves, and the weekly scan (security-scan.yml) says when a bump is overdue.
-FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 # supercronic: cron built for containers — logs every job to stdout, needs no
 # root, and refuses to start on an invalid crontab instead of silently doing
