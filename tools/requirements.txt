@@ -8,10 +8,16 @@
 #   API     >=10.1 — make-social-card.py calls ImageFont.load_default(px), and
 #                    the size argument only arrived in Pillow 10.1. On anything
 #                    older that line is a TypeError at render time.
-#   Security >=12.3 — everything below it carries known CVEs, including
-#                    CVE-2023-50447 (arbitrary code execution) and a run of
-#                    heap-corruption and DoS issues in the image and font
-#                    decoders. A dependency scanner resolves the lowest version
-#                    a specifier allows, so the floor has to be the secure one,
-#                    not merely the one that makes the call signature work.
-Pillow>=12.3,<14
+#   Security >=13.0.0 — everything below it carries known CVEs. 12.x has the
+#                    October 2026 batch, all fixed in 13.0.0: heap overflows in
+#                    the JPEG, FlashPix and TIFF codecs (CVE-2026-112403,
+#                    CVE-2026-112398, CVE-2026-112393), Ghostscript argument
+#                    injection (CVE-2026-112900), stale storage in multi-frame
+#                    loaders (CVE-2026-96639), the bundled libopenjp2 overflow
+#                    (GHSA-78g4-xqwv-q3g8) and a run of DoS issues in the image
+#                    and font decoders. Older lines add CVE-2023-50447
+#                    (arbitrary code execution). A dependency scanner resolves
+#                    the lowest version a specifier allows, so the floor has to
+#                    be the secure one, not merely the one that makes the call
+#                    signature work.
+Pillow>=13.0.0,<14

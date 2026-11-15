@@ -9,5 +9,5 @@ anthropic>=0.40,<3
 # OpenAI-compatible advisor path (OpenAI / OpenRouter / Ollama / LM Studio)
 openai>=1.50,<4
 # MCP server (app/mcp/)
-fastmcp>=3.3,<5
+fastmcp>=4.2,<5   # floor clears GHSA-7xgj-8392-5q4r (fixed in 3.4.10 / 4.1.2); 4.2 is the locked line
 uvicorn[standard]>=0.30,<1

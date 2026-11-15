@@ -508,7 +508,7 @@ def _lock() -> None:
 def render_gate() -> bool:
     """The write-access strip at the top of a write page. Returns whether
     this session may write. Read-only content renders either way."""
-    var = native_auth.PASSWORD_ENV
+    var = native_auth.DASHBOARD_PW_ENV
     if not native_auth.configured():
         st.html(
             f'<div class="m2-gate">{_tag("read-only", "warn")}'
@@ -1196,7 +1196,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
     fd_set = bool(os.environ.get("FINANCIAL_DATASETS_API_KEY", "").strip())
     st.html(
         f'<div class="m2-status">{_tag("set", "ok") if pw_set else _tag("not set", "warn")}'
-        f"<span>Dashboard password <code>{native_auth.PASSWORD_ENV}</code> — "
+        f"<span>Dashboard password <code>{native_auth.DASHBOARD_PW_ENV}</code> — "
         + ("required for every change on Manage, Advisor and this page." if pw_set
            else "not set, so these pages are read-only.")
         + "</span></div>"
@@ -1206,7 +1206,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
     )
     with st.expander("About the dashboard password"):
         st.markdown(
-            f"`{native_auth.PASSWORD_ENV}` in the repo-root `.env` guards every change made from "
+            f"`{native_auth.DASHBOARD_PW_ENV}` in the repo-root `.env` guards every change made from "
             "the dashboard: recording, selling and deleting lots, the watchlist, cash, alerts, these "
             "settings, the one-pager, and every brief or chat that calls your model. The read-only "
             "views stay open.\n\n"

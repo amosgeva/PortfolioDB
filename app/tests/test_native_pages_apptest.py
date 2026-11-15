@@ -123,7 +123,7 @@ def isolate(db, monkeypatch):
 
 @pytest.fixture
 def password(monkeypatch):
-    monkeypatch.setenv(native_auth.PASSWORD_ENV, PW)
+    monkeypatch.setenv(native_auth.DASHBOARD_PW_ENV, PW)
     return PW
 
 
@@ -206,7 +206,7 @@ def _lots(db, symbol=SYM):
 def test_without_a_password_the_write_pages_are_read_only(db):
     at = _ok(_run("manage"))
     assert "read-only" in _html(at)
-    assert native_auth.PASSWORD_ENV in _html(at)
+    assert native_auth.DASHBOARD_PW_ENV in _html(at)
     for key in ("m2_lot_submit", "m2_wl_submit", "m2_cash_submit", "m2_alert_submit", "m2_set_submit"):
         assert at.button(key=key).disabled, key
     # A forged click on the disabled control writes nothing (Streamlit drops
