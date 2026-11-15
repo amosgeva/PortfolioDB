@@ -63,7 +63,7 @@ commands and you have a dashboard on port 8501.
 > Use of this software is at your own risk. It is provided "as is", without
 > warranty of any kind, as set out in the [AGPL-3.0 license](LICENSE).
 
-![The portfolio view: KPI row, time-weighted returns, value history and allocation](docs/images/portfolio.webp)
+![The portfolio view: KPI row, markets strip and time-weighted returns](docs/images/portfolio.webp)
 
 <details>
 <summary>More screens — statistics, advisor, data health</summary>
@@ -371,7 +371,8 @@ PortfolioDB/
 │   ├── streamlit_app.py       # Dashboard shell + embedded views
 │   ├── modern2_native.py      # Native views (Manage / Advisor / Data Health)
 │   ├── native_auth.py         # The password gate in front of every dashboard write
-│   ├── dashboard/             # Payload builder + static shell / js / css
+│   ├── dashboard/             # Payload builder + the read-only views' front end:
+│   │                          # static/src (ES modules) → committed app.js / app.css (npm run build)
 │   ├── advisor.py             # Brief + chat (Anthropic/OpenAI/OpenRouter/Ollama)
 │   ├── exec_report.py         # Self-contained HTML executive report
 │   ├── portfolio.py           # FIFO/avg-cost merge (single source of truth for positions)
@@ -681,7 +682,7 @@ git config core.hooksPath .githooks
 - `philosophy.md` is **gitignored.** It contains personal financial context. Use the `.template` to start; edit the real file locally.
 - The database lives in the `pgdata` named volume (or a directory you point at via an override). Postgres owns it — never edit, move, or delete files inside it while the stack is running.
 - `.env`, `cache/`, `backups/`, and `archive/` are gitignored.
-- Nothing phones home. The only outbound requests are yfinance price lookups, your LLM provider if you enable the advisor, and Financial Datasets if you enable enrichment.
+- Nothing phones home. The only outbound requests are yfinance price lookups, your LLM provider if you enable the advisor, Financial Datasets if you enable enrichment, and ticker logos — fetched into a local cache by `fetch_ticker_logos.py`, and loaded from the logo CDN by your browser only if you set `PORTFOLIODB_LOGO_CDN`. The dashboard's fonts are self-hosted.
 
 ---
 

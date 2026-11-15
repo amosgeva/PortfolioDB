@@ -560,7 +560,10 @@ needs a schema step says so under **Upgrading**.
   Stale "no login" wording is corrected in `SECURITY.md`,
   `docs/llm-providers.md` and the compose, override-example, `.env.template`
   and `schema.sql` comments; the one-pager steps no longer name an
-  emoji the page has dropped. Screenshots wait for the front-end change.
+  emoji the page has dropped. `CONTRIBUTING.md` describes the front end's
+  build (`npm run build`, the `Front end` workflow), and the README's privacy
+  note names the opt-in logo CDN. The README screenshots are retaken from
+  the demo ledger on 1.8 (audit K-1): same files, same size, dark theme.
 
 ## [1.7.7] — 2026-11-15
 

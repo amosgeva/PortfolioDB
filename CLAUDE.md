@@ -209,7 +209,9 @@ Two halves share one Streamlit session.
 - The native pages write through `native_writes.py`, behind the gate in `native_auth.py`.
 - Moving between the halves is a rerun in the same session, so an unlock and form drafts survive.
 - The totals that the payload, the reports, the Advisor and the MCP share come from `app/portfolio_kpis.py`.
-- Pull request #122 turns `app.js` and `app.css` into an esbuild bundle of the JavaScript modules under `static/src/`, rebuilt with `npm run build`. Once it is merged, edit the modules and rebuild instead of editing the bundle.
+- `app.js` and `app.css` are generated and committed. `app/dashboard/static/build.mjs` bundles the JavaScript modules under `static/src/` with esbuild, and joins the fonts, `tokens.css` and `src/styles/app.css`.
+- Edit the sources, then run `npm run build` from the repo root. Nothing builds at runtime, so the image and a host-run Streamlit need no Node.
+- The `Front end` workflow (`.github/workflows/frontend.yml`) runs `npm run build:check`, ESLint with zero warnings, and the jsdom tests (`npm test`). The ESLint rules are what make an unescaped `innerHTML` a build failure.
 
 ### Layers
 - `app/db.py` — psycopg2 connection + `fetch_all` / `execute` helpers. Everything in `app/` goes through this; the ad-hoc scripts at the repo root often open their own psycopg2 connections.

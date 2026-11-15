@@ -103,6 +103,25 @@ docker stop pdb-test
 Or just `make test`, which runs the fast suites in an image built from your
 working tree.
 
+### The dashboard front end
+
+The read-only views are built from the ES modules under
+`app/dashboard/static/src/` into `app.js` and `app.css`, which are committed —
+running the dashboard needs no Node. Changing the front end does (Node 22.13 or
+newer), from the repo root:
+
+```bash
+npm ci --ignore-scripts        # exact versions from package-lock.json
+npm run build                  # rebuild app.js / app.css; commit them with the sources
+npm run lint                   # ESLint, zero warnings
+npm test                       # jsdom: every view, refresh, theme, CSV export, a hostile-payload XSS walk
+```
+
+Edit the sources, never the generated files. The `Front end` workflow runs
+`npm run build:check` (the committed bundle must be what the sources build),
+the lint and the tests. Markup goes through the escaping `html` template in
+`src/core/html.js`; the lint rules fail any other way of writing HTML.
+
 ## What the code expects of you
 
 - **Money is `Decimal`** end to end inside the engines. Convert to `float` only
