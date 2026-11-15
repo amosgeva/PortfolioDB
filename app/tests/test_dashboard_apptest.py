@@ -42,6 +42,20 @@ def restore_environ():
     os.environ.update(saved)
 
 
+def require_ro_role() -> None:
+    """Data Health reads through the MCP's SELECT-only role (app/mcp/deps.py
+    refuses to run without it), so on a fresh database the page correctly
+    says "Could not build the data-quality report". Say why here instead of
+    failing on that message: skip without the role, fail when a database is
+    required (CI creates the role before this job's tests)."""
+    if (os.getenv("PORTFOLIODB_MCP_RO_USER") or "").strip():
+        return
+    msg = ("Data Health needs the read-only MCP role: run app/create_ro_role.py --generate "
+           "and export PORTFOLIODB_MCP_RO_USER / PORTFOLIODB_MCP_RO_PASSWORD")
+    required = (os.getenv("PORTFOLIODB_TESTS_REQUIRE_DB") or "").strip().lower() in ("1", "true", "yes")
+    (pytest.fail if required else pytest.skip)(msg)
+
+
 def _run(view: str) -> AppTest:
     at = AppTest.from_file(str(SCRIPT), default_timeout=120)
     at.query_params["view"] = view
@@ -50,6 +64,8 @@ def _run(view: str) -> AppTest:
 
 @pytest.mark.parametrize("view", VIEWS)
 def test_view_renders_without_an_error(view):
+    if view == "health":
+        require_ro_role()
     at = _run(view)
     assert not at.exception, [e.value for e in at.exception]
     assert not at.error, [e.value for e in at.error]

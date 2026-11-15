@@ -288,9 +288,10 @@ class TestSettingsPageHasNoBaseUrlField:
         from pathlib import Path
         src = Path(llm.__file__).with_name("modern2_native.py").read_text(encoding="utf-8")
         # The save loop's tuple form, `("llm_base_url", <value>, ...)`; the
-        # cleanup call `unset("llm_base_url")` has no comma and is allowed.
+        # cleanup `changes["llm_base_url"] = None` (a delete, in the same
+        # transaction as the rest of the form since 1.8.0) is allowed.
         assert '("llm_base_url",' not in src, "the Settings save loop writes llm_base_url again"
-        assert 'settings.unset("llm_base_url")' in src, "saving must delete a pre-1.7.0 row"
+        assert 'changes["llm_base_url"] = None' in src, "saving must delete a pre-1.7.0 row"
         assert not re.search(r'text_input\(\s*"Base URL', src), "the base URL field is back"
 
 
