@@ -298,8 +298,8 @@ needs a schema step says so under **Upgrading**.
   and lots exports; numbers stay numeric.
 - **Privacy: no third-party requests by default.** Space Grotesk and
   JetBrains Mono are self-hosted (SIL OFL, licences in
-  `app/dashboard/static/fonts/`); `fonts/fonts.css` is there for the native
-  pages to load too. The
+  `app/dashboard/static/fonts/`) for the dashboard and for Manage, Advisor
+  and Data Health, which no longer load Google Fonts. The
   ticker-logo CDN is used only when the payload's `config.logo_cdn` is true;
   otherwise a symbol without a cached logo shows its letter badge.
 - **Price alerts are stored, not armed in the page.** The Alerts view lists
@@ -332,7 +332,8 @@ needs a schema step says so under **Upgrading**.
   page for every refresh.
 - `app.js` is now built from ES modules under `src/` by `npm run build`; the
   bundle stays committed, so running the dashboard needs no Node. CSS tokens
-  live in `app/dashboard/static/tokens.css` for both halves of the UI. A new
+  live in `app/dashboard/static/tokens.css`, read by both halves of the UI
+  (the native pages' `_TOKENS_SOURCE`; `--warn-soft` moved there). A new
   workflow (`frontend.yml`) checks the build, lints with zero warnings and
   runs the tests.
 

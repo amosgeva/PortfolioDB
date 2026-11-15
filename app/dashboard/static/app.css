@@ -42,7 +42,7 @@
   --accent:oklch(55% 0.19 264);--accent-fg:#fff;--accent-soft:oklch(95% 0.04 264);
   /* Green reads lighter than red at equal lightness, so it sits lower to hit
      the same contrast — 51/56 is closer to perceptually equal than 58/58 was. */
-  --up:oklch(51% 0.16 152);--up-soft:oklch(95% 0.05 152);--down:oklch(55% 0.20 26);--down-soft:oklch(95.5% 0.04 26);--warn:oklch(53.5% 0.15 75);
+  --up:oklch(51% 0.16 152);--up-soft:oklch(95% 0.05 152);--down:oklch(55% 0.20 26);--down-soft:oklch(95.5% 0.04 26);--warn:oklch(53.5% 0.15 75);--warn-soft:oklch(95% 0.05 75);
   --topbar-bg:oklch(99% 0.003 255 / .82);
   /* Corner scale. Thirteen values collapsed to the six steps DESIGN.md already
      documented: several sat 1–2px apart doing the same job, which is a shape
@@ -88,7 +88,7 @@
      on it: 3.74:1. The button label goes dark instead of the brand colour
      going darker, which would cost the accent its visibility on the page. */
   --accent:oklch(62% 0.18 264);--accent-fg:oklch(20% 0.02 264);--accent-soft:oklch(29% 0.06 264);
-  --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);--down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);--warn:oklch(76% 0.13 75);
+  --up:oklch(70% 0.14 152);--up-soft:oklch(27% 0.05 152);--down:oklch(68% 0.18 26);--down-soft:oklch(27% 0.05 26);--warn:oklch(76% 0.13 75);--warn-soft:oklch(30% 0.06 80);
   --topbar-bg:oklch(18% 0.015 260 / .82);
   --shadow:0 1px 2px rgba(0,0,0,.25),0 1px 3px rgba(0,0,0,.2);--shadow-lg:0 10px 30px -12px rgba(0,0,0,.6);
   --shadow-tip:0 4px 14px rgba(0,0,0,.45);
