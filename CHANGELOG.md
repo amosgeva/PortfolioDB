@@ -21,16 +21,20 @@ needs a schema step says so under **Upgrading**.
 - Apply `sql/migrations/007_reserved_account_names.sql` (`make schema`, or
   `docker compose run --rm dashboard python app/apply_schema.py`, which
   records it in `schema_migrations`). It adds a CHECK to `lots`, `income` and
-  `cash_snapshots`: no account may be named `(none)`, in any case or spacing.
-  The schema version is now 0.7 (`sql/schema.sql` header and the MCP's
-  `schema_version`).
+  `cash_snapshots`: no account may be named `(none)`, in any case or spacing —
+  including no-break, figure and other Unicode spaces, zero-width characters
+  and fullwidth letters — through one SQL function, `pdb_account_fold`, which
+  `sql/schema.sql` creates. The schema version is now 0.7 (`sql/schema.sql`
+  header and the MCP's `schema_version`). The database must be UTF8, as the
+  official image creates it; the migration refuses otherwise.
 - **If any row already uses that name, the migration refuses and changes
-  nothing** — it does not rewrite your data. The error lists each table and
-  how many rows; rename the account (or, for lots and income meant to have no
-  account, set it to NULL) and run it again. The file's header has the
-  `UPDATE` statements. Until it is applied, the writers already refuse the
-  name.
-- The read-only MCP role (`sql/create_ro_role.sql`) needs nothing new.
+  nothing** — it does not rewrite your data. The error lists each table, how
+  many rows, and the account's code points (so a no-break space is visible);
+  rename the account (or, for lots and income meant to have no account, set
+  it to NULL) and run it again. The file's header has the `UPDATE`
+  statements. Until it is applied, the writers already refuse the name.
+- The read-only MCP role (`sql/create_ro_role.sql`) needs nothing new: the
+  function is only evaluated by the CHECKs, on writes.
 
 ### Fixed — account identity (rescore NEW-1, audit X-3/X-8)
 
@@ -43,8 +47,11 @@ needs a schema step says so under **Upgrading**.
   account (a $30 book allocated as $10) and returned its cash as the
   unassigned bucket's. The Manage page (lots and cash), `add_lot`,
   `sell_lot`, `set_cash`, `add_income` and `import_csv_history` now refuse
-  it, case- and whitespace-insensitively (`app/account_names.py`), and the
-  database refuses it from any other writer (migration 007).
+  it, and the database refuses it from any other writer (migration 007). Both
+  compare a folded name — NFKC, every Unicode whitespace and invisible format
+  character removed, A–Z lowercased — defined once in
+  `app/account_names.py` and implemented identically in SQL; tests run both
+  over the same strings, including every BMP character around `(none)`.
 - The MCP treats the label as `account IS NULL` and nothing else, in every
   reader and in any spelling (`(NONE)` included): `list_accounts` groups by
   the stored account before labelling it, allocation by account filters with

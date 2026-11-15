@@ -29,7 +29,8 @@ def test_the_mcp_label_is_the_one_the_writers_reserve():
     assert account_names.is_reserved(common.NONE_ACCOUNT)
 
 
-@pytest.mark.parametrize("label", ["(none)", "(NONE)", " ( none ) "])
+@pytest.mark.parametrize("label", ["(none)", "(NONE)", " ( none ) ", "(\u00a0none\u202f)",
+                                   "\uff08none\uff09"])
 def test_every_spelling_of_the_label_filters_to_null(label):
     from psycopg2 import sql
 

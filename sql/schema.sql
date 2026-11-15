@@ -15,6 +15,23 @@
 
 BEGIN;
 
+-- The account-name fold (app/account_names.py, which defines it): NFKC, then
+-- every character in account_names.IGNORED_RANGES removed (Unicode
+-- White_Space, U+001C-U+001F, invisible format characters), then A-Z
+-- lowercased and nothing else (COLLATE "C"). No locale decides the answer:
+-- [[:space:]] would (and disagreed with Python on NBSP, QA of PR #133). The
+-- class below is rendered by account_names.sql_char_class() and a test holds
+-- them together, as it does this definition and migration 007's copy of it.
+-- The '(none)' CHECKs on lots, income and cash_snapshots use it. Needs a UTF8
+-- database (normalize() does), which is what the official image creates.
+CREATE OR REPLACE FUNCTION pdb_account_fold(account_name text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  AS $fold$
+    SELECT lower(regexp_replace(normalize(account_name, NFKC),
+                                '[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u00AD\u1680\u180E\u2000-\u200D\u2028-\u2029\u202F\u205F-\u2060\u3000\uFEFF]',
+                                '', 'g') COLLATE "C")
+  $fold$;
+
 CREATE TABLE IF NOT EXISTS instruments (
   symbol        TEXT PRIMARY KEY,
   name          TEXT,
@@ -58,9 +75,9 @@ CREATE TABLE IF NOT EXISTS lots (
   CONSTRAINT lots_price_not_nan    CHECK (price <> 'NaN'::numeric),
   CONSTRAINT lots_fees_not_nan     CHECK (fees <> 'NaN'::numeric),
   -- '(none)' is the label for account IS NULL everywhere it is read; an
-  -- account by that name (any case or spacing) is refused (migration 007).
+  -- account whose name folds to it (pdb_account_fold) is refused (migration 007).
   CONSTRAINT lots_account_not_reserved
-    CHECK (lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)')
+    CHECK (pdb_account_fold(account) <> '(none)')
 );
 
 -- Prevent accidental duplicate lot inserts during imports.
@@ -134,7 +151,7 @@ CREATE TABLE IF NOT EXISTS cash_snapshots (
   PRIMARY KEY (account, ts),
   CONSTRAINT cash_snapshots_cash_not_nan CHECK (cash <> 'NaN'::numeric),
   CONSTRAINT cash_snapshots_account_not_reserved
-    CHECK (lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)')
+    CHECK (pdb_account_fold(account) <> '(none)')
 );
 
 CREATE INDEX IF NOT EXISTS cash_snapshots_ts_idx ON cash_snapshots(ts);
@@ -159,7 +176,7 @@ CREATE TABLE IF NOT EXISTS income (
   CONSTRAINT income_tax_withheld_not_nan CHECK (tax_withheld <> 'NaN'::numeric),
   CONSTRAINT income_per_share_not_nan    CHECK (per_share <> 'NaN'::numeric),
   CONSTRAINT income_account_not_reserved
-    CHECK (lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)'),
+    CHECK (pdb_account_fold(account) <> '(none)'),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

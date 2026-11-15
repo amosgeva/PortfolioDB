@@ -38,10 +38,13 @@ SYM_A, SYM_B, SYM_PROBE = f"{PREFIX}A", f"{PREFIX}B", f"{PREFIX}P"
 SYMS = (SYM_A, SYM_B, SYM_PROBE)
 NAMED = f"{PREFIX} Named"
 CASH_ONLY = f"{PREFIX} Cash only"
-RESERVED = ["(none)", "(NONE)", " ( none ) "]
+RESERVED = ["(none)", "(NONE)", " ( none ) ",
+            # QA of PR #133, B1: no-break, figure and narrow no-break spaces.
+            "(\u00a0none\u00a0)", "(\u2007NONE)", "(none\u202f)", "\uff08\uff4e\uff4f\uff4e\uff45\uff09"]
 
 # What the fixture holds, by bucket.
 NONE_MV = 1 * 10 + 3 * 25      # A: 1 @ $10 quote; B: 3 @ $25 quote
+BASE: dict[str, float] = {}    # the unassigned bucket before the fixture
 NAMED_MV = 2 * 10 + 3 * 25     # A: 2; B: 4 bought, 1 sold
 NAMED_CASH = 200.0
 CASH_ONLY_CASH = 500.0
@@ -96,9 +99,15 @@ def ledger(admin):
     import add_income
     import native_writes as nw
 
-    from app.mcp.services import positions
+    from app.mcp.services import income, positions
 
     _wipe(admin)
+    # What the unassigned bucket already holds (none on the demo ledger), so
+    # the exact figures below are this fixture's on any database.
+    positions.clear_frame_cache()
+    BASE["none_mv"] = positions.positions_summary(
+        "fifo", account="(none)", include_income=False)["market_value"] or 0.0
+    BASE["none_income"] = income.income_summary(group_by="none", account="(none)")["total_income"]
     day = date.today() - timedelta(days=40)
     for lot in (
         _lot("", SYM_A, "BUY", 1, 10, day),            # blank → no account
@@ -200,11 +209,17 @@ def test_every_writer_refuses_the_label(admin, ledger, name):
 def test_no_reserved_name_is_stored(admin, ledger):
     with admin.cursor() as cur:
         cur.execute(
-            "SELECT (SELECT count(*) FROM lots WHERE lower(regexp_replace(account, '[[:space:]]', '', 'g')) = '(none)'),"
-            " (SELECT count(*) FROM income WHERE lower(regexp_replace(account, '[[:space:]]', '', 'g')) = '(none)'),"
-            " (SELECT count(*) FROM cash_snapshots WHERE lower(regexp_replace(account, '[[:space:]]', '', 'g')) = '(none)')"
+            "SELECT (SELECT count(*) FROM lots WHERE pdb_account_fold(account) = '(none)'),"
+            " (SELECT count(*) FROM income WHERE pdb_account_fold(account) = '(none)'),"
+            " (SELECT count(*) FROM cash_snapshots WHERE pdb_account_fold(account) = '(none)')"
         )
         assert cur.fetchone() == (0, 0, 0)
+        # And by the readers' own rule, over every stored account.
+        cur.execute("SELECT account FROM lots UNION SELECT account FROM income "
+                    "UNION SELECT account FROM cash_snapshots")
+        import account_names
+
+        assert [a for (a,) in cur.fetchall() if account_names.is_reserved(a)] == []
     admin.rollback()
 
 
@@ -251,7 +266,7 @@ def test_allocation_by_account_reconciles_with_the_whole_book(server, accounts):
     rows = {r["key"]: r["market_value"] for r in alloc["rows"]}
     assert alloc["total_market_value"] == pytest.approx(whole)
     assert sum(rows.values()) == pytest.approx(whole)
-    assert rows["(none)"] == pytest.approx(NONE_MV)
+    assert rows["(none)"] == pytest.approx(BASE["none_mv"] + NONE_MV)
     assert rows[NAMED] == pytest.approx(NAMED_MV)
     assert CASH_ONLY not in rows
     for a in accounts:
@@ -282,9 +297,9 @@ def test_the_review_reconciles_bucket_by_bucket(server, accounts):
     for key in SUMMARY_KEYS:
         assert sum(s[key] for s in per.values()) == pytest.approx(whole[key], abs=1e-6), key
     none, named, cash_only = per["(none)"], per[NAMED], per[CASH_ONLY]
-    assert none["invested_market_value"] == pytest.approx(NONE_MV)
+    assert none["invested_market_value"] == pytest.approx(BASE["none_mv"] + NONE_MV)
     assert none["cash"] == 0.0 and none["cash_by_account"] == []
-    assert none["income_total"] == pytest.approx(3)
+    assert none["income_total"] == pytest.approx(BASE["none_income"] + 3)
     assert named["invested_market_value"] == pytest.approx(NAMED_MV)
     assert named["cash"] == pytest.approx(NAMED_CASH)
     assert named["income_total"] == pytest.approx(7)
@@ -296,7 +311,8 @@ def test_the_review_reconciles_bucket_by_bucket(server, accounts):
 # ── the rescore's probe, step by step (last: it adds and removes its own rows) ──
 
 
-def test_the_rescore_probe(admin, server):
+@pytest.mark.parametrize("name", ["(none)", "(\u00a0none\u00a0)"])
+def test_the_rescore_probe(admin, server, name):
     """Rescore NEW-1, as run: through the Manage parser and writer, BUY 1 @ $10
     without an account and BUY 2 @ $10 in an account named '(none)'; a $10
     quote and $500 cash in that account; then the MCP's whole book against its
@@ -313,12 +329,12 @@ def test_the_rescore_probe(admin, server):
     try:
         assert nw.add_lot(admin, _lot(None, SYM_PROBE, "BUY", 1, 10, day))
         try:
-            assert nw.add_lot(admin, _lot("(none)", SYM_PROBE, "BUY", 2, 10, day))
+            assert nw.add_lot(admin, _lot(name, SYM_PROBE, "BUY", 2, 10, day))
             stored.append("lot")
         except ValueError:
             pass
         try:
-            nw.record_cash(admin, "(none)", Decimal("500"), None)
+            nw.record_cash(admin, name, Decimal("500"), None)
             stored.append("cash")
         except ValueError:
             pass
@@ -333,7 +349,7 @@ def test_the_rescore_probe(admin, server):
         alloc = _call(server, "get_allocation", {"dimension": "account"})
         assert alloc["total_market_value"] == pytest.approx(whole)
         assert {r["key"]: r["market_value"] for r in alloc["rows"]}["(none)"] == pytest.approx(
-            NONE_MV + 10
+            BASE["none_mv"] + NONE_MV + 10
         )
         assert _call(server, "get_cash_balance", {"account": "(none)"})["cash"] == 0.0
         assert stored == [], f"the reserved name was stored: {stored}"
@@ -342,6 +358,6 @@ def test_the_rescore_probe(admin, server):
         with admin.cursor() as cur:
             cur.execute("DELETE FROM lots WHERE symbol = %s", (SYM_PROBE,))
             cur.execute("DELETE FROM price_snapshots WHERE symbol = %s", (SYM_PROBE,))
-            cur.execute("DELETE FROM cash_snapshots WHERE account = '(none)'")
+            cur.execute("DELETE FROM cash_snapshots WHERE account = %s", (name,))
         admin.commit()
         positions.clear_frame_cache()

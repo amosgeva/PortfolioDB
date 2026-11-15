@@ -6,8 +6,12 @@ account actually named ``(none)`` used to be accepted by every writer and by
 the schema; it then merged into the unassigned bucket, vanished from
 allocation by account and lent its cash to that bucket. Here:
 
-* the rule itself (app/account_names.py) and its SQL mirror in sql/schema.sql
-  and migration 007, held to the same reserved list;
+* the rule itself (app/account_names.py) and its SQL mirror, the one
+  ``pdb_account_fold`` function in sql/schema.sql and migration 007: same
+  definition in both files, its character class rendered from the Python
+  list, and — run against the database — the same fold as Python over a
+  corpus and the same verdict for every BMP character placed in and around
+  '(none)' (QA of PR #133, B1: [[:space:]] missed NBSP and friends);
 * every writer refuses the name — the Manage page parser and cash writer, the
   shared lot writer, add_lot / sell_lot / set_cash / add_income through their
   argument parsers, the CSV importer per row and up front, and the income
@@ -59,8 +63,17 @@ REPO = Path(__file__).resolve().parents[2]
 MIGRATION = REPO / "sql" / "migrations" / "007_reserved_account_names.sql"
 SCHEMA = REPO / "sql" / "schema.sql"
 
-RESERVED_SPELLINGS = ["(none)", "(NONE)", "(None)", " (none) ", "( none )", "(\tnone\n)"]
-ALLOWED = ["IBKR", "none", "None", "(merged)", "Broker (none of them)", "(nonexistent)"]
+RESERVED_SPELLINGS = [
+    "(none)", "(NONE)", "(None)", " (none) ", "( none )", "(\tnone\n)",
+    # QA of PR #133, B1: whitespace PostgreSQL's [[:space:]] did not fold.
+    "(\u00a0none\u00a0)", "(\u2007none)", "(none\u202f)", "\u00a0(none)\u00a0",
+    "(\u3000NONE)", "(\u2028none)", "(no\u200bne)", "\ufeff(none)", "(n\u00adone)",
+    "(\x1cnone\x1f)", "(\x85none)",
+    # NFKC: fullwidth letters and brackets.
+    "\uff08\uff4e\uff4f\uff4e\uff45\uff09", "\uff08NONE\uff09",
+]
+ALLOWED = ["IBKR", "none", "None", "(merged)", "Broker (none of them)", "(nonexistent)",
+           "(nöne)", "(none)x", "(non e1)", "[none]", "(nоne)"]  # the last: Cyrillic о
 TABLES = ("lots", "income", "cash_snapshots")
 
 
@@ -95,31 +108,54 @@ def test_blank_is_no_account(blank):
     assert not account_names.is_reserved(blank)
 
 
-def _checks(text: str) -> dict[str, str]:
-    """{constraint name: CHECK expression} for the *_account_not_reserved ones."""
-    found = re.findall(
-        r"(\w+_account_not_reserved)\s+CHECK\s*\((.*?)\)\s*(?:;|,|\n\);|\n)", text, re.S
-    )
-    return {name: " ".join(expr.split()) for name, expr in found}
+CHECK_EXPR = "pdb_account_fold(account) <> '(none)'"
+
+
+def _fold_function(text: str) -> str:
+    m = re.search(r"CREATE OR REPLACE FUNCTION pdb_account_fold\(.*?\$fold\$;", text, re.S)
+    assert m, "pdb_account_fold is not defined"
+    return m.group(0)
+
+
+def test_one_fold_function_in_schema_and_migration_007():
+    in_schema = _fold_function(SCHEMA.read_text(encoding="utf-8"))
+    assert in_schema == _fold_function(MIGRATION.read_text(encoding="utf-8"))
+    for fragment in ("IMMUTABLE STRICT", "normalize(account_name, NFKC)", 'COLLATE "C"'):
+        assert fragment in in_schema
+
+
+def test_the_sql_character_class_is_rendered_from_the_python_list():
+    """The class the function removes is exactly account_names.IGNORED_RANGES —
+    explicit code points, not the locale-dependent [[:space:]]."""
+    fn = _fold_function(SCHEMA.read_text(encoding="utf-8"))
+    classes = re.findall(r"'(\[[^']*\])'", fn)
+    assert classes == [account_names.sql_char_class()]
+    assert "[[:space:]]" not in fn
+
+
+def test_python_ignores_every_unicode_white_space_character():
+    # The Unicode White_Space property (PropList.txt), and everything Python's
+    # own str.split() treats as whitespace.
+    white_space = {*range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B),
+                   0x2028, 0x2029, 0x202F, 0x205F, 0x3000}
+    split_ws = {c for c in range(0x110000) if chr(c).isspace() and len(f"a{chr(c)}b".split()) == 2}
+    assert {chr(c) for c in white_space | split_ws} <= account_names.IGNORED
 
 
 def test_schema_and_migration_007_carry_the_same_three_checks():
-    expected = {f"{t}_account_not_reserved" for t in TABLES}
-    in_schema = _checks(SCHEMA.read_text(encoding="utf-8"))
-    in_migration = _checks(MIGRATION.read_text(encoding="utf-8"))
-    assert set(in_schema) == expected
-    assert set(in_migration) == expected
-    assert in_schema == in_migration
+    schema = SCHEMA.read_text(encoding="utf-8")
+    found = dict(re.findall(r"(\w+_account_not_reserved)\s+CHECK \(([^\n]*?)\)\s*[,\n]", schema))
+    assert found == {f"{t}_account_not_reserved": CHECK_EXPR for t in TABLES}
+    migration = MIGRATION.read_text(encoding="utf-8")
+    assert "ARRAY['lots', 'income', 'cash_snapshots']" in migration
+    assert f"CHECK ({CHECK_EXPR.replace(chr(39), chr(39) * 2)})" in migration
+    # The preflight and the remediation predicates use the same function.
+    assert "[[:space:]]', '', 'g')) = '(none)'" not in migration
+    assert migration.count("WHERE pdb_account_fold(account) = '(none)'") >= 6
 
 
 def test_the_sql_rule_reserves_exactly_the_python_list():
-    exprs = set(_checks(SCHEMA.read_text(encoding="utf-8")).values())
-    assert len(exprs) == 1
-    (expr,) = exprs
-    # Folding = lower() of the text with every whitespace character removed,
-    # which is account_names.fold.
-    assert expr.startswith("lower(regexp_replace(account, '[[:space:]]', '', 'g'))")
-    reserved = set(re.findall(r"'(\([^']*\))'", expr))
+    reserved = set(re.findall(r"<> '(\([^']*\))'", CHECK_EXPR))
     assert reserved == set(account_names.RESERVED)
 
 
@@ -305,6 +341,51 @@ def test_the_database_refuses_the_label_as_an_account(conn, table, name):
     assert f"{table}_account_not_reserved" in str(exc.value)
 
 
+# Run both implementations of the fold over the same strings: the SQL function
+# the CHECKs use and account_names.fold the writers and the MCP readers use.
+_CORPUS = [
+    *RESERVED_SPELLINGS, *ALLOWED,
+    "\U0001d427\U0001d428\U0001d427\U0001d41e",           # mathematical bold 'none'
+    "(\U0001d427\U0001d428\U0001d427\U0001d41e)",
+    "(ÉNONE)", "(NONÉ)", "(İnone)", "(ǅ)", "Kelvin K", "(ß)", "(ﬁ)",
+    "(\u180enone)", "(\u2060none)", "(none\u200d)", "(\u205fnone)", "(\u1680none)",
+    "(\u200anone)", "(\u000bnone\u000c)", "( ( none ) )", "", " ", "\u00a0", "\u200b",
+    "IBKR\u00a0Roth", "Broker\u2007A", "é", "(noné)",
+]
+
+
+def _sql_folds(conn, names):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pdb_account_fold(n), pdb_account_fold(n) = '(none)' "
+            "FROM unnest(%s::text[]) WITH ORDINALITY AS t(n, i) ORDER BY i",
+            (list(names),),
+        )
+        rows = cur.fetchall()
+    conn.rollback()
+    return rows
+
+
+def test_sql_and_python_fold_identically_over_the_corpus(conn):
+    corpus = _CORPUS + [f"(N{ch}one)" for ch in sorted(account_names.IGNORED)]
+    for name, (sql_fold, sql_reserved) in zip(corpus, _sql_folds(conn, corpus)):
+        assert sql_fold == account_names.fold(name), repr(name)
+        assert sql_reserved == account_names.is_reserved(name), repr(name)
+
+
+def test_sql_and_python_agree_on_every_bmp_character_around_the_label(conn):
+    """Every Basic Multilingual Plane character (bar NUL and the surrogates,
+    which text cannot hold) inside, beside and around '(none)': the database
+    and Python must give the same reserved/not-reserved verdict for each."""
+    chars = [chr(c) for c in range(1, 0x10000) if not 0xD800 <= c <= 0xDFFF]
+    names = [s for ch in chars for s in (f"({ch}none)", f"(NONE{ch})", f"{ch}(none){ch}")]
+    sql = _sql_folds(conn, names)
+    mismatched = [n for n, (_f, r) in zip(names, sql) if r != account_names.is_reserved(n)]
+    assert mismatched == [], [ascii(n) for n in mismatched[:20]]
+    # Every ignored character, in all three positions, is reserved on both sides.
+    assert sum(r for _f, r in sql) >= 3 * len(account_names.IGNORED)
+
+
 @pytest.mark.parametrize("table", ["lots", "income"])
 def test_the_database_still_takes_no_account(conn, table):
     with conn.cursor() as cur:
@@ -368,7 +449,7 @@ def test_migration_007_refuses_while_a_row_uses_the_name_and_changes_nothing(scr
     assert "migration 007 refused, nothing changed" in msg
     assert "lots: 2 row(s) with account '(none)'" in msg
     assert "cash_snapshots: 1 row(s) with account ' (NONE) '" in msg
-    assert "income" not in msg.split("these rows use it:")[1].split(".")[0]
+    assert "income" not in msg.split("spacing counts):")[1].split(".")[0]
     assert _constraints(scratch) == set()
     with scratch.cursor() as cur:
         cur.execute("SELECT count(*) FROM lots WHERE account = '(none)'")
@@ -388,6 +469,79 @@ def test_migration_007_applies_once_the_rows_are_fixed_and_is_idempotent(scratch
     _migrate(scratch)  # a second run is a no-op
     with scratch.cursor() as cur, pytest.raises(pg_errors.CheckViolation):
         cur.execute("INSERT INTO income(account) VALUES ('(None)')")
+
+
+NBSP_NAME, FIGURE_NAME, NARROW_NAME = "(\u00a0none\u00a0)", "(\u2007NONE)", "(none\u202f)"
+
+
+def test_migration_007_finds_unicode_spaced_rows_and_refuses(scratch):
+    """QA of PR #133, B1: a '(none)' padded with no-break, figure or narrow
+    no-break spaces passed the [[:space:]] preflight, so 007 applied, validated
+    its CHECKs and left rows the readers treat as the label."""
+    with scratch.cursor() as cur:
+        cur.execute("INSERT INTO lots(account) VALUES (%s), (%s), (NULL)", (NBSP_NAME, NBSP_NAME))
+        cur.execute("INSERT INTO income(account) VALUES (%s)", (FIGURE_NAME,))
+        cur.execute("INSERT INTO cash_snapshots(account) VALUES (%s)", (NARROW_NAME,))
+    with pytest.raises(pg_errors.CheckViolation) as exc:
+        _migrate(scratch)
+    with scratch.cursor() as cur:
+        cur.execute("ROLLBACK")
+    msg = str(exc.value)
+    assert "lots: 2 row(s)" in msg and "U+00A0" in msg
+    assert "income: 1 row(s)" in msg and "U+2007" in msg
+    assert "cash_snapshots: 1 row(s)" in msg and "U+202F" in msg
+    assert _constraints(scratch) == set()
+    with scratch.cursor() as cur:
+        cur.execute("SELECT count(*) FROM lots WHERE account = %s", (NBSP_NAME,))
+        assert cur.fetchone()[0] == 2  # not rewritten
+
+
+def test_migration_007_applies_after_the_documented_rename(scratch):
+    with scratch.cursor() as cur:
+        cur.execute("INSERT INTO lots(account) VALUES (%s), (NULL)", (NBSP_NAME,))
+        cur.execute("INSERT INTO income(account) VALUES (%s)", (FIGURE_NAME,))
+        cur.execute("INSERT INTO cash_snapshots(account) VALUES (%s)", (NARROW_NAME,))
+    with pytest.raises(pg_errors.CheckViolation):
+        _migrate(scratch)
+    with scratch.cursor() as cur:
+        cur.execute("ROLLBACK")
+        # The file's own remediation UPDATEs, verbatim. They need the function,
+        # which schema.sql creates before any migration runs; the refused run
+        # rolled back its own copy, so create it here as schema.sql does.
+        cur.execute(_fold_function(SCHEMA.read_text(encoding="utf-8")))
+        for line in MIGRATION.read_text(encoding="utf-8").splitlines():
+            if line.startswith("--   UPDATE "):
+                cur.execute(line[len("--   "):])
+    _migrate(scratch)
+    assert _constraints(scratch) == {f"{t}_account_not_reserved" for t in TABLES}
+    with scratch.cursor() as cur:
+        cur.execute("SELECT count(*) FROM lots WHERE account = 'Old none'")
+        assert cur.fetchone()[0] == 1
+        for table, name in (("lots", NBSP_NAME), ("income", FIGURE_NAME),
+                            ("cash_snapshots", NARROW_NAME)):
+            with pytest.raises(pg_errors.CheckViolation):
+                cur.execute(
+                    pgsql.SQL("INSERT INTO {}(account) VALUES (%s)").format(pgsql.Identifier(table)),
+                    (name,),
+                )
+
+
+def test_migration_007_replaces_a_draft_constraint_that_used_space_classes(scratch):
+    """An earlier draft of 007 (never released) added the CHECKs with
+    [[:space:]]; re-applying the file replaces them rather than keeping them
+    because the names already exist."""
+    with scratch.cursor() as cur:
+        cur.execute("ALTER TABLE lots ADD CONSTRAINT lots_account_not_reserved CHECK "
+                    "(lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)')")
+    _migrate(scratch)
+    with scratch.cursor() as cur:
+        cur.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conname = 'lots_account_not_reserved' "
+                    "AND connamespace = current_schema()::regnamespace")
+        (definition,) = cur.fetchone()
+        assert "pdb_account_fold" in definition and "space" not in definition
+        with pytest.raises(pg_errors.CheckViolation):
+            cur.execute("INSERT INTO lots(account) VALUES (%s)", (NBSP_NAME,))
 
 
 def test_apply_schema_reports_a_failing_files_own_error(conn, tmp_path, monkeypatch):
