@@ -18,7 +18,7 @@ from app.mcp.deps import get_conn
 from app.mcp.services import common
 from app.mcp.services import positions as positions_service
 from app.mcp.services import prices as prices_service
-from app.mcp.services.cutoff import Cutoff, REPORTING_TZ
+from app.mcp.services.cutoff import Cutoff, tz_name
 
 # Import deps first (above): it puts app/ on sys.path so these top-level modules
 # resolve however the tests are invoked.
@@ -377,7 +377,7 @@ def _daily_price_frame(
                              date_trunc('day', ts AT TIME ZONE %s),
                              ts DESC
                     """,
-                    (REPORTING_TZ, REPORTING_TZ, symbols, since, since, as_of_ts, as_of_ts, REPORTING_TZ),
+                    (tz_name(), tz_name(), symbols, since, since, as_of_ts, as_of_ts, tz_name()),
                 )
                 cols = ["symbol", "day", "last_price"]
             else:

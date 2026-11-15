@@ -27,7 +27,8 @@ from typing import Any, Iterable, Sequence
 
 import reporting_tz
 
-LOCAL_TZ = reporting_tz.tzinfo()
+# Resolved on first use, not at import (audit R-5): see reporting_tz.lazy_tzinfo.
+LOCAL_TZ = reporting_tz.lazy_tzinfo()
 
 # Accepted by every function that takes a point in time.
 Point = date | datetime

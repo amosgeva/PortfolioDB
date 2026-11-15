@@ -16,18 +16,16 @@ from __future__ import annotations
 import math
 from datetime import date, datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 # Import deps first: it puts app/ on sys.path so the top-level `twr` module
 # (a sibling of fifo.py/portfolio.py) resolves regardless of how tests are run.
 from app.mcp.deps import get_conn
-from app.mcp.services.cutoff import Cutoff, REPORTING_TZ
+from app.mcp.services.cutoff import Cutoff, LOCAL_TZ, tz_name
 
 import benchmark
 import corporate_actions
 import twr
 
-LOCAL_TZ = ZoneInfo(REPORTING_TZ)
 _BASIS = "time_weighted_return"
 DEFAULT_BENCHMARK = benchmark.DEFAULT_BENCHMARK
 PERIODS = twr.PERIODS
@@ -373,7 +371,7 @@ def _price_by_day(cutoff: Cutoff | None = None) -> dict[date, dict[str, float]]:
                          date_trunc('day', ts AT TIME ZONE %s),
                          ts DESC
                 """,
-                (REPORTING_TZ, REPORTING_TZ, as_of_ts, as_of_ts, REPORTING_TZ),
+                (tz_name(), tz_name(), as_of_ts, as_of_ts, tz_name()),
             )
             out: dict[date, dict[str, float]] = {}
             for day, sym, price in cur.fetchall():

@@ -36,7 +36,7 @@ from typing import Any
 from app.mcp.deps import get_conn
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
-from app.mcp.services.cutoff import Cutoff, REPORTING_TZ
+from app.mcp.services.cutoff import Cutoff, tz_name
 
 import corporate_actions
 
@@ -727,7 +727,7 @@ def _suspected_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                          date_trunc('day', ts AT TIME ZONE %s),
                          ts DESC
                 """,
-                (REPORTING_TZ, REPORTING_TZ, cutoff.ts, REPORTING_TZ),
+                (tz_name(), tz_name(), cutoff.ts, tz_name()),
             )
             series: dict[str, list[tuple[date, float]]] = defaultdict(list)
             for sym, day, price in cur.fetchall():

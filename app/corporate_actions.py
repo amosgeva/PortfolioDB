@@ -44,7 +44,8 @@ from psycopg2 import errors as psycopg2_errors
 
 import reporting_tz
 
-LOCAL_TZ = reporting_tz.tzinfo()
+# Resolved on first use, not at import (audit R-5): see reporting_tz.lazy_tzinfo.
+LOCAL_TZ = reporting_tz.lazy_tzinfo()
 
 # Ratios a real split plausibly takes. Used only by the detection heuristic —
 # adjustment itself accepts any positive ratio.

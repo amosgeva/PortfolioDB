@@ -55,7 +55,7 @@ _settings._cache = {}
 _settings._cache_at = time.monotonic()
 _settings._db_ok = False
 
-TEST_TOKEN = "test-bearer-token-abcdef"
+TEST_TOKEN = "test-bearer-token-0123456789-abcdefghijklm"
 
 
 @pytest.fixture
@@ -227,6 +227,17 @@ def mcp_server(env_token, fake_db):
     schema_resource.register(mcp)
     conventions_resource.register(mcp)
     return mcp
+
+
+@pytest.fixture(autouse=True)
+def _reset_healthz_cache():
+    """/healthz caches its probe for a couple of seconds; tests that stub the
+    probe differently must not see each other's answer."""
+    from app.mcp import healthz
+
+    healthz.reset_cache()
+    yield
+    healthz.reset_cache()
 
 
 @pytest.fixture(autouse=True)

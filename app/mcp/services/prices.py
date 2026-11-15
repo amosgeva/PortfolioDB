@@ -13,7 +13,7 @@ from typing import Any
 
 from app.mcp.deps import get_conn
 from app.mcp.services import common
-from app.mcp.services.cutoff import REPORTING_TZ
+from app.mcp.services.cutoff import tz_name
 
 # Import deps first (above): it puts app/ on sys.path so these top-level modules
 # resolve however the tests are invoked.
@@ -172,7 +172,7 @@ def prev_day_eod_price_map(
                 FROM prev
                 WHERE rn = 1
                 """,
-                (as_of_ts, REPORTING_TZ, REPORTING_TZ),
+                (as_of_ts, tz_name(), tz_name()),
             )
             rows = cur.fetchall()
     return _adjusted_price_map(rows, actions)
@@ -230,7 +230,7 @@ def price_history(
                     ORDER BY date_trunc('day', ts AT TIME ZONE %s),
                              ts DESC
                     """,
-                    (REPORTING_TZ, REPORTING_TZ, sym, since, until + timedelta(days=1), REPORTING_TZ),
+                    (tz_name(), tz_name(), sym, since, until + timedelta(days=1), tz_name()),
                 )
             else:  # resample == "raw"
                 cur.execute(
@@ -470,7 +470,7 @@ def portfolio_value_history(
     if freq == "daily":
         # Keep the latest entry per reporting-timezone day.
         from zoneinfo import ZoneInfo
-        jer = ZoneInfo(REPORTING_TZ)
+        jer = ZoneInfo(tz_name())
         by_day: dict[date, dict[str, Any]] = {}
         for item in series:
             ts = datetime.fromisoformat(item["ts"])

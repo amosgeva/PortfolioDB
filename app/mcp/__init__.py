@@ -23,3 +23,23 @@ if str(_APP_DIR) not in sys.path:
     # shadows the installed `mcp` SDK that fastmcp imports (`mcp.types`) — which
     # surfaces as the misleading "FastMCP server support is not installed".
     sys.path.append(str(_APP_DIR))
+
+
+def _settings_connection():
+    """Settings are read through the MCP's own read-only pool.
+
+    The default settings source logs in with the application's read-write
+    password, which this process deliberately does not hold — so the reporting
+    timezone and the saved one-pager silently fell back to the environment
+    (audit X-4, Q-5). The read-only role is granted SELECT on `settings`
+    (sql/create_ro_role.sql). Imported lazily: registering costs nothing, and
+    nothing connects until the first setting is actually read.
+    """
+    from app.mcp import deps
+
+    return deps.get_conn()
+
+
+import settings as _settings  # noqa: E402  (needs app/ on sys.path, above)
+
+_settings.use_connection_source(_settings_connection)
