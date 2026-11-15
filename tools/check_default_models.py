@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+import http.client
 import json
-import urllib.error
-import urllib.request
+import ssl
+import urllib.parse
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -93,11 +94,30 @@ def offline_problems(defaults: dict, review: dict, today: date) -> list[str]:
 # ── public listings ──────────────────────────────────────────────────────────
 
 
+def _https(method: str, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
+    """One HTTPS request. http.client rather than urlopen: the scheme is fixed
+    by construction (no file:// or custom handler can be reached), redirects
+    are not followed, and TLS is verified with the default context."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        raise ValueError(f"refusing a non-https listing URL: {url!r}")
+    conn = http.client.HTTPSConnection(parts.hostname, parts.port or 443, timeout=30,
+                                       context=ssl.create_default_context())
+    try:
+        path = parts.path + (f"?{parts.query}" if parts.query else "")
+        conn.request(method, path, headers={"User-Agent": _UA, **headers})
+        resp = conn.getresponse()
+        return resp.status, resp.read()
+    finally:
+        conn.close()
+
+
 def fetch_openrouter() -> dict[str, dict]:
     """OpenRouter's model list, keyed by id. Public; no key."""
-    req = urllib.request.Request(OPENROUTER_MODELS_URL, headers={"User-Agent": _UA})
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (fixed https URL)
-        data = json.load(resp)
+    status, body = _https("GET", OPENROUTER_MODELS_URL, {"Accept": "application/json"})
+    if status != 200:
+        raise OSError(f"{OPENROUTER_MODELS_URL} answered HTTP {status}")
+    data = json.loads(body)
     return {m["id"]: m for m in data.get("data", []) if isinstance(m, dict) and "id" in m}
 
 
@@ -105,17 +125,12 @@ def fetch_ollama(model: str) -> bool:
     """Whether the Ollama registry has a manifest for `name[:tag]`. Public; no key."""
     name, _, tag = model.partition(":")
     url = OLLAMA_MANIFEST_URL.format(name=name, tag=tag or "latest")
-    req = urllib.request.Request(
-        url, method="HEAD",
-        headers={"User-Agent": _UA, "Accept": "application/vnd.docker.distribution.manifest.v2+json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (fixed https host)
-            return resp.status == 200
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return False
-        raise
+    status, _ = _https("HEAD", url, {"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
+    if status == 404:
+        return False
+    if status != 200:
+        raise OSError(f"{url} answered HTTP {status}")
+    return True
 
 
 def online_problems(

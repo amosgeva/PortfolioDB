@@ -104,9 +104,10 @@ by design.
   packages pip vendors) removed. The `dev` stage, which keeps pip, exists only
   for `make lock` and `make test`. CI fails if pip can be imported, run or
   restored in the runtime image.
-- **The front-end toolchain** (esbuild, ESLint, jsdom — build and test tools
-  that never ship) gets weekly Dependabot version updates, minor and patch
-  grouped, and the front-end checks gate publishing as well as pull requests.
+- **The front-end toolchain** (esbuild, ESLint, jsdom — build and test tools,
+  not part of the image) gets weekly Dependabot version updates, minor and
+  patch grouped, and the front-end checks gate publishing as well as pull
+  requests.
 - **Default LLM model IDs** are re-checked on a schedule: each carries a
   review-by date in `app/llm.py`, and the weekly scan also checks them against
   public model listings for retirement (docs/llm-providers.md).
