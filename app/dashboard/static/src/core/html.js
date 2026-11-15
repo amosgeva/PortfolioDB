@@ -176,8 +176,13 @@ function classify(strings) {
           }
           break;
         case 'rcdata':
+          // HTML leaves RCDATA only on an end tag whose name is exactly the
+          // element's, followed by whitespace, '/' or '>': `</titlex>` is text.
           if (c === '<' && s.slice(j + 1, j + 2 + rc.length).toLowerCase() === '/' + rc) {
-            endTag = true; name = ''; j += 1; st = 'tagname';
+            const k = j + 2 + rc.length;
+            if (k >= s.length) fail(i < n - 1 ? 'a slot may not complete an end tag' : 'a template must end outside <' + rc + '>');
+            const d = item(s, k);
+            if (isSpace(d) || d === '/' || d === '>') { endTag = true; name = ''; j += 1; st = 'tagname'; }
           }
           break;
         case 'tagname':
@@ -191,7 +196,9 @@ function classify(strings) {
           break;
         case 'tag':
           if (c === '>') closeTag();
-          else if (c === '/') { if (item(s, j + 1) === '>') { st = 'text'; j++; } }
+          // A self-closing flag does not close a non-void element: `<title/>`
+          // still opens RCDATA, so `/>` is treated exactly like `>`.
+          else if (c === '/') { if (item(s, j + 1) === '>') { j++; closeTag(); } }
           else if (!isSpace(c)) { st = 'attrname'; attr = c.toLowerCase(); }
           break;
         case 'attrname':

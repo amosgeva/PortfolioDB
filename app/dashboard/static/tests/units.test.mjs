@@ -257,3 +257,30 @@ test('literal-text policy also decodes character references (QA round 2 java&#11
     assert.throws(() => html(forge(t)), /not allowed/, t);
   }
 });
+
+test('QA round 4: <title> RCDATA ends only as HTML ends it', async () => {
+  // A near-miss end tag is title text in HTML, so the slot after it is still
+  // RCDATA and must refuse markup (6b646fc accepted it as a text slot).
+  assert.throws(() => html`<title>x</titlex>${html`<b>y</b>`}</title>`, /only text may be interpolated into <title>/);
+  assert.throws(() => html`<title>x</title-${html`<b>y</b>`}</title>`, /only text may be interpolated into <title>/);
+  // A self-closing flag does not close <title>: RCDATA starts all the same.
+  assert.throws(() => html`<title/>${html`<b>y</b>`}</title>`, /only text may be interpolated into <title>/);
+  assert.throws(() => html`<title />${html`<b>y</b>`}</title>`, /only text may be interpolated into <title>/);
+  assert.throws(() => html`<svg><title data-a="1"/>${html`<b>y</b>`}</title></svg>`, /only text may be interpolated into <title>/);
+  // ...and a template that self-closes <title> and stops has not left it.
+  assert.throws(() => html`<title/>`, /must end outside/);
+  // An end tag completed by a slot is refused.
+  assert.throws(() => html`<title>x</title${'>'}`, /may not complete an end tag/);
+  // Genuine end tags still close it, in every legal spelling.
+  for (const t of [html`<title>a</title>${html`<b>z</b>`}`, html`<title>a</TITLE>${html`<b>z</b>`}`,
+    html`<title>a</title >${html`<b>z</b>`}`, html`<title>a</title/>${html`<b>z</b>`}`]) {
+    assert.match(t.s, /<b>z<\/b>$/);
+  }
+  // In a real DOM: text in the near-miss case stays inside the title.
+  const { JSDOM } = await import('jsdom');
+  const { document } = new JSDOM('<svg id="o"></svg>').window;
+  const o = document.getElementById('o');
+  setHTML(o, html`<title>x</titlex>${'<b>y</b>'}</title>`);
+  assert.equal(o.querySelectorAll('b').length, 0);
+  assert.equal(o.querySelector('title').textContent.includes('<b>y</b>'), true);
+});

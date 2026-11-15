@@ -668,10 +668,15 @@
             break;
           case "rcdata":
             if (c === "<" && s.slice(j + 1, j + 2 + rc.length).toLowerCase() === "/" + rc) {
-              endTag = true;
-              name = "";
-              j += 1;
-              st = "tagname";
+              const k = j + 2 + rc.length;
+              if (k >= s.length) fail(i < n - 1 ? "a slot may not complete an end tag" : "a template must end outside <" + rc + ">");
+              const d = item(s, k);
+              if (isSpace(d) || d === "/" || d === ">") {
+                endTag = true;
+                name = "";
+                j += 1;
+                st = "tagname";
+              }
             }
             break;
           case "tagname":
@@ -694,8 +699,8 @@
             if (c === ">") closeTag();
             else if (c === "/") {
               if (item(s, j + 1) === ">") {
-                st = "text";
                 j++;
+                closeTag();
               }
             } else if (!isSpace(c)) {
               st = "attrname";
