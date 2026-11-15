@@ -189,11 +189,31 @@ def sell_warnings(conn, lot: LotInput) -> list[str]:
                 f"holds {_plain(held_none)} with no account as of {lot.trade_date.isoformat()}. "
                 "Shorts are not supported: the excess is dropped and realized P&L understated."
             )
-        return warnings
+        return warnings + _stranded_by_sale(conn, lot)
     msg = oversell.oversell_warning(conn, lot.symbol, lot.account, lot.trade_date, lot.quantity)
     if msg:
         warnings.append(msg.removeprefix("WARNING: "))
+    warnings += _stranded_by_sale(conn, lot)
     return warnings
+
+
+def _stranded_by_sale(conn, lot: LotInput) -> list[str]:
+    """A sale that closes the last shares of an unwatched symbol stops its
+    price collection, and with it every armed alert on it."""
+    watched = fetch_all(conn, "SELECT watchlist FROM instruments WHERE symbol = %s", (lot.symbol,))
+    if watched and watched[0]["watchlist"]:
+        return []
+    held = net_quantity(conn, lot.symbol)
+    if held <= 0 or held - lot.quantity > 0:
+        return []
+    n = armed_alert_count(conn, lot.symbol)
+    if not n:
+        return []
+    return [
+        f"This sale closes the position in {lot.symbol}, which is not on the watchlist, so its "
+        f"price stops being collected and {n} armed alert{'s' if n != 1 else ''} on it can no "
+        "longer fire. Add it to the watchlist to keep them working."
+    ]
 
 
 def find_lot(conn, lot_id: int) -> dict | None:
@@ -255,11 +275,54 @@ def record_cash(conn, account: str, cash: Decimal, note: str | None) -> None:
 # ── price alerts ────────────────────────────────────────────────────────────
 
 
+# The collector's own rule for which symbols it fetches
+# (snapshot_prices.py, the holdings run): a positive net quantity across all
+# accounts, or the watchlist flag. Net quantity is the raw signed sum there,
+# and so here — a split never changes its sign. Keep the two in step until
+# the net-quantity readers share one helper (audit R-1).
+_NET_QTY_SQL = """
+    SELECT COALESCE(SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END), 0) AS qty
+    FROM lots WHERE symbol = %s
+"""
+
+
+def net_quantity(conn, symbol: str) -> Decimal:
+    return Decimal(str(fetch_all(conn, _NET_QTY_SQL, (symbol,))[0]["qty"]))
+
+
+def is_collected(conn, symbol: str) -> bool:
+    """Whether the price collector fetches ``symbol``: held (net quantity
+    above zero) or watchlisted. An alert on anything else can never fire."""
+    row = fetch_all(conn, "SELECT watchlist FROM instruments WHERE symbol = %s", (symbol,))
+    if not row:
+        return False
+    return bool(row[0]["watchlist"]) or net_quantity(conn, symbol) > 0
+
+
+def armed_alert_count(conn, symbol: str) -> int:
+    return int(fetch_all(
+        conn, "SELECT count(*) AS n FROM price_alerts WHERE symbol = %s AND active", (symbol,)
+    )[0]["n"])
+
+
+def alerts_stranded_by_unwatch(conn, symbol: str) -> int:
+    """Armed alerts that would stop being checked if ``symbol`` left the
+    watchlist: nonzero only when the watchlist is its last reason to be
+    collected."""
+    if net_quantity(conn, symbol) > 0:
+        return 0
+    return armed_alert_count(conn, symbol)
+
+
 def add_alert(conn, symbol: str, direction: str, level: Decimal, note: str | None,
               also_watch: bool = False) -> int:
-    """Arm a persisted price alert. The symbol must be one the ledger knows —
-    an alert on a symbol nobody collects could never fire — unless
-    ``also_watch`` adds it to the watchlist in the same transaction."""
+    """Arm a persisted price alert on a symbol the collector fetches.
+
+    Being in ``instruments`` is not enough: a sold holding, a symbol taken off
+    the watchlist, or an instrument-only row is not collected, and an alert on
+    it would sit "armed" forever. ``also_watch`` puts the symbol on the
+    watchlist in the same transaction, which makes it collected.
+    """
     if direction not in ("above", "below"):
         raise ValueError(f"Direction must be above or below, got {direction!r}.")
     known = fetch_all(conn, "SELECT watchlist FROM instruments WHERE symbol = %s", (symbol,))
@@ -269,6 +332,12 @@ def add_alert(conn, symbol: str, direction: str, level: Decimal, note: str | Non
         raise ValueError(
             f"{symbol} is not in the ledger, so no price is collected for it. Tick "
             "'also add to the watchlist' to start collecting it."
+        )
+    elif not is_collected(conn, symbol):
+        raise ValueError(
+            f"{symbol} is in the ledger but its price is not collected: it is neither held "
+            "nor on the watchlist, so this alert could never fire. Tick 'also add to the "
+            "watchlist' to start collecting it."
         )
     rows = fetch_all(
         conn,
@@ -283,11 +352,22 @@ def deactivate_alert(conn, alert_id: int) -> bool:
 
 
 def list_alerts(conn) -> list[dict]:
+    """Every alert, armed first, each with whether its symbol is collected
+    (the same rule as is_collected), so the page can say when an armed alert
+    cannot fire."""
     return fetch_all(
         conn,
         """
-        SELECT id, symbol, direction, level, note, active, created_at
-        FROM price_alerts ORDER BY active DESC, created_at DESC, id DESC
+        WITH pos AS (
+          SELECT symbol, SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END) AS qty
+          FROM lots GROUP BY symbol
+        )
+        SELECT a.id, a.symbol, a.direction, a.level, a.note, a.active, a.created_at,
+               (COALESCE(p.qty, 0) > 0 OR COALESCE(i.watchlist, FALSE)) AS collected
+        FROM price_alerts a
+        LEFT JOIN instruments i ON i.symbol = a.symbol
+        LEFT JOIN pos p ON p.symbol = a.symbol
+        ORDER BY a.active DESC, a.created_at DESC, a.id DESC
         """,
     )
 

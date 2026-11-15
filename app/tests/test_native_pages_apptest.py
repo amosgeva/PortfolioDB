@@ -9,16 +9,22 @@ What it pins, by audit finding:
 
 * A-1   every write and every model call needs the dashboard password; unset
         means read-only; wrong passwords are throttled; the password is never
-        echoed; a forced click on a disabled control still writes nothing.
+        echoed; a forced click on a disabled control still writes nothing;
+        the news-enrichment fetch is gated while the plain refresh is not.
 * A-9   a deletion needs a reason and leaves the full row in lot_deletions.
 * N-2   a duplicate fill says "already recorded — not added", never "Added".
 * N-3   chat shows the newest messages, in order.
-* N-5   rail, tab-bar and iframe navigation are reruns in one session.
+* N-5   rail, tab-bar and iframe navigation are reruns in one session, and
+        typed drafts (lot, watchlist, cash, alert, Settings, one-pager)
+        come back after a native or iframe round trip.
 * N-6   what was typed is what is stored (Decimal); Settings is one transaction.
 * N-7   an oversell or a no-account sale is questioned before it is recorded.
 * N-10  the brief and the news fetch run off the page's thread, throttled
-        process-wide.
-* U-1   price alerts are persisted, validated and deactivated, never deleted.
+        process-wide, and land on the page that asked (success or failure)
+        without another click.
+* U-1   price alerts are persisted, validated and deactivated, never deleted,
+        and only armed on a symbol the collector fetches; removing the last
+        reason to collect an armed symbol asks first.
 
 Needs the database, like the other SQL modules: skipped without one, a
 failure when PORTFOLIODB_TESTS_REQUIRE_DB is set. Writes only rows for the
@@ -592,42 +598,254 @@ def test_chat_needs_the_password_and_saves_both_sides(db, password, monkeypatch)
     assert rows == [("user", "how concentrated am I?"), ("assistant", "Hi there")]
 
 
-# ── N-10: the news fetch does not block, and is throttled process-wide ────
+# ── N-10 / A-1: the news fetch — gated, non-blocking, delivered ───────────
+
+HEADLINE_URL = "https://example.invalid/w5-headline"
 
 
-def test_news_refresh_runs_in_the_background_once_per_window(db, monkeypatch):
+@pytest.fixture
+def stale_news(db):
     if not _q(db, "SELECT to_regclass('fd_news') IS NOT NULL")[0][0]:
         pytest.fail("fd_news is missing: apply sql/schema_fd.sql")
+    _q(db, "DELETE FROM fd_news WHERE url = %s", (HEADLINE_URL,))
     if _q(db, "SELECT count(*) FROM fd_news WHERE fetched_at > now() - interval '4 hours'")[0][0]:
         pytest.skip("news is fresh in this database, so no fetch would start")
-    release = threading.Event()
-    calls = []
+    yield
+    _q(db, "DELETE FROM fd_news WHERE url = %s", (HEADLINE_URL,))
 
-    def fake_run(*args, **kwargs):
-        calls.append(args)
-        release.wait(20)
+
+class FakeEnrichment:
+    """Stands in for `fd_weekly_enrichment.py` behind subprocess.run: blocks
+    until released, then (on success) writes one headline the way the real
+    script would, so a redraw that picks it up is visible in the page."""
+
+    def __init__(self, db, *, ok=True):
+        self.db, self.ok = db, ok
+        self.release = threading.Event()
+        self.calls = []
+
+    def __call__(self, args, *a, **kw):
+        self.calls.append(args)
+        self.release.wait(20)
+        if not self.ok:
+            return subprocess.CompletedProcess(args, 1, "", "vendor said no\nmore detail")
+        sym = _q(self.db, "SELECT symbol FROM lots GROUP BY symbol "
+                          "HAVING sum(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) > 0 "
+                          "ORDER BY symbol LIMIT 1")[0][0]
+        _q(self.db, "INSERT INTO fd_news(symbol, url, published_at, source, title, raw) "
+                    "VALUES (%s, %s, now(), 'W5', 'W5 fresh headline', '{}'::jsonb)", (sym, HEADLINE_URL))
         return subprocess.CompletedProcess(args, 0, "ok", "")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+
+def _portfolio_unlocked() -> AppTest:
+    at = _unlocked("manage")
+    return _ok(at.button(key="m2_nav_portfolio").click().run())
+
+
+def _srcdoc(at: AppTest) -> str:
+    return "\n".join(f.proto.srcdoc for f in at.get("iframe"))
+
+
+def test_news_fetch_is_not_started_without_a_password(db, stale_news, monkeypatch):
+    fake = FakeEnrichment(db)
+    monkeypatch.setattr(subprocess, "run", fake)
     at = _ok(_run("portfolio"))
+    at = _ok(at.button(key="bg_refresh").click().run())
+    assert fake.calls == [] and not native_jobs.status("news").running
+    assert any("headlines need the dashboard password" in t.value for t in at.toast)
+    assert at.get("iframe"), "the ordinary refresh still redraws the page"
+
+
+def test_news_fetch_is_not_started_while_locked(db, stale_news, password, monkeypatch):
+    fake = FakeEnrichment(db)
+    monkeypatch.setattr(subprocess, "run", fake)
+    at = _ok(_run("portfolio"))
+    at = _ok(at.button(key="bg_refresh").click().run())
+    assert fake.calls == [] and not native_jobs.status("news").running
+    assert any("headlines need the dashboard password" in t.value for t in at.toast)
+
+
+def test_news_fetch_runs_in_the_background_and_lands_without_another_click(
+        db, stale_news, password, monkeypatch):
+    import streamlit as st
+
+    fake = FakeEnrichment(db)
+    monkeypatch.setattr(subprocess, "run", fake)
+    polls = []
+    real_fragment = st.fragment
+
+    def spy_fragment(func=None, *, run_every=None, **kw):
+        polls.append(run_every)
+        return real_fragment(func, run_every=run_every, **kw)
+
+    monkeypatch.setattr(st, "fragment", spy_fragment)
+
+    at = _portfolio_unlocked()
     t0 = time.monotonic()
-    _ok(at.button(key="bg_refresh").click().run())
+    at = _ok(at.button(key="bg_refresh").click().run())
     assert time.monotonic() - t0 < 15, "the refresh waited for the fetch"
-    assert native_jobs.status("news").running
+    assert native_jobs.status("news").running and len(fake.calls) == 1
+    # The page that asked is polling the job (a timed fragment rerun).
+    assert polls and polls[-1] == pytest.approx(2.0)
+    assert "W5 fresh headline" not in _srcdoc(at)
 
     # Another browser session asks too: nothing new starts.
-    other = _ok(_run("portfolio"))
+    other = _portfolio_unlocked()
     _ok(other.button(key="bg_refresh").click().run())
-    release.set()
+    assert len(fake.calls) == 1
+
+    fake.release.set()
     assert native_jobs.wait("news", 20).state == "done"
-    _ok(other.button(key="bg_refresh").click().run())  # inside the 20-minute window
-    assert len(calls) == 1
+    # The fragment's timer fires: a plain rerun of the app, no refresh click.
+    at = _ok(at.run())
+    assert any(t.value == "Headlines updated." for t in at.toast)
+    assert "W5 fresh headline" in _srcdoc(at), "the new headline was not drawn"
+    assert len(fake.calls) == 1
+
+
+def test_news_fetch_failure_is_reported_to_the_page_that_asked(db, stale_news, password, monkeypatch):
+    fake = FakeEnrichment(db, ok=False)
+    monkeypatch.setattr(subprocess, "run", fake)
+    at = _portfolio_unlocked()
+    at = _ok(at.button(key="bg_refresh").click().run())
+    fake.release.set()
+    assert native_jobs.wait("news", 20).state == "failed"
+    at = _ok(at.run())
+    assert any(t.value == "News refresh failed: vendor said no" for t in at.toast)
+    at = _ok(at.run())
+    assert not at.toast, "the failure is reported once, not on every rerun"
+
+
+# ── N-5: drafts survive navigation ────────────────────────────────────────
+
+
+def test_typed_drafts_survive_native_and_iframe_round_trips(db, password):
+    at = _unlocked("manage")
+    at.text_input(key="m2_lot_sym").input("DRAFT")
+    at.text_input(key="m2_lot_price").input("12.5")
+    at.text_input(key="m2_lot_notes").input("half typed")
+    at.selectbox(key="m2_lot_side").select("SELL")
+    at.text_input(key="m2_wl_sym").input("WLDRAFT")
+    at.text_input(key="m2_cash_amt").input("777.70")
+    at.text_input(key="m2_alert_sym").input("ALDRAFT")
+    at.text_input(key="m2_alert_level").input("42")
+    at.text_input(key="m2_set_model").input("draft-model")
+    # The click that leaves carries the typed values (no form holds them back).
+    at = _ok(at.button(key="m2_nav_advisor").click().run())
+    at.text_area(key="m2_phil_text").input("draft rules, not saved")
+    at = _ok(at.button(key="m2_nav_portfolio").click().run())   # the iframe half
+    assert at.get("iframe")
+    at = _ok(at.button(key="pdb_nav_manage").click().run())     # back via the iframe rail
+    assert at.text_input(key="m2_lot_sym").value == "DRAFT"
+    assert at.text_input(key="m2_lot_price").value == "12.5"
+    assert at.text_input(key="m2_lot_notes").value == "half typed"
+    assert at.selectbox(key="m2_lot_side").value == "SELL"
+    assert at.text_input(key="m2_wl_sym").value == "WLDRAFT"
+    assert at.text_input(key="m2_cash_amt").value == "777.70"
+    assert at.text_input(key="m2_alert_sym").value == "ALDRAFT"
+    assert at.text_input(key="m2_alert_level").value == "42"
+    assert at.text_input(key="m2_set_model").value == "draft-model"
+    at = _ok(at.button(key="m2_tab_advisor").click().run())
+    assert at.text_area(key="m2_phil_text").value == "draft rules, not saved"
+    # Drafts are drafts: nothing was written on the way.
+    assert _lots(db, "DRAFT") == []
+    assert _q(db, "SELECT count(*) FROM settings WHERE value IN ('draft-model', 'draft rules, not saved')") == [(0,)]
+
+
+def test_a_server_held_draft_survives_advisor_and_back(db, password):
+    # The QA reproduction: a value already in session state, then advisor → manage.
+    at = _unlocked("manage")
+    at.session_state["m2_lot_sym"] = "DRAFT"
+    at = _ok(at.run())
+    assert at.text_input(key="m2_lot_sym").value == "DRAFT"
+    at = _ok(at.button(key="m2_nav_advisor").click().run())
+    at = _ok(at.button(key="m2_nav_manage").click().run())
+    assert at.text_input(key="m2_lot_sym").value == "DRAFT"
+
+
+def test_the_password_is_not_kept_as_a_draft(db, password):
+    at = _ok(_run("manage"))
+    at.text_input(key="m2_unlock_pw").input("not-the-password")
+    at = _ok(at.button(key="m2_nav_advisor").click().run())
+    at = _ok(at.button(key="m2_nav_manage").click().run())
+    assert at.text_input(key="m2_unlock_pw").value in ("", None)
+
+
+# ── U-1: an alert only on a symbol the collector fetches ──────────────────
+
+
+def test_alert_on_a_registered_but_uncollected_symbol_is_refused(db, password):
+    # In instruments, never held, not watchlisted: the collector skips it.
+    _q(db, "INSERT INTO instruments(symbol, watchlist) VALUES (%s, FALSE)", (SYM2,))
+    at = _unlocked("manage")
+    at.text_input(key="m2_alert_sym").input(SYM2)
+    at.text_input(key="m2_alert_level").input("100")
+    at = _ok(at.button(key="m2_alert_submit").click().run())
+    assert any("not collected" in e.value for e in at.error), [e.value for e in at.error]
+    assert _q(db, "SELECT count(*) FROM price_alerts WHERE symbol = %s", (SYM2,)) == [(0,)]
+
+    at.checkbox(key="m2_alert_watch").check()
+    at = _ok(at.button(key="m2_alert_submit").click().run())
+    assert _q(db, "SELECT count(*) FROM price_alerts WHERE symbol = %s AND active", (SYM2,)) == [(1,)]
+    assert _q(db, "SELECT watchlist FROM instruments WHERE symbol = %s", (SYM2,)) == [(True,)]
+
+
+def test_alert_on_a_sold_out_symbol_is_refused_and_on_a_held_one_accepted(db, password):
+    _seed_lot(db, qty="5")
+    at = _unlocked("manage")
+    at.text_input(key="m2_alert_sym").input(SYM)
+    at.text_input(key="m2_alert_level").input("100")
+    at = _ok(at.button(key="m2_alert_submit").click().run())
+    assert _q(db, "SELECT count(*) FROM price_alerts WHERE symbol = %s", (SYM,)) == [(1,)], [e.value for e in at.error]
+
+    _seed_lot(db, side="SELL", qty="5", trade_date=date(2026, 1, 6))  # sold out, never watched
+    _q(db, "UPDATE price_alerts SET active = FALSE WHERE symbol = %s", (SYM,))
+    at = _ok(at.button(key="m2_alert_submit").click().run())
+    assert any("not collected" in e.value for e in at.error)
+    assert _q(db, "SELECT count(*) FROM price_alerts WHERE symbol = %s AND active", (SYM,)) == [(0,)]
+
+
+def test_removing_the_last_reason_to_collect_an_armed_symbol_asks_first(db, password):
+    _q(db, "INSERT INTO instruments(symbol, watchlist) VALUES (%s, TRUE)", (SYM2,))
+    _q(db, "INSERT INTO price_alerts(symbol, direction, level) VALUES (%s, 'above', 10)", (SYM2,))
+    at = _unlocked("manage")
+    at = _ok(at.button(key=f"m2_wl_rm_{SYM2}").click().run())
+    assert any("armed alert" in w.value for w in at.warning)
+    assert _q(db, "SELECT watchlist FROM instruments WHERE symbol = %s", (SYM2,)) == [(True,)]
+
+    at = _ok(at.button(key="m2_unwatch_cancel").click().run())
+    assert _q(db, "SELECT watchlist FROM instruments WHERE symbol = %s", (SYM2,)) == [(True,)]
+
+    at = _ok(at.button(key=f"m2_wl_rm_{SYM2}").click().run())
+    at = _ok(at.button(key="m2_unwatch_confirm").click().run())
+    assert _q(db, "SELECT watchlist FROM instruments WHERE symbol = %s", (SYM2,)) == [(False,)]
+    # The armed alert now says it cannot fire.
+    assert "not collected" in _html(at)
+
+
+def test_selling_the_last_shares_of_an_unwatched_armed_symbol_asks_first(db, password):
+    _seed_lot(db, qty="5")
+    _q(db, "INSERT INTO price_alerts(symbol, direction, level) VALUES (%s, 'below', 8)", (SYM,))
+    at = _unlocked("manage")
+    at = _fill_lot(at, side="SELL", qty="5", price="12", new_account=ACCT)
+    assert any("1 armed alert" in m.value for m in at.markdown)
+    assert [r[0] for r in _lots(db)] == ["BUY"]
+
+
+def test_removing_a_watch_with_no_armed_alerts_needs_no_confirmation(db, password):
+    _q(db, "INSERT INTO instruments(symbol, watchlist) VALUES (%s, TRUE)", (SYM2,))
+    at = _unlocked("manage")
+    at = _ok(at.button(key=f"m2_wl_rm_{SYM2}").click().run())
+    assert _q(db, "SELECT watchlist FROM instruments WHERE symbol = %s", (SYM2,)) == [(False,)]
 
 
 # ── Data Health still renders under the new shell ─────────────────────────
 
 
 def test_data_health_renders_with_the_rail_and_no_error(db):
+    from test_dashboard_apptest import require_ro_role
+
+    require_ro_role()
     at = _ok(_run("health"))
     assert not at.error, [e.value for e in at.error]
     assert at.button(key="m2_nav_health")

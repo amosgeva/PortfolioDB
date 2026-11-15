@@ -235,4 +235,33 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Persisted price alerts (added in migrations/006_price_alerts_and_lot_audit.sql).
+-- Written from Manage → Alerts; deactivated, never deleted, from the page.
+CREATE TABLE IF NOT EXISTS price_alerts (
+  id          BIGSERIAL PRIMARY KEY,
+  symbol      TEXT NOT NULL REFERENCES instruments(symbol),
+  direction   TEXT NOT NULL CHECK (direction IN ('above', 'below')),
+  level       NUMERIC(20,8) NOT NULL CHECK (level > 0 AND level <> 'NaN'),
+  note        TEXT,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS price_alerts_active_symbol_idx
+  ON price_alerts (symbol) WHERE active;
+
+-- Audit trail for lots deleted from the dashboard (added in migration 006):
+-- the deleted row in full, when, and why — written in the same statement as
+-- the DELETE (app/native_writes.py::delete_lot).
+CREATE TABLE IF NOT EXISTS lot_deletions (
+  id          BIGSERIAL PRIMARY KEY,
+  lot_id      BIGINT NOT NULL,
+  lot         JSONB NOT NULL,
+  reason      TEXT NOT NULL CHECK (btrim(reason) <> ''),
+  deleted_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS lot_deletions_deleted_at_idx
+  ON lot_deletions (deleted_at DESC);
+
 COMMIT;

@@ -19,9 +19,10 @@ needs a schema step says so under **Upgrading**.
 **Upgrading**
 
 - **The dashboard's write pages now need a password.** Set
-  `PORTFOLIODB_DASHBOARD_PASSWORD` in the repo-root `.env` (`make init` /
-  `pdb.ps1 init` generate one for a new install; for an existing one, add a
-  long random string by hand) and restart the dashboard. Until it is set,
+  `PORTFOLIODB_DASHBOARD_PASSWORD` to a long random string in the repo-root
+  `.env` and restart the dashboard. An existing `.env` is never rewritten, so
+  an upgrade needs the line added by hand; from this release, `make init` /
+  `pdb.ps1 init` write one for a new install. Until it is set,
   Manage, Advisor and Settings stay visible but **read-only**: nothing can be
   recorded, deleted, saved or sent to your model from the browser. The
   read-only views (Portfolio … History, Data Health) are unchanged and need no
@@ -44,7 +45,10 @@ needs a schema step says so under **Upgrading**.
   throttled per client and process-wide (30 s after five, doubling to 15
   minutes); the password is never shown, logged or kept in the session. Each
   write re-checks at the moment it writes, so a disabled button is not the
-  control. Unset means read-only, never open.
+  control. Unset means read-only, never open. The topbar refresh still
+  redraws prices for everyone, but fetching new headlines (which runs the
+  Financial Datasets enrichment, writes to the database and spends that key)
+  now needs an unlocked session too.
 - Deleting a lot needs a reason and records the full row, the time and the
   reason in `lot_deletions`, in the same statement as the delete (A-9). The
   Manage page shows the log.
@@ -75,19 +79,27 @@ needs a schema step says so under **Upgrading**.
 ### Changed
 
 - **Price alerts are persisted.** Manage → Alerts creates them (symbol
-  validated, level a finite positive number, optionally adding the symbol to
-  the watchlist) and deactivates them; they are never deleted from the page
-  (U-1, the management half).
+  validated, level a finite positive number) and deactivates them; they are
+  never deleted from the page (U-1, the management half). An alert is only
+  accepted on a symbol the collector actually fetches — held, or on the
+  watchlist — or with "also add to the watchlist" ticked; an armed alert whose
+  symbol stops being collected is shown as "not collected". Removing the
+  watchlist entry, or selling the last shares, of a symbol with armed alerts
+  asks first.
 - **Phone and tablet navigation.** Below 980 px the native pages have a
   bottom tab bar like the custom front end's (N-1).
 - **No page reload between the two halves.** The rail, the tab bar and the
   custom front end's Manage / Advisor / Data Health entries now change view
-  inside the same Streamlit session, so an unlock, a half-filled form and the
-  warm caches survive the move; the address bar still updates (N-5).
-- Generating a brief and the topbar's news refresh run in the background with
-  a status line, so the page stays usable; both are throttled for the whole
-  process (one brief a minute, one news fetch per 20 minutes), not per
-  browser tab (N-10).
+  inside the same Streamlit session, so an unlock and the warm caches survive
+  the move, and so do drafts: what you typed into the lot, watchlist, cash,
+  alert and Settings fields or the one-pager comes back when you return. The
+  address bar still updates (N-5).
+- Generating a brief and the topbar's news refresh run in the background, so
+  the page stays usable; when either lands, the page redraws by itself and
+  says whether it worked. Both are throttled for the whole process (one brief
+  a minute, one news fetch per 20 minutes), not per browser tab (N-10).
+- Manage's entry fields are no longer forms: pressing Enter in a field does
+  not submit; use the button.
 - The widget theme (indigo primary, the design system's colours and fonts,
   light and dark) ships in `app/.streamlit/config.toml`, so the Docker image
   matches the design instead of Streamlit's red default (N-4).

@@ -48,6 +48,7 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 import modern2_native
+import native_auth
 import native_jobs
 from dashboard import payload as dash_payload
 from dashboard import queries as dash_queries
@@ -77,7 +78,7 @@ st.markdown(
       .st-key-bg_refresh { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; }
       /* hidden controls the in-iframe rail clicks to open a native page in
          this same session (a rerun, not a page load) */
-      .st-key-pdb_nav { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+      .st-key-pdb_nav, .st-key-pdb_news_poll { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -190,21 +191,34 @@ def _news_job() -> None:
         raise RuntimeError((output or "news fetch failed").strip()[-400:])
 
 
-def maybe_refresh_news() -> native_jobs.StartResult | None:
+def maybe_refresh_news(session) -> str:
     """Called by the topbar refresh: fetch fresh news if it's stale.
+
+    Returns what happened: "fresh" (nothing to do), "locked", "started",
+    "running", "throttled" or "unknown" (the age could not be read).
+
+    Gated (audit A-1): the fetch runs fd_weekly_enrichment, which writes to
+    the database and spends the Financial Datasets key, so it needs an
+    unlocked session like every other dashboard write. The ordinary refresh —
+    clearing the payload cache and redrawing — stays open to everyone.
 
     Non-blocking and process-wide (audit N-10): the fetch runs on a background
     thread, and starts at most once per NEWS_FETCH_THROTTLE_S whichever
-    session or tab asks. It used to run in the page's own thread for up to
-    180 s, throttled per browser session, so a second tab started it again.
+    session or tab asks. The requesting session remembers the run, and
+    modern2_native.render_news_status() redraws it when the run lands.
     """
     try:
         age = _news_age_hours()
     except Exception:
-        return None
+        return "unknown"
     if age is not None and age < NEWS_STALE_HOURS:
-        return None
-    return native_jobs.start("news", _news_job, min_interval_s=NEWS_FETCH_THROTTLE_S)
+        return "fresh"
+    if not native_auth.is_unlocked(session):
+        return "locked"
+    result = native_jobs.start("news", _news_job, min_interval_s=NEWS_FETCH_THROTTLE_S)
+    if result.outcome in ("started", "running"):
+        modern2_native.watch_news_run(native_jobs.status("news").run_id)
+    return result.outcome
 
 
 # ═══════════════════════════════════════════════════════════
@@ -351,7 +365,14 @@ else:
     # to trigger a soft websocket rerun with fresh data — no full page reload.
     if st.button("refresh", key="bg_refresh"):
         build_payload.clear()  # keep the 900s fundamentals cache (weekly data)
-        maybe_refresh_news()  # top up stale news in the background (cache-first)
+        # Top up stale news in the background (cache-first) — unlocked sessions only.
+        if maybe_refresh_news(st.session_state) == "locked":
+            # Fetching headlines writes to the database and spends the
+            # Financial Datasets key, so it is a gated write (A-1).
+            st.toast("Prices refreshed. New headlines need the dashboard password: unlock on Manage.")
+    # Redraws this view when a news fetch this session asked for lands, and
+    # reports a failure — without another click.
+    modern2_native.render_news_status()
     # Hidden controls: the iframe rail's Manage / Advisor / Data Health entries
     # click these (via the parent DOM, like bg_refresh) so opening a native page
     # is a rerun in this session, not a page load (audit N-5). The callback sets

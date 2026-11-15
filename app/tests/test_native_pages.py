@@ -210,6 +210,19 @@ def test_alert_level_must_be_finite_and_positive(raw):
         nw.parse_level(raw)
 
 
+@pytest.mark.parametrize("table", ["price_alerts", "lot_deletions"])
+def test_schema_sql_mirrors_migration_006(table):
+    # sql/migrations/README.md: a migration's change is made in schema.sql too.
+    def block(path):
+        text = (APP.parent / path).read_text(encoding="utf-8")
+        m = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \((.*?)\n\);", text, re.S)
+        assert m, f"{table} missing from {path}"
+        body = re.sub(r"--[^\n]*", "", m.group(1))
+        return " ".join(body.split())
+
+    assert block("sql/schema.sql") == block("sql/migrations/006_price_alerts_and_lot_audit.sql")
+
+
 def test_on_screen_tables_neutralise_text_too():
     # st.dataframe has its own "Download as CSV" in its toolbar, so the frames
     # it shows get the same treatment as the export.

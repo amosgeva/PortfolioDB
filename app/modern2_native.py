@@ -263,7 +263,8 @@ html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;font
 .stNumberInput button:hover{color:var(--accent)!important;border-color:var(--accent)!important}
 .stCheckbox [data-baseweb="checkbox"] span[aria-checked="true"],[data-testid="stCheckbox"] [aria-checked="true"]{
   background-color:var(--accent)!important;border-color:var(--accent)!important}
-/* form container as a card */
+/* form container as a card (the draft-keeping groups are containers, not forms) */
+.st-key-m2_add_lot,.st-key-m2_watchlist,.st-key-m2_cash,.st-key-m2_alert,.st-key-m2_settings,
 [data-testid="stForm"]{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);padding:18px}
 /* tabs */
 [data-testid="stTab"]{color:var(--muted)!important}
@@ -538,8 +539,9 @@ def render_gate() -> bool:
         st.html(
             f'<div class="m2-gate">{_tag("read-only", "warn")}'
             f"<span>Changes are disabled until a dashboard password is set: add "
-            f"<code>{var}</code> to the repo-root <code>.env</code> (<code>make init</code> "
-            "or <code>pdb.ps1 init</code> generates one) and restart the dashboard.</span></div>"
+            f"<code>{var}</code> with a long random value to the repo-root <code>.env</code> "
+            "and restart the dashboard. (A new install set up with <code>make init</code> or "
+            "<code>pdb.ps1 init</code> from 1.8.0 on already has one.)</span></div>"
         )
         return False
     if native_auth.is_unlocked(st.session_state):
@@ -581,6 +583,20 @@ def _done(kind: str, text: str) -> None:
     _flash(kind, text)
     st.cache_data.clear()
     st.rerun()
+
+
+# ── drafts ────────────────────────────────────────────────────────────────
+# Every field an operator types into on these pages is a draft that must
+# survive navigation (audit N-5). Three Streamlit facts make that work:
+#   * no st.form around them: a form holds what was typed in the browser until
+#     submit, so a rail click could never carry it to the server;
+#   * on_change="ignore": a value is not a rerun of its own, but rides along
+#     with the next one — the Add button, or the rail click that leaves;
+#   * persist_state="session": the value is kept while the widget is not
+#     drawn (another view, or the iframe), and comes back with the page.
+# The password, the delete reason and the delete-by-ID number stay ephemeral
+# on purpose.
+DRAFT = {"on_change": "ignore", "persist_state": "session"}
 
 
 # ── Manage page ────────────────────────────────────────────────────────────
@@ -657,21 +673,22 @@ def _render_trades(get_conn, put_conn, unlocked: bool, account_options: list[str
     ss.setdefault("m2_lot_date", today_local())
     if ss.get("m2_lot_acct") not in account_options:
         ss["m2_lot_acct"] = "(none)"
-    with st.form("m2_add_lot"):
+    ss.setdefault("m2_lot_fees", "0")
+    with st.container(key="m2_add_lot"):
         f1, f2, f3 = st.columns(3)
-        symbol = f1.text_input("Symbol", key="m2_lot_sym")
-        account = f2.selectbox("Account", options=account_options, key="m2_lot_acct")
-        new_account = f3.text_input("…or new account (overrides selection)", value="", key="m2_lot_new_acct")
+        symbol = f1.text_input("Symbol", key="m2_lot_sym", **DRAFT)
+        account = f2.selectbox("Account", options=account_options, key="m2_lot_acct", **DRAFT)
+        new_account = f3.text_input("…or new account (overrides selection)", key="m2_lot_new_acct", **DRAFT)
         f4, f5, f6 = st.columns(3)
-        side = f4.selectbox("Side", options=["BUY", "SELL"], key="m2_lot_side")
+        side = f4.selectbox("Side", options=["BUY", "SELL"], key="m2_lot_side", **DRAFT)
         tdate = f5.date_input("Trade date", key="m2_lot_date",
-                              help=f"Default: today in the reporting timezone ({reporting_tz.tz_name()}).")
-        qty = f6.text_input("Quantity", key="m2_lot_qty")
+                              help=f"Default: today in the reporting timezone ({reporting_tz.tz_name()}).", **DRAFT)
+        qty = f6.text_input("Quantity", key="m2_lot_qty", **DRAFT)
         f7, f8, f9 = st.columns(3)
-        price = f7.text_input("Price", value="", key="m2_lot_price", placeholder="e.g. 184.37")
-        fees = f8.text_input("Fees", value="0", key="m2_lot_fees")
-        notes = f9.text_input("Notes", value="", key="m2_lot_notes")
-        submitted = st.form_submit_button("Add lot", type="primary", disabled=not unlocked, key="m2_lot_submit")
+        price = f7.text_input("Price", key="m2_lot_price", placeholder="e.g. 184.37", **DRAFT)
+        fees = f8.text_input("Fees", key="m2_lot_fees", **DRAFT)
+        notes = f9.text_input("Notes", key="m2_lot_notes", **DRAFT)
+        submitted = st.button("Add lot", type="primary", disabled=not unlocked, key="m2_lot_submit")
     if submitted and _may_write():
         try:
             lot = nw.parse_lot(
@@ -826,19 +843,20 @@ def _render_trades(get_conn, put_conn, unlocked: bool, account_options: list[str
 
 def _render_watchlist(get_conn, put_conn, unlocked: bool) -> None:
     st.subheader("Watchlist")
-    with st.form("m2_watchlist"):
-        w_symbol = st.text_input("Symbol", value="", key="m2_wl_sym")
-        w_on = st.checkbox("Track even if sold (watchlist)", value=True, key="m2_wl_on")
-        submitted = st.form_submit_button("Add to watchlist", type="primary", disabled=not unlocked, key="m2_wl_submit")
+    with st.container(key="m2_watchlist"):
+        w_symbol = st.text_input("Symbol", key="m2_wl_sym", **DRAFT)
+        w_on = st.checkbox("Track even if sold (watchlist)", value=True, key="m2_wl_on", **DRAFT)
+        submitted = st.button("Add to watchlist", type="primary", disabled=not unlocked, key="m2_wl_submit")
     if submitted and _may_write():
         try:
             sym = nw.normalize_symbol(w_symbol)
         except ValueError as exc:
             st.error(str(exc))
         else:
-            with nw.transaction(get_conn, put_conn) as conn:
-                nw.set_watchlist(conn, sym, w_on)
-            _done("success", f"Watchlist: {sym} {'on' if w_on else 'off'}.")
+            if w_on:
+                _set_watch(get_conn, put_conn, sym, True)
+            else:
+                _unwatch(get_conn, put_conn, sym)
 
     conn = get_conn()
     try:
@@ -857,20 +875,56 @@ def _render_watchlist(get_conn, put_conn, unlocked: bool) -> None:
             unsafe_allow_html=True,
         )
         if rc2.button("Remove", key=f"m2_wl_rm_{sym}", disabled=not unlocked) and _may_write():
-            with nw.transaction(get_conn, put_conn) as conn:
-                nw.set_watchlist(conn, sym, False)
-            _done("success", f"Removed {sym} from the watchlist.")
+            _unwatch(get_conn, put_conn, sym)
+
+    pending = st.session_state.get("m2_pending_unwatch")
+    if pending:
+        st.warning(
+            f"**{pending['symbol']} has {pending['alerts']} armed alert"
+            f"{'s' if pending['alerts'] != 1 else ''}** and is not held, so the watchlist is the "
+            "only reason its price is collected. Removing it stops collection, and those alerts "
+            "can no longer fire."
+        )
+        u1, u2 = st.columns(2)
+        if u1.button("Remove anyway", type="primary", key="m2_unwatch_confirm", disabled=not unlocked) and _may_write():
+            st.session_state.pop("m2_pending_unwatch", None)
+            _set_watch(get_conn, put_conn, pending["symbol"], False)
+        if u2.button("Keep watching", key="m2_unwatch_cancel"):
+            st.session_state.pop("m2_pending_unwatch", None)
+            st.rerun()
+
+
+def _set_watch(get_conn, put_conn, sym: str, on: bool) -> None:
+    with nw.transaction(get_conn, put_conn) as conn:
+        nw.set_watchlist(conn, sym, on)
+    _done("success", f"{sym} added to the watchlist." if on else f"Removed {sym} from the watchlist.")
+
+
+def _unwatch(get_conn, put_conn, sym: str) -> None:
+    """Take a symbol off the watchlist — after a confirmation when that is
+    the last reason it is collected and alerts are armed on it."""
+    conn = get_conn()
+    try:
+        stranded = nw.alerts_stranded_by_unwatch(conn, sym)
+    finally:
+        put_conn(conn)
+    if stranded:
+        st.session_state["m2_pending_unwatch"] = {"symbol": sym, "alerts": stranded}
+        st.rerun()
+    _set_watch(get_conn, put_conn, sym, False)
 
 
 def _render_cash(get_conn, put_conn, unlocked: bool, accounts: list[str]) -> None:
     st.subheader("Update cash balance")
-    with st.form("m2_cash"):
+    if st.session_state.get("m2_cash_acct", accounts[0]) not in accounts:
+        st.session_state.pop("m2_cash_acct", None)
+    with st.container(key="m2_cash"):
         cf1, cf2 = st.columns(2)
-        cash_account = cf1.selectbox("Account", options=accounts, key="m2_cash_acct")
-        cash_amount = cf2.text_input("Cash balance ($)", value="", key="m2_cash_amt", placeholder="e.g. 1000.00")
-        new_cash_account = st.text_input("…or new account (overrides selection)", value="", key="m2_cash_new")
-        cash_note = st.text_input("Note (optional)", value="", key="m2_cash_note")
-        submitted = st.form_submit_button("Save cash balance", type="primary", disabled=not unlocked, key="m2_cash_submit")
+        cash_account = cf1.selectbox("Account", options=accounts, key="m2_cash_acct", **DRAFT)
+        cash_amount = cf2.text_input("Cash balance ($)", key="m2_cash_amt", placeholder="e.g. 1000.00", **DRAFT)
+        new_cash_account = st.text_input("…or new account (overrides selection)", key="m2_cash_new", **DRAFT)
+        cash_note = st.text_input("Note (optional)", key="m2_cash_note", **DRAFT)
+        submitted = st.button("Save cash balance", type="primary", disabled=not unlocked, key="m2_cash_submit")
     if submitted and _may_write():
         chosen = new_cash_account.strip() or cash_account
         try:
@@ -909,14 +963,14 @@ def _render_alerts(get_conn, put_conn, unlocked: bool) -> None:
         "Saved to the database, so they survive a refresh and a restart. An alert fires against "
         "collected prices, so its symbol has to be one the collector fetches: held or watchlisted."
     )
-    with st.form("m2_alert", clear_on_submit=False):
+    with st.container(key="m2_alert"):
         a1, a2, a3 = st.columns([2, 1, 2])
-        a_sym = a1.text_input("Symbol", key="m2_alert_sym")
-        a_dir = a2.selectbox("When price is", options=["above", "below"], key="m2_alert_dir")
-        a_level = a3.text_input("Level ($)", key="m2_alert_level", placeholder="e.g. 200")
-        a_note = st.text_input("Note (optional)", key="m2_alert_note")
-        a_watch = st.checkbox("Also add the symbol to the watchlist", value=False, key="m2_alert_watch")
-        submitted = st.form_submit_button("Save alert", type="primary", disabled=not unlocked, key="m2_alert_submit")
+        a_sym = a1.text_input("Symbol", key="m2_alert_sym", **DRAFT)
+        a_dir = a2.selectbox("When price is", options=["above", "below"], key="m2_alert_dir", **DRAFT)
+        a_level = a3.text_input("Level ($)", key="m2_alert_level", placeholder="e.g. 200", **DRAFT)
+        a_note = st.text_input("Note (optional)", key="m2_alert_note", **DRAFT)
+        a_watch = st.checkbox("Also add the symbol to the watchlist", value=False, key="m2_alert_watch", **DRAFT)
+        submitted = st.button("Save alert", type="primary", disabled=not unlocked, key="m2_alert_submit")
     if submitted and _may_write():
         try:
             sym = nw.normalize_symbol(a_sym)
@@ -941,8 +995,11 @@ def _render_alerts(get_conn, put_conn, unlocked: bool) -> None:
     for a in active:
         r1, r2 = st.columns([4, 1])
         note = f" — {html.escape(a['note'])}" if a["note"] else ""
+        # An armed alert whose symbol has stopped being collected (sold out,
+        # or taken off the watchlist elsewhere) cannot fire; say so.
+        state = _tag("armed", "accent") if a["collected"] else _tag("not collected", "warn")
         r1.html(
-            f'<div class="m2-status">{_tag("armed", "accent")}<b>{html.escape(a["symbol"])}</b> '
+            f'<div class="m2-status">{state}<b>{html.escape(a["symbol"])}</b> '
             f'{a["direction"]} <span style="font-family:var(--mono)">{_price(a["level"])}</span>'
             f'<span style="color:var(--muted)">{note} · set {_fmt_local(a["created_at"])}</span></div>'
         )
@@ -1025,7 +1082,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
     def _src(key: str, env) -> str:
         return _SOURCE_LABEL[settings.source_of(key, env=env)]
 
-    with st.form("m2_settings"):
+    with st.container(key="m2_settings"):
         sc1, sc2 = st.columns(2)
 
         with sc1:
@@ -1033,7 +1090,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
                 "Display name",
                 value=settings.get("display_name", env="PORTFOLIODB_DISPLAY_NAME", default="") or "",
                 help="Shown in the dashboard rail footer. Empty = \"Operator\".",
-                key="m2_set_name",
+                key="m2_set_name", **DRAFT,
             )
             sc1.caption(f"currently: {_src('display_name', 'PORTFOLIODB_DISPLAY_NAME')}")
 
@@ -1043,7 +1100,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
                 help="The calendar that buckets snapshots into days, and the zone every time on "
                      f"these pages is shown in. Empty = default ({reporting_tz.DEFAULT_TZ}). "
                      "Applies on restart of the dashboard, MCP server and scheduled jobs.",
-                key="m2_set_tz",
+                key="m2_set_tz", **DRAFT,
             )
             sc1.caption(f"currently: {_src('reporting_tz', 'PORTFOLIODB_TZ')} · applies on restart")
 
@@ -1052,19 +1109,19 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
                 "Collector window start (HH:MM)",
                 value=settings.get("market_window_start", env="PORTFOLIODB_MARKET_START", default="") or "",
                 help=f"Empty = default ({market_window.DEFAULT_START}).",
-                key="m2_set_start",
+                key="m2_set_start", **DRAFT,
             )
             end_val = mw2.text_input(
                 "…end (HH:MM)",
                 value=settings.get("market_window_end", env="PORTFOLIODB_MARKET_END", default="") or "",
                 help=f"Empty = default ({market_window.DEFAULT_END}). May wrap past midnight.",
-                key="m2_set_end",
+                key="m2_set_end", **DRAFT,
             )
             week_val = sc1.text_input(
                 "Collector days (cron style, 1=Mon)",
                 value=settings.get("market_week", env="PORTFOLIODB_MARKET_WEEK", default="") or "",
                 help=f"e.g. 1-5 or 1,2,5. Empty = default ({market_window.DEFAULT_WEEK}).",
-                key="m2_set_week",
+                key="m2_set_week", **DRAFT,
             )
             sc1.caption(f"snapshots collected {market_window.describe()}")
 
@@ -1077,7 +1134,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
                      "These are collected round the clock, ignoring the window above — "
                      "futures quote when your market is shut, which is the point. "
                      "Empty = the default US set; clear it entirely to hide the strip.",
-                key="m2_set_mkt",
+                key="m2_set_mkt", **DRAFT,
             )
             sc1.caption(f"currently: {_src(market_overview.SETTING_KEY, market_overview.ENV_VAR)}")
 
@@ -1090,7 +1147,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
                 index=providers.index(current_provider),
                 help="anthropic = native Claude SDK. The rest use the OpenAI-compatible "
                      "path (openai / openrouter / ollama / custom base URL).",
-                key="m2_set_provider",
+                key="m2_set_provider", **DRAFT,
             )
             sc2.caption(f"currently: {_src('llm_provider', 'LLM_PROVIDER')}")
 
@@ -1098,7 +1155,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
                 "Advisor model",
                 value=settings.get("llm_model", env=("LLM_MODEL", "PORTFOLIODB_ADVISOR_MODEL"), default="") or "",
                 help="Empty = provider default.",
-                key="m2_set_model",
+                key="m2_set_model", **DRAFT,
             )
             # Read-only on purpose: a URL saved from this page would decide
             # where the provider's API key is sent. The base URL comes from
@@ -1111,7 +1168,7 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
 
         st.caption("Saving an empty field clears the override so `.env` / defaults apply again. "
                    "All fields are saved together or not at all.")
-        submitted = st.form_submit_button("Save settings", type="primary", disabled=not unlocked, key="m2_set_submit")
+        submitted = st.button("Save settings", type="primary", disabled=not unlocked, key="m2_set_submit")
     if submitted and _may_write():
         errors = []
         if tz_val.strip():
@@ -1183,8 +1240,9 @@ def _render_settings_section(get_conn, put_conn, unlocked: bool) -> None:
             "the dashboard: recording, selling and deleting lots, the watchlist, cash, alerts, these "
             "settings, the one-pager, and every brief or chat that calls your model. The read-only "
             "views stay open.\n\n"
-            "- `make init` (or `pdb.ps1 init`) writes a random one; to set it by hand, use a long "
-            "random string and restart the dashboard.\n"
+            "- To set it by hand, add a long random string to `.env` and restart the dashboard. "
+            "From 1.8.0, `make init` (or `pdb.ps1 init`) writes a random one for a new install; an "
+            "existing `.env` is never rewritten, so an upgrade needs the line added by hand.\n"
             "- Not set means read-only, never open: the forms stay visible but disabled.\n"
             "- Unlocking lasts for one browser session, and relocks after "
             f"{int(native_auth.IDLE_TIMEOUT_S // 60)} minutes idle or when you press **Lock**.\n"
@@ -1239,8 +1297,10 @@ def _render_philosophy_editor(source: str, unlocked: bool) -> None:
                 "database, which then takes precedence over the file."
             )
             current = advisor._philosophy_from_file() or ""
+        if st.session_state.pop("_m2_phil_reset", False):
+            st.session_state["m2_phil_text"] = ""
         text = st.text_area(
-            "Markdown", value=current, height=320, key="m2_phil_text",
+            "Markdown", value=current, height=320, key="m2_phil_text", **DRAFT,
             label_visibility="collapsed",
             placeholder="# Investor One-Pager — Your Name\n\n## North Star\n…",
             help="Paste the document your interview produced, then Save. "
@@ -1253,6 +1313,7 @@ def _render_philosophy_editor(source: str, unlocked: bool) -> None:
         if settings.get(advisor.PHILOSOPHY_KEY):
             if pc2.button("Clear saved copy", key="m2_phil_clear", disabled=not unlocked) and _may_write():
                 advisor.save_philosophy("")
+                st.session_state["_m2_phil_reset"] = True
                 _done("success", "Cleared.")
 
 
@@ -1264,6 +1325,47 @@ def _start_brief() -> None:
         _flash("info", f"A brief was started moments ago. Try again in {int(result.retry_after) + 1} s.")
     else:
         st.session_state["_m2_brief_run"] = native_jobs.status("brief").run_id
+
+
+NEWS_POLL_S = 2.0
+
+
+def watch_news_run(run_id: int) -> None:
+    """Remember that this session asked for news run ``run_id``."""
+    st.session_state["_m2_news_run"] = run_id
+
+
+def render_news_status() -> None:
+    """Deliver a background news fetch to the page that asked for it.
+
+    The fetch clears the payload cache when it lands, but an already drawn
+    page does not know. While this session's run is going, a fragment polls
+    every NEWS_POLL_S seconds and reruns the app when it ends, so the new
+    headlines appear by themselves; then a toast says how it went.
+    """
+    ss = st.session_state
+    mine = ss.get("_m2_news_run")
+    if not mine:
+        return
+    job = native_jobs.status("news")
+    if job.run_id != mine:
+        ss.pop("_m2_news_run", None)
+        return
+    if job.running:
+        @st.fragment(run_every=NEWS_POLL_S)
+        def _poll():
+            if not native_jobs.status("news").running:
+                st.rerun(scope="app")
+
+        with st.container(key="pdb_news_poll"):
+            _poll()
+        return
+    ss.pop("_m2_news_run", None)
+    if job.state == "failed":
+        first = (job.error.removeprefix("RuntimeError: ").splitlines() or ["unknown error"])[0][:160]
+        st.toast(f"News refresh failed: {first}")
+    else:
+        st.toast("Headlines updated.")
 
 
 def _render_brief_job() -> None:
