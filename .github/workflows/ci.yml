@@ -58,9 +58,10 @@ jobs:
       # From the repo root, NOT app/: on the path as app/, the local app/mcp/
       # package shadows the installed `mcp` SDK that fastmcp imports.
       #
-      # Also a separate step from the slow suite below, deliberately: running
-      # both in one pytest process fails four reconciliation tests through
-      # cross-test state. Two invocations, no interference.
+      # The slow suite needs a live database, so this job runs only the fast
+      # one. (The two used to interfere when run in one pytest process; that
+      # cross-test leak was fixed, and the whole MCP suite now passes in one
+      # process against a seeded database.)
       - name: MCP suite (fast)
         run: python -m pytest app/mcp/tests/ -m "not slow" -q
 
@@ -241,9 +242,10 @@ jobs:
           PORTFOLIODB_TESTS_REQUIRE_DB: '1'
         run: python -m pytest tests/ -q -rs $COV_ARGS
 
-      # The whole MCP fast suite, database required, from the repo root. A
-      # separate pytest process from the slow suite above, as everywhere: in
-      # one process four reconciliation tests fail on cross-test state.
+      # The whole MCP fast suite, database required, from the repo root. Its
+      # own step so the reconciliation suite above runs first, on exactly the
+      # demo ledger, and each reports separately; the two no longer interfere
+      # in one process.
       - name: MCP fast suite, database required (from the root)
         env:
           PORTFOLIODB_TESTS_REQUIRE_DB: '1'

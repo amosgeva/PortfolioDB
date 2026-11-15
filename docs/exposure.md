@@ -151,8 +151,9 @@ services:
       PORTFOLIODB_PASSWORD: ${POSTGRES_PASSWORD}
 ```
 
-Without that block the fallback refuses to start and says which line is
-missing, rather than running on a password it was quietly handed.
+Without that block the fallback refuses to connect: the server process starts,
+but `/healthz` answers 503, every database call fails, and the server log says
+which line is missing, rather than running on a password it was quietly handed.
 
 The role's grants are an explicit list — exactly the tables the server reads,
 including `settings` (for the reporting timezone and the saved one-pager) and

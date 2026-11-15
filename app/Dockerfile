@@ -6,7 +6,8 @@
 #
 #   dashboard  streamlit run app/streamlit_app.py
 #   mcp        uvicorn app.mcp.server:asgi
-#   scheduler  /usr/local/bin/supercronic /app/docker/crontab  (absolute path!)
+#   scheduler      /usr/local/bin/supercronic /app/docker/crontab      (absolute path!)
+#   scheduler-llm  /usr/local/bin/supercronic /app/docker/crontab-llm
 #   CLIs       docker compose run --rm dashboard python app/add_lot.py ...
 #
 # Three stages (audit O-2): `base` installs everything; `dev` is base plus the
@@ -129,7 +130,7 @@ RUN set -eu; \
     pip check
 
 # Bring the rest of the app/ tree (engines, dashboard, services, MCP server),
-# the scheduler's crontab, and the SQL — the last one so an install that pulled
+# the two schedulers' crontabs, and the SQL — the last one so an install that pulled
 # this image without cloning the repository can still run apply_schema.py.
 COPY app /app/app
 COPY docker/crontab docker/crontab-llm /app/docker/

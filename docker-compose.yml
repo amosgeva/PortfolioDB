@@ -7,8 +7,9 @@
 #   docker compose --profile tools up -d    also pgAdmin (:58080)
 #
 # Every published port is bound to 127.0.0.1: reachable from this host and
-# nowhere else. The dashboard has no login of its own and can change the ledger,
-# so reaching it from another machine is something you opt into —
+# nowhere else. The dashboard's read-only views have no login and its write
+# pages share one password, so reaching it from another machine is something
+# you opt into —
 # docs/exposure.md shows the override, and the tunnels and proxies that are
 # safer than a LAN bind.
 #
@@ -155,8 +156,9 @@ services:
     # 0.0.0.0 is inside the container's own network namespace; what the host
     # exposes is decided by `ports:` below.
     command: ["sh", "-c", "cd /app/app && streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501"]
-    # Loopback only. The dashboard has no login of its own and can add and
-    # delete trades; reaching it from another machine is an opt-in override
+    # Loopback only. The read-only views have no login, and adding or deleting
+    # trades needs only the one shared PORTFOLIODB_DASHBOARD_PASSWORD;
+    # reaching it from another machine is an opt-in override
     # (docs/exposure.md#reaching-it-from-your-lan), or better, a tunnel.
     ports:
       - "127.0.0.1:8501:8501"

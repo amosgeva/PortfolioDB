@@ -599,6 +599,34 @@ needs a schema step says so under **Upgrading**.
 - A `PORTFOLIODB_MCP_TOKEN` under 32 characters now refuses to start;
   `make init` generates 40.
 
+### Documentation
+
+- The docs now describe 1.8 as it ships (audit K-3, K-4). `CLAUDE.md`
+  covers every table rather than "four", the two halves of the dashboard,
+  the dedupe key with `side`, where the positions cache actually lives
+  (`app/mcp/services/positions.py`), same-day BUY-before-SELL processing,
+  pending splits that apply to nothing until approved, the single net-quantity
+  implementation, migration bookkeeping, the write-page password,
+  loopback-only ports, `make test` building the working tree, ruff and branch
+  protection. `app/README.md` is a current orientation to `app/` instead of
+  the v0.1 install notes. The README states the loopback default with LAN as
+  the opt-in, the dashboard password in place of "No authentication", the MCP's
+  `PORTFOLIODB_MCP_ALLOWED_HOSTS`, 32-character token minimum and the
+  `make ro-role` re-run on upgrade, persisted price alerts, the split review
+  step, and how non-USD records are refused or flagged; it no longer calls
+  the shared Dockerfile the MCP's. `CONTRIBUTING.md` adds the ledger-input,
+  password-gate and migration-bookkeeping rules and the required checks.
+  Stale "no login" wording is corrected in `SECURITY.md`,
+  `docs/llm-providers.md` and the compose, override-example, `.env.template`
+  and `schema.sql` comments; the one-pager steps no longer name an
+  emoji the page has dropped. `CONTRIBUTING.md` describes the front end's
+  build (`npm run build`, the `Front end` workflow), and the README's privacy
+  note names the opt-in logo CDN. The README screenshots are retaken from
+  the demo ledger on 1.8 (audit K-1): same files, same size, dark theme.
+  The host-run Streamlit command binds `127.0.0.1` and turns Streamlit's
+  usage statistics off, as the container does. The old warning that the slow
+  and fast MCP suites fail in one process is retired: they no longer interfere.
+
 ## [1.7.7] — 2026-11-15
 
 A maintenance release, a month after 1.7.6. The image scan had started failing
