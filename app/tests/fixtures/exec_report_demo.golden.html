@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portfolio Executive Report — 2026-11-13</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: #f6f7fb; color: #1a202c; margin: 0; padding: 0;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.report {
+  max-width: 1180px; margin: 0 auto; padding: 32px;
+  background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.hdr {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  border-bottom: 3px solid #2c5282; padding-bottom: 16px; margin-bottom: 28px;
+}
+.hdr h1 { margin: 0 0 4px 0; font-size: 26px; font-weight: 700; color: #1a365d; letter-spacing: -0.5px; }
+.hdr-sub { color: #718096; font-size: 13px; }
+.hdr-aum { text-align: right; }
+.aum-label { color: #718096; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.aum-value { font-size: 26px; font-weight: 700; color: #1a365d; }
+.aum-delta { font-size: 13px; font-weight: 600; }
+.section { margin-bottom: 32px; page-break-inside: avoid; }
+.section h2 {
+  font-size: 16px; font-weight: 700; color: #2d3748;
+  border-left: 4px solid #2c5282; padding-left: 12px; margin: 0 0 14px 0;
+}
+.section h3 { font-size: 13px; font-weight: 600; color: #4a5568; margin: 0 0 8px 0; }
+.section h4 { font-size: 11px; font-weight: 600; margin: 12px 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+h4.up { color: #2f855a; }
+h4.down { color: #c53030; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.kpi {
+  border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px;
+  background: linear-gradient(180deg, #ffffff, #f7fafc);
+}
+.kpi-label { color: #718096; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.kpi-value { font-size: 19px; font-weight: 700; color: #1a365d; margin-top: 4px; }
+.kpi-delta { font-size: 11px; font-weight: 600; margin-top: 2px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.data thead th {
+  background: #edf2f7; color: #2d3748; font-weight: 600;
+  text-align: left; padding: 7px 10px; border-bottom: 2px solid #cbd5e0;
+}
+table.data tbody td { padding: 6px 10px; border-bottom: 1px solid #edf2f7; }
+table.data tbody tr:hover { background: #f7fafc; }
+table.data .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.data .sym { font-weight: 600; color: #1a365d; }
+table.data tr.total td { border-top: 2px solid #cbd5e0; background: #f7fafc; }
+table.data.compact thead th, table.data.compact tbody td { padding: 5px 8px; font-size: 11px; }
+table.data.small { font-size: 10.5px; }
+.pos { color: #2f855a; }
+.neg { color: #c53030; }
+.neu { color: #718096; }
+.empty { color: #a0aec0; font-style: italic; font-size: 12px; }
+.footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #e2e8f0;
+  color: #a0aec0; font-size: 10px; text-align: center; }
+.small-note { color: #a0aec0; font-size: 11px; margin: 6px 0 0; font-style: italic; }
+.lead { font-size: 14px; color: #2d3748; margin: 0 0 14px 0; line-height: 1.5; }
+.badge {
+  display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 700;
+  border-radius: 999px; vertical-align: middle; margin-left: 6px;
+  background: #edf2f7; color: #4a5568; text-transform: uppercase; letter-spacing: 0.4px;
+}
+.badge.pos { background: #f0fff4; color: #2f855a; }
+.badge.neu { background: #edf2f7; color: #718096; }
+.badge.neg { background: #fff5f5; color: #c53030; }
+.brief-list { margin: 0; padding-left: 18px; }
+.brief-list li { margin-bottom: 12px; }
+.brief-title { font-weight: 600; font-size: 13px; color: #1a365d; margin-bottom: 2px; }
+.brief-body { font-size: 12px; color: #2d3748; line-height: 1.45; }
+.brief-rule { font-size: 11px; color: #718096; margin-top: 4px; font-style: italic; }
+.brief-tag {
+  display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600;
+  background: #ebf4ff; color: #2c5282; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.4px; margin-left: 6px;
+  vertical-align: middle;
+}
+table.data .fd { color: #4a5568; font-size: 11px; }
+@media print {
+  body { background: white; }
+  .report { box-shadow: none; max-width: 100%; padding: 12px; }
+  .section { page-break-inside: avoid; }
+  .hdr { page-break-after: avoid; }
+}
+@media (max-width: 800px) {
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .hdr { flex-direction: column; }
+  .hdr-aum { text-align: left; margin-top: 12px; }
+}
+</style>
+<script>/* plotly.js elided */</script>
+</head>
+<body>
+<div class="report">
+
+    <header class="hdr">
+      <div>
+        <h1>Portfolio Executive Report</h1>
+        <div class="hdr-sub">As of Friday, November 13, 2026 · 22:00 · Asia/Jerusalem</div>
+      </div>
+      <div class="hdr-aum">
+        <div class="aum-label">Total AUM</div>
+        <div class="aum-value">$55,651.01</div>
+        <div class="aum-delta pos">
+          +$30.77 (+0.06%) today
+        </div>
+      </div>
+    </header>
+<section class="section"><h2>Key Metrics</h2><div class="kpi-grid"><div class="kpi"><div class="kpi-label">Market Value</div><div class="kpi-value">$49,540.46</div></div><div class="kpi"><div class="kpi-label">Cost Basis</div><div class="kpi-value">$47,605.17</div></div><div class="kpi"><div class="kpi-label">Unrealized P&amp;L</div><div class="kpi-value">+$1,935.29</div><div class="kpi-delta pos">+4.07%</div></div><div class="kpi"><div class="kpi-label">Realized P&amp;L</div><div class="kpi-value">+$280.36</div></div><div class="kpi"><div class="kpi-label">Total Return %</div><div class="kpi-value">+4.65%</div></div><div class="kpi"><div class="kpi-label">Cash</div><div class="kpi-value">$6,110.55</div></div><div class="kpi"><div class="kpi-label">Day Δ</div><div class="kpi-value">+$30.77</div><div class="kpi-delta pos">+0.06%</div></div><div class="kpi"><div class="kpi-label">Week Δ</div><div class="kpi-value">+$715.71</div><div class="kpi-delta pos">+1.47%</div></div></div></section>
+
+    <section class="section">
+      <h2>Advisor Brief <span class="badge pos">generated 2h ago</span></h2>
+      <p class="lead">Two technology names now carry 38% of the book between them, and the cash sleeve has drifted to 8% after last month&#x27;s additions. Nothing here needs action today; the concentration is the thing worth watching.</p>
+      <div class="grid-2">
+        <div><h3>Insights (3)</h3><ul class="brief-list"><li><div class="brief-title">Concentration is creeping up <span class="brief-tag">concentration</span></div><div class="brief-body">AAPL and NVDA together are 38% of market value, up from 31% in April. That is the largest single-sector exposure this portfolio has carried.</div></li><li><div class="brief-title">Realized gains are small so far <span class="brief-tag">tax</span></div><div class="brief-body">Only one partial exit this year (NVDA, +$300). Most of the return is unrealized, so the tax picture is still open.</div></li><li><div class="brief-title">Cash is doing its job <span class="brief-tag">cash</span></div><div class="brief-body">8% in cash across both accounts — enough to add on weakness without selling anything.</div></li></ul></div>
+        <div><h3>Suggestions (1)</h3><ul class="brief-list"><li><div class="brief-title">Decide a concentration ceiling before it is tested</div><div class="brief-body">Writing the limit down now is easier than choosing one during a drawdown.</div><div class="brief-rule">Rule: Core Philosophy — position sizing</div></li></ul></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Holdings</h2>
+      <table class="data">
+        <thead><tr>
+          <th>Symbol</th><th class="num">Qty</th><th class="num">Avg Cost</th>
+          <th class="num">Last</th><th class="num">Market Value</th><th class="num">Cost Basis</th>
+          <th class="num">Unrl P&amp;L</th><th class="num">Unrl %</th><th class="num">Weight</th>
+          <th class="num fd">P/E</th><th class="num fd">Rev YoY</th><th class="num fd">Mkt Cap</th>
+        </tr></thead>
+        <tbody><tr><td class="sym">AAPL</td><td class="num">65.0000</td><td class="num">$206.52</td><td class="num">$216.32</td><td class="num">$14,060.80</td><td class="num">$13,423.62</td><td class="num pos">+$637.18</td><td class="num pos">+4.75%</td><td class="num">28.38%</td><td class="num fd">31.2</td><td class="num fd">+6.1%</td><td class="num fd">$3.10T</td></tr><tr><td class="sym">VOO</td><td class="num">20.0000</td><td class="num">$493.57</td><td class="num">$507.64</td><td class="num">$10,152.80</td><td class="num">$9,871.31</td><td class="num pos">+$281.49</td><td class="num pos">+2.85%</td><td class="num">20.49%</td><td class="num fd">—</td><td class="num fd">—</td><td class="num fd">—</td></tr><tr><td class="sym">JNJ</td><td class="num">55.0000</td><td class="num">$154.82</td><td class="num">$158.25</td><td class="num">$8,703.75</td><td class="num">$8,514.95</td><td class="num pos">+$188.80</td><td class="num pos">+2.22%</td><td class="num">17.57%</td><td class="num fd">—</td><td class="num fd">—</td><td class="num fd">—</td></tr><tr><td class="sym">NVDA</td><td class="num">40.0000</td><td class="num">$142.36</td><td class="num">$173.75</td><td class="num">$6,950.00</td><td class="num">$5,694.26</td><td class="num pos">+$1,255.74</td><td class="num pos">+22.05%</td><td class="num">14.03%</td><td class="num fd">—</td><td class="num fd">—</td><td class="num fd">—</td></tr><tr><td class="sym">MSFT</td><td class="num">15.0000</td><td class="num">$443.33</td><td class="num">$417.75</td><td class="num">$6,266.25</td><td class="num">$6,649.94</td><td class="num neg">$-383.69</td><td class="num neg">-5.77%</td><td class="num">12.65%</td><td class="num fd">—</td><td class="num fd">—</td><td class="num fd">—</td></tr><tr><td class="sym">SPY</td><td class="num">6.0000</td><td class="num">$575.18</td><td class="num">$567.81</td><td class="num">$3,406.86</td><td class="num">$3,451.08</td><td class="num neg">$-44.22</td><td class="num neg">-1.28%</td><td class="num">6.88%</td><td class="num fd">—</td><td class="num fd">—</td><td class="num fd">—</td></tr></tbody>
+      </table>
+      <p class="small-note">Fundamentals shown for 1/6 positions (ETFs and unenriched symbols show "—").</p>
+    </section>
+
+    <section class="section">
+      <h2>Allocation</h2>
+      <div class="grid-2">
+        <div><h3>By Symbol</h3><div style="height:420px; width:100%;">                            <figure data-plot="1">
+<data>[{"domain": {"x": [0.0, 1.0], "y": [0.0, 1.0]}, "hole": 0.5, "hovertemplate": "symbol=%{label}<br>market_value=%{value}<extra></extra>", "labels": ["AAPL", "JNJ", "MSFT", "NVDA", "SPY", "VOO"], "legendgroup": "", "name": "", "showlegend": true, "textinfo": "percent+label", "textposition": "inside", "type": "pie", "values": {"bdata": "ZmZmZmZ2y0AAAAAA4P/AQAAAAABAerhAAAAAAAAmu0AehetRuJ2qQGZmZmZm1MNA", "dtype": "f8"}}]</data>
+<layout>{"font": {"family": "Inter, system-ui, sans-serif"}, "height": 420, "legend": {"tracegroupgap": 0}, "margin": {"b": 20, "l": 20, "r": 20, "t": 20}, "paper_bgcolor": "white", "piecolorway": ["rgb(102, 197, 204)", "rgb(246, 207, 113)", "rgb(248, 156, 116)", "rgb(220, 176, 242)", "rgb(135, 197, 95)", "rgb(158, 185, 243)", "rgb(254, 136, 177)", "rgb(201, 219, 116)", "rgb(139, 224, 164)", "rgb(180, 151, 231)", "rgb(179, 179, 179)"], "plot_bgcolor": "white", "showlegend": false}</layout>
+</figure>        </div></div>
+        <div><h3>By Account</h3><div style="height:320px; width:100%;">                            <figure data-plot="2">
+<data>[{"hovertemplate": "account=%{x}<br>value=%{y}<br>weight=%{text}<extra></extra>", "legendgroup": "", "marker": {"color": "#2c5282", "pattern": {"shape": ""}}, "name": "", "orientation": "v", "showlegend": false, "text": {"bdata": "+Y09kW1jUUAdyAm7SXI+QA==", "dtype": "f8"}, "textposition": "outside", "texttemplate": "%{text:.1f}%", "type": "bar", "x": ["Broker A", "Broker B"], "xaxis": "x", "y": {"bdata": "H4XrUWjm4kAAAAAA8IvQQA==", "dtype": "f8"}, "yaxis": "y"}]</data>
+<layout>{"barmode": "relative", "font": {"family": "Inter, system-ui, sans-serif"}, "height": 320, "legend": {"tracegroupgap": 0}, "margin": {"b": 40, "l": 20, "r": 20, "t": 20}, "paper_bgcolor": "white", "plot_bgcolor": "white", "xaxis": {"anchor": "y", "domain": [0.0, 1.0], "title": {"text": ""}}, "yaxis": {"anchor": "x", "domain": [0.0, 1.0], "gridcolor": "#eee", "tickformat": ",", "tickprefix": "$", "title": {"text": "Value ($)"}}}</layout>
+</figure>        </div></div>
+      </div>
+    </section>
+<section class="section"><h2>Holdings Value Over Time</h2><div style="height:380px; width:100%;">                            <figure data-plot="3">
+<data>[{"fill": "tozeroy", "fillcolor": "rgba(44,82,130,0.08)", "hovertemplate": "%{x|%Y-%m-%d}<br>$%{y:,.2f}<extra></extra>", "line": {"color": "#2c5282", "width": 2}, "mode": "lines", "type": "scatter", "x": ["2026-05-22", "2026-05-25", "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29", "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04", "2026-06-05", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26", "2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-13", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20", "2026-08-21", "2026-08-24", "2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"], "y": {"bdata": "mpmZmZnXtkD2KFyPwty2QOF6FK5HnbZAj8L1KFxBtkDrUbgehUm2QHsUrkfhcMpAPgrXo3BTykCkcD0K10nKQB+F61G4/8lAwvUoXA/+yUB7FK5H4cDJQBSuR+H63slAcD0K16PLyUAoXI/CdUXKQLgehetROcpA9ihcj8JOykAehetRuBLKQB+F61E4ntNAzczMzOyE00BI4XoUHoPTQK5H4XrUrNNA9ihcj0JW00CF61G4TiPTQB+F61F4J9NAkML1KIxH00D2KFyPwjnTQMzMzMxMbdNAexSuRxFJ00C4HoXr0XLTQNejcD0KjNNAzMzMzJyu00CuR+F65F3cQMP1KFx/99tAAAAAAGBL3EAzMzMzkxHcQFK4HoUrENxAcT0K1/Pl20BI4XoUrgvcQHE9CteDOdxAj8L1KPwi4kCQwvUobCriQML1KFy/CuJAexSuRyk24kDiehSun2jiQI/C9SiMZeJASOF6FM5X4kAfhetRwHviQB+F61EoeeJASOF6FB6I4kBwPQrXI4TiQMP1KFzPZ+JAXI/C9fip4kCF61G49sPiQDMzMzOz0+JApHA9Ctfy4kCuR+F6fOPiQK5H4XrEBeNAZmZmZkYP40BI4XoUnhXjQD4K16OgEONAXI/C9aAa40BSuB6FC0njQHsUrkdhh+NACtejcLVp40AAAAAA+FvjQAAAAADYSOVAzczMzAxO5UBnZmZm1kblQM3MzMxkN+VAMzMzMyM85UDNzMzMxEblQAAAAABo7ORAZmZmZpbz5EDNzMzMfMnkQM3MzMzk6ORAMzMzM5Os5EAzMzMzw5jkQGZmZma2e+RAAAAAAFhk5EBmZmZm9orkQJmZmZlRUudAzczMzNxg50BmZmZmVlvnQDMzMzNjZedAMzMzM+OU50AAAAAAAMHnQM3MzMwc6udAAAAAABgL6EAzMzMzQyjoQDMzMzNLS+hAAAAAAKgm6EAAAAAAAAfoQGZmZmamUOhAAAAAAOgf6EAzMzMzE+bnQGdmZmZW++dAZ2ZmZtZG6EDNzMzMpC7oQDMzMzO7LuhAzczMzNQm6EAzMzMzG3/mQJmZmZmZYuZAmZmZmdll5kAzMzMzE3DmQAAAAABouuZAXI/C9aiF6EDXo3A9SlfoQI/C9SiMNuhA4noUrk9f6EBSuB6FA5noQK5H4XoUbOhAPgrXozBw6ECF61G4fmDoQKRwPQp3VehAC9ejcOVI6EB7FK5H2RHoQOtRuB4F7edACtejcDXR50AUrkfhCsPnQJDC9Shs3udAAAAAABjX50DXo3A9sr/nQM3MzMzUKuhAehSuR8kn6EBI4XoUtizoQIXrUbiOMOhA", "dtype": "f8"}}]</data>
+<layout>{"font": {"family": "Inter, system-ui, sans-serif"}, "height": 380, "margin": {"b": 40, "l": 60, "r": 20, "t": 20}, "paper_bgcolor": "white", "plot_bgcolor": "white", "xaxis": {"gridcolor": "#eee", "title": {"text": ""}}, "yaxis": {"gridcolor": "#eee", "tickformat": ",", "tickprefix": "$", "title": {"text": "Holdings Value ($)"}}}</layout>
+</figure>        </div></section>
+
+    <section class="section">
+      <h2>Top Movers</h2>
+      <div class="grid-3">
+        <div>
+          <h3>Today</h3>
+          <h4 class="up">Gainers</h4><table class="data compact"><thead><tr><th>Symbol</th><th class="num">Δ ($)</th><th class="num">%</th></tr></thead><tbody><tr><td class="sym">MSFT</td><td class="num pos">+$148.50</td><td class="num pos">+2.43%</td></tr><tr><td class="sym">NVDA</td><td class="num pos">+$49.60</td><td class="num pos">+0.72%</td></tr><tr><td class="sym">JNJ</td><td class="num pos">+$40.15</td><td class="num pos">+0.46%</td></tr><tr><td class="sym">SPY</td><td class="num pos">+$19.62</td><td class="num pos">+0.58%</td></tr><tr><td class="sym">VOO</td><td class="num neg">$-30.80</td><td class="num neg">-0.30%</td></tr></tbody></table>
+          <h4 class="down">Losers</h4><table class="data compact"><thead><tr><th>Symbol</th><th class="num">Δ ($)</th><th class="num">%</th></tr></thead><tbody><tr><td class="sym">AAPL</td><td class="num neg">$-196.30</td><td class="num neg">-1.38%</td></tr><tr><td class="sym">VOO</td><td class="num neg">$-30.80</td><td class="num neg">-0.30%</td></tr><tr><td class="sym">SPY</td><td class="num pos">+$19.62</td><td class="num pos">+0.58%</td></tr><tr><td class="sym">JNJ</td><td class="num pos">+$40.15</td><td class="num pos">+0.46%</td></tr><tr><td class="sym">NVDA</td><td class="num pos">+$49.60</td><td class="num pos">+0.72%</td></tr></tbody></table>
+        </div>
+        <div>
+          <h3>Past 7 Days</h3>
+          <h4 class="up">Gainers</h4><table class="data compact"><thead><tr><th>Symbol</th><th class="num">Δ ($)</th><th class="num">%</th></tr></thead><tbody><tr><td class="sym">NVDA</td><td class="num pos">+$406.40</td><td class="num pos">+6.21%</td></tr><tr><td class="sym">MSFT</td><td class="num pos">+$353.85</td><td class="num pos">+5.98%</td></tr><tr><td class="sym">JNJ</td><td class="num pos">+$120.45</td><td class="num pos">+1.40%</td></tr><tr><td class="sym">VOO</td><td class="num pos">+$59.60</td><td class="num pos">+0.59%</td></tr><tr><td class="sym">SPY</td><td class="num neg">$-6.84</td><td class="num neg">-0.20%</td></tr></tbody></table>
+          <h4 class="down">Losers</h4><table class="data compact"><thead><tr><th>Symbol</th><th class="num">Δ ($)</th><th class="num">%</th></tr></thead><tbody><tr><td class="sym">AAPL</td><td class="num neg">$-217.75</td><td class="num neg">-1.53%</td></tr><tr><td class="sym">SPY</td><td class="num neg">$-6.84</td><td class="num neg">-0.20%</td></tr><tr><td class="sym">VOO</td><td class="num pos">+$59.60</td><td class="num pos">+0.59%</td></tr><tr><td class="sym">JNJ</td><td class="num pos">+$120.45</td><td class="num pos">+1.40%</td></tr><tr><td class="sym">MSFT</td><td class="num pos">+$353.85</td><td class="num pos">+5.98%</td></tr></tbody></table>
+        </div>
+        <div>
+          <h3>All-Time Unrealized</h3>
+          <h4 class="up">Winners</h4><table class="data compact"><thead><tr><th>Symbol</th><th class="num">Δ ($)</th><th class="num">%</th></tr></thead><tbody><tr><td class="sym">NVDA</td><td class="num pos">+$1,255.74</td><td class="num pos">+22.05%</td></tr><tr><td class="sym">AAPL</td><td class="num pos">+$637.18</td><td class="num pos">+4.75%</td></tr><tr><td class="sym">VOO</td><td class="num pos">+$281.49</td><td class="num pos">+2.85%</td></tr><tr><td class="sym">JNJ</td><td class="num pos">+$188.80</td><td class="num pos">+2.22%</td></tr><tr><td class="sym">SPY</td><td class="num neg">$-44.22</td><td class="num neg">-1.28%</td></tr></tbody></table>
+          <h4 class="down">Underperformers</h4><table class="data compact"><thead><tr><th>Symbol</th><th class="num">Δ ($)</th><th class="num">%</th></tr></thead><tbody><tr><td class="sym">MSFT</td><td class="num neg">$-383.69</td><td class="num neg">-5.77%</td></tr><tr><td class="sym">SPY</td><td class="num neg">$-44.22</td><td class="num neg">-1.28%</td></tr><tr><td class="sym">JNJ</td><td class="num pos">+$188.80</td><td class="num pos">+2.22%</td></tr><tr><td class="sym">VOO</td><td class="num pos">+$281.49</td><td class="num pos">+2.85%</td></tr><tr><td class="sym">AAPL</td><td class="num pos">+$637.18</td><td class="num pos">+4.75%</td></tr></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Earnings Calendar</h2>
+      <div class="grid-2">
+        <div><h3>Past 60 days</h3><table class="data compact"><thead><tr><th>Filed</th><th>Symbol</th><th>Period</th><th class="num">EPS Act</th><th class="num">EPS Est</th><th>EPS Surprise</th><th>Rev Surprise</th></tr></thead><tbody><tr><td>2026-10-30</td><td class="sym">AAPL</td><td>Q4</td><td class="num">1.85</td><td class="num">1.78</td><td><span class="pos">BEAT +3.9%</span></td><td>—</td></tr></tbody></table></div>
+        <div><h3>Next 45 days (estimated)</h3><table class="data compact"><thead><tr><th>Expected ~</th><th>Symbol</th><th>Last Filed</th><th>Last Period</th></tr></thead><tbody><tr><td>2026-11-25</td><td class="sym">MSFT</td><td>2026-08-27</td><td>2026-06-30</td></tr></tbody></table><p class="small-note">Expected dates are estimates: last filing + 90d (quarterly) or +365d (annual). Treat as guidance, not confirmation.</p></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Realized P&amp;L Log</h2>
+      <div class="grid-2">
+        <div>
+          <h3>Summary by Symbol</h3>
+          <table class="data compact">
+            <thead><tr><th>Symbol</th><th class="num">Matches</th><th class="num">Realized P&amp;L</th></tr></thead>
+            <tbody><tr><td class="sym">NVDA</td><td class="num">1</td><td class="num pos">+$280.36</td></tr></tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Closed matches</h3>
+          <table class="data compact small">
+            <thead><tr><th>Date</th><th>Symbol</th><th>Account</th><th class="num">Qty</th>
+              <th class="num">Buy/sh</th><th class="num">Sell/sh</th><th class="num">P&amp;L</th></tr></thead>
+            <tbody><tr><td>2026-10-09</td><td class="sym">NVDA</td><td>Broker B</td><td class="num">20.0000</td><td class="num">$142.36</td><td class="num">$156.37</td><td class="num pos">+$280.36</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Cash Positions</h2>
+      <table class="data compact">
+        <thead><tr><th>Account</th><th class="num">Cash</th></tr></thead>
+        <tbody><tr><td>Broker A</td><td class="num">$4,820.55</td></tr><tr><td>Broker B</td><td class="num">$1,290.00</td></tr>
+          <tr class="total"><td><strong>Total</strong></td>
+            <td class="num"><strong>$6,110.55</strong></td></tr>
+        </tbody>
+      </table>
+    </section>
+<div class="footer">Generated by PortfolioDB · 2026-11-13 22:00 IST<br>
+Informational only — not investment advice, not tax figures, and no substitute for a licensed adviser.
+This file is a standalone artefact: it travels without the app or its README, so the caveat travels with it.</div>
+</div>
+</body>
+</html>
