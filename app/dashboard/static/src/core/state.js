@@ -16,6 +16,16 @@ export const app = {
 export function initState(D) {
   app.D = D && typeof D === 'object' ? D : {};
   app.cfg = readConfig(app.D);
+  // Without a config block, the symbol the server actually computed against
+  // (returns.benchmarkSymbol / risk.benchmark) beats the SPY default.
+  const c = app.D.config && typeof app.D.config === 'object' ? app.D.config : {};
+  if (!c.benchmark_symbol) {
+    const used = (app.D.returns || {}).benchmarkSymbol || (app.D.risk || {}).benchmark;
+    if (typeof used === 'string' && used.trim()) {
+      app.cfg.benchmarkSymbol = used.trim();
+      if (!c.benchmark_label) app.cfg.benchmarkLabel = used.trim();
+    }
+  }
   app.stocks = app.D.stocks || {};
   app.cash = Number(app.D.cash) || 0;
 }

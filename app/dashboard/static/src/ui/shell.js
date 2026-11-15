@@ -61,6 +61,19 @@ function initStatus() {
       ? 'Some sections could not be loaded and are shown empty — ' + degraded.join(' · ') + '. Check the dashboard log.'
       : '';
   }
+  renderCurrencyWarnings();
+}
+
+/** Visible notice for every amount the totals could not treat as dollars. */
+export function renderCurrencyWarnings() {
+  const el = $('#currency-warn');
+  if (!el) return;
+  const rows = (Array.isArray(app.D.currencyWarnings) ? app.D.currencyWarnings : [])
+    .filter((w) => w && typeof w === 'object');
+  el.hidden = !rows.length;
+  if (!rows.length) { setHTML(el, html``); return; }
+  const verb = (w) => (w.treatment === 'excluded' ? 'left out of totals' : 'added without conversion');
+  setHTML(el, html`<b>${rows.length === 1 ? 'One amount is' : rows.length + ' amounts are'} not in ${app.cfg.currency}.</b><ul class="currency-warn__list">${rows.map((w) => html`<li>${w.message || ((w.kind || 'amount') + ' in ' + (w.currency || '?') + ': ' + verb(w))}</li>`)}</ul>`);
 }
 
 let rail, scrim, menuBtn;

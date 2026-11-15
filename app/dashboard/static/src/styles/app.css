@@ -627,3 +627,5 @@ td.flash-down{animation:flashDown 1.2s ease-out}
 .alerts-note{font-size:var(--fs-meta);color:var(--muted);margin-top:12px;line-height:1.5}
 /* Three counters (unread, triggered, watching) share the 340px column. */
 .alerts-grid .stat-row{flex-wrap:nowrap}.alerts-grid .stat-mini{flex:1 1 0}
+/* Amounts outside the reporting currency (DATA.currencyWarnings). */
+.currency-warn b{display:block;margin-bottom:4px}.currency-warn__list{margin:0;padding-left:18px;display:grid;gap:2px}

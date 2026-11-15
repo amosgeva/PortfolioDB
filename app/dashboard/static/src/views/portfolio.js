@@ -59,7 +59,11 @@ export function renderReturns() {
   if (!host) return;
   const periods = R.periods || [];
   const label = app.cfg.benchmarkLabel;
-  setText($('#returns-sub'), (R.basis ? R.basis + ' · ' : '') + 'benchmark ' + (R.benchmark || label));
+  // benchmarkAvailable === false: the server has no history for the configured
+  // benchmark, so its column is empty for a reason the reader should see.
+  const missing = R.benchmarkAvailable === false;
+  setText($('#returns-sub'), (R.basis ? R.basis + ' · ' : '') + 'benchmark ' + (R.benchmark || label) +
+    (missing ? ' · no ' + label + ' price history collected yet' : ''));
   if (!periods.some((p) => p.portfolio != null)) {
     setHTML(host, html`<div class="empty">Not enough snapshot history for period returns yet.</div>`);
     return;

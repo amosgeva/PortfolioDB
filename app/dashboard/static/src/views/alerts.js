@@ -38,19 +38,27 @@ export function alertItems(alerts, read) {
   return alerts.map((a) => {
     const sym = String(a.symbol == null ? '' : a.symbol);
     const dir = dirOf(a);
-    const level = Number(a.level);
-    const levelTxt = Number.isFinite(level) ? F.money(level) : '—';
+    // effective_level is the level actually compared: the entered level
+    // restated through any split recorded since. Say so when they differ.
+    const entered = Number(a.level);
+    const eff = a.effective_level == null ? entered : Number(a.effective_level);
+    const levelTxt = Number.isFinite(eff) ? F.money(eff) : '—';
+    const restated = Number.isFinite(eff) && Number.isFinite(entered) && F.money(eff) !== F.money(entered)
+      ? ' (entered as ' + F.money(entered) + ', restated for a split)' : '';
     const last = a.last_price == null ? null : Number(a.last_price);
     const lastTxt = last == null || !Number.isFinite(last) ? 'no price collected yet'
       : 'last ' + F.money(last) + (a.last_price_ts ? ' at ' + when(a.last_price_ts) : '');
+    // triggered: true / false, or null when the symbol has no quote - unknown,
+    // which must not read as "not triggered".
     const triggered = a.triggered === true;
+    const unknown = a.triggered !== true && a.triggered !== false;
     const title = triggered
       ? sym + (dir === 'above' ? ' is above ' : ' is below ') + levelTxt
       : sym + (dir === 'above' ? ' rises above ' : ' falls below ') + levelTxt;
     return {
-      key: 'alert:' + a.id, id: String(a.id), cat: 'alert', sym, dir, triggered,
+      key: 'alert:' + a.id, id: String(a.id), cat: 'alert', sym, dir, triggered, unknown,
       status: triggered ? 'triggered' : 'armed', title,
-      body: (a.note ? String(a.note) + ' — ' : '') + lastTxt + '.',
+      body: (a.note ? String(a.note) + ' — ' : '') + lastTxt + restated + '.',
       src: 'Price alert', time: when(a.created_at) ? 'set ' + when(a.created_at) : '',
       unread: triggered && !read.has(String(a.id)),
     };
@@ -79,7 +87,8 @@ function iconFor(it) {
 function itemHTML(it) {
   const ic = iconFor(it);
   let badge;
-  if (it.cat === 'alert' && it.status === 'armed') badge = html`<span class="tag tag--neu">WATCHING</span>`;
+  if (it.cat === 'alert' && it.unknown) badge = html`<span class="tag tag--neu" title="No price has been collected for this symbol, so the alert cannot be evaluated">NO QUOTE</span>`;
+  else if (it.cat === 'alert' && it.status === 'armed') badge = html`<span class="tag tag--neu">WATCHING</span>`;
   else if (it.cat === 'alert') badge = html`<span class="tag ${it.dir === 'below' ? 'tag--down' : 'tag--up'}">TRIGGERED</span>`;
   else badge = html`<span class="tag tag--neu">${it.sym || '—'}</span>`;
   const url = safeUrl(it.url);
@@ -121,7 +130,8 @@ function renderAlertList() {
     setHTML(host, html`<div class="empty" style="padding:14px 4px">No price alerts set.</div>`);
     return;
   }
-  setHTML(host, html`<ul class="alist">${alerts.map((it) => html`<li class="alist__row"><span class="tag ${it.status === 'triggered' ? (it.dir === 'below' ? 'tag--down' : 'tag--up') : 'tag--neu'}">${it.status === 'triggered' ? 'TRIGGERED' : 'WATCHING'}</span><span class="alist__t">${it.title}</span></li>`)}</ul>`);
+  const tag = (it) => (it.status === 'triggered' ? 'TRIGGERED' : it.unknown ? 'NO QUOTE' : 'WATCHING');
+  setHTML(host, html`<ul class="alist">${alerts.map((it) => html`<li class="alist__row"><span class="tag ${it.status === 'triggered' ? (it.dir === 'below' ? 'tag--down' : 'tag--up') : 'tag--neu'}">${tag(it)}</span><span class="alist__t">${it.title}</span></li>`)}</ul>`);
 }
 
 export function markAllRead() {
@@ -141,7 +151,7 @@ export function initAlerts() {
   const ma = $('#mark-all');
   if (ma) ma.addEventListener('click', markAllRead);
   const manage = $('[data-manage-alerts]');
-  if (manage) manage.addEventListener('click', () => goNative('manage', '&tab=alerts'));
+  if (manage) manage.addEventListener('click', () => goNative('manage'));
   renderAlertList();
   renderFeed();
 }

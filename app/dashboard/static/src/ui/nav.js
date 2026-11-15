@@ -2,7 +2,7 @@
 // the native Streamlit pages (Manage, Advisor, Data Health).
 
 import { $, $all, clickable, setText } from '../core/dom.js';
-import { syncUrl, topNavigate, onParent, parentQueryView, session } from '../core/host.js';
+import { syncUrl, nativeNav, onParent, parentQueryView, session } from '../core/host.js';
 import { app } from '../core/state.js';
 import { openRail } from './shell.js';
 
@@ -47,8 +47,8 @@ export function switchView(name, skipHistory) {
   if (!skipHistory) syncUrl(view);
 }
 
-/** Open one of the native pages; `extra` is appended to the query string. */
-export function goNative(view, extra) { topNavigate('?view=' + view + (extra || '')); }
+/** Open one of the native pages (Manage, Advisor, Data Health). */
+export function goNative(view) { nativeNav(view); }
 
 export function initNav() {
   $all('.nav a[data-view]').forEach((a) => clickable(a, () => switchView(a.dataset.view)));

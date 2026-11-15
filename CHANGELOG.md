@@ -108,12 +108,25 @@ needs a schema step says so under **Upgrading**.
   and lots exports; numbers stay numeric.
 - **Privacy: no third-party requests by default.** Space Grotesk and
   JetBrains Mono are self-hosted (SIL OFL, licences in
-  `app/dashboard/static/fonts/`) for the dashboard and the native pages. The
+  `app/dashboard/static/fonts/`); `fonts/fonts.css` is there for the native
+  pages to load too. The
   ticker-logo CDN is used only when the payload's `config.logo_cdn` is true;
   otherwise a symbol without a cached logo shows its letter badge.
 - **Price alerts are stored, not armed in the page.** The Alerts view lists
   the alerts kept in the database (created on Manage → Alerts) and no longer
-  offers a form whose alerts vanished on refresh.
+  offers a form whose alerts vanished on refresh. The level shown is the one
+  compared, restated for any split since; an alert on a symbol with no quote
+  says "no quote" instead of "watching".
+- Amounts recorded in a currency other than USD are named in a notice at the
+  top of the dashboard, with what was done with each (added unconverted, or
+  left out). A non-USD cash balance is listed in the cash evidence but not
+  summed.
+- The KPI evidence follows the server's corrected figures: unrealized P&L is
+  market value less the cost of *priced* positions (an unpriced position is
+  named, not shown as a loss), total return is shown over peak invested
+  capital, and a ratio the server cannot compute reads "n/a". The 1Y value
+  chart says when it is drawn from all history because less than a year has
+  been collected.
 - The benchmark label follows `config.benchmark_label`; the reporting time
   zone and currency come from the payload (UTC and USD when absent — the
   `Asia/Jerusalem` fallback is gone); NYSE holidays and 13:00 early closes are

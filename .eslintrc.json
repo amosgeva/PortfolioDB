@@ -1,5 +1,4 @@
 {
-  "//": "Read by Codacy's ESLint 8 only (its 'use configuration file' mode needs an eslintrc). The project's own lint is eslint.config.mjs (ESLint 10, run by frontend.yml); keep the rules here in step with it.",
   "root": true,
   "env": { "browser": true, "es2022": true },
   "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },

@@ -23,6 +23,9 @@ export const STREAMLIT = {
   refreshButton: '.st-key-bg_refresh button',
   // The flex item that reserves st.iframe's server-side height.
   elementContainer: '[data-testid="stElementContainer"]',
+  // st.button(key="pdb_nav_<view>") per native page: a rerun in the same
+  // session, so the unlock and form state survive (the fix for audit N-5).
+  navButton: (view) => '.st-key-pdb_nav_' + view + ' button',
 };
 
 const REGISTRY = '__pdbHostListeners';
@@ -104,6 +107,16 @@ export function topNavigate(qs) {
     return;
   }
   try { window.open(qs, '_self'); } catch (e) { window.location.href = qs; }
+}
+
+/** Open a native Streamlit page: the parent's hidden nav button when it has
+ *  one (no reload), a page load otherwise. */
+export function nativeNav(view) {
+  const d = parentDoc();
+  const btn = d && /^[a-z_]+$/.test(view) ? d.querySelector(STREAMLIT.navButton(view)) : null;
+  if (btn) { btn.click(); return true; }
+  topNavigate('?view=' + view);
+  return false;
 }
 
 /** Keep ?view= in the parent URL in step with the active pane. */

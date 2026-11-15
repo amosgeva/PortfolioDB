@@ -49,10 +49,11 @@ export function buildHtml(payload, initialView = 'portfolio') {
 const IGNORED = [/^Not implemented: /];
 
 /** A Streamlit-like parent page. Reuse one across mounts to test remounting. */
-export function makeParent({ refreshButton = true } = {}) {
+export function makeParent({ refreshButton = true, navButtons = [] } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head><title>Streamlit</title></head><body>
     <div data-testid="stElementContainer" style="flex:0 0 1180px"><iframe id="pdb-frame" title="dashboard"></iframe></div>
     ${refreshButton ? '<div class="st-key-bg_refresh"><button type="button">refresh</button></div>' : ''}
+    ${navButtons.map((v) => `<div class="st-key-pdb_nav_${v}"><button type="button" data-nav="${v}">${v}</button></div>`).join('')}
   </body></html>`, { url: 'http://localhost:8501/?view=portfolio', pretendToBeVisual: true });
   const w = dom.window;
   // Track live listeners so a test can count what a mount left behind.
@@ -60,9 +61,10 @@ export function makeParent({ refreshButton = true } = {}) {
   const add = w.addEventListener.bind(w), remove = w.removeEventListener.bind(w);
   w.addEventListener = (type, fn, opt) => { if (!live.has(type)) live.set(type, new Set()); live.get(type).add(fn); add(type, fn, opt); };
   w.removeEventListener = (type, fn, opt) => { if (live.has(type)) live.get(type).delete(fn); remove(type, fn, opt); };
-  const clicks = { refresh: 0, anchors: [] };
+  const clicks = { refresh: 0, anchors: [], nav: [] };
   const btn = w.document.querySelector('.st-key-bg_refresh button');
   if (btn) btn.addEventListener('click', () => { clicks.refresh += 1; });
+  w.document.querySelectorAll('[data-nav]').forEach((b) => b.addEventListener('click', () => clicks.nav.push(b.dataset.nav)));
   w.document.addEventListener('click', (e) => { if (e.target.tagName === 'A') { clicks.anchors.push(e.target.getAttribute('href')); e.preventDefault(); } }, true);
   return { dom, window: w, live, clicks, listenerCount: (t) => (live.get(t) ? live.get(t).size : 0) };
 }

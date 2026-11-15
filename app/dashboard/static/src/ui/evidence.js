@@ -4,7 +4,7 @@
 import { html } from '../core/html.js';
 import { app, holdingRows, totals } from '../core/state.js';
 import * as F from '../core/format.js';
-import { cashEntries, entryDate } from '../views/kpis.js';
+import { cashEntries, entryDate, unpricedSymbols } from '../views/kpis.js';
 
 function evEq(rows, result) {
   return html`<table class="ev-eq">${rows.map((r) => html`<tr><td class="ev-op">${r[2] || ''}</td><td>${r[0]}</td><td class="num${r[3] ? ' ' + r[3] : ''}">${r[1]}</td></tr>`)}<tr class="ev-sum"><td class="ev-op"></td><td>${result[0]}</td><td class="num${result[2] ? ' ' + result[2] : ''}">${result[1]}</td></tr></table>`;
@@ -55,22 +55,39 @@ export function kpiEvidence(key, routes) {
         route: holdings,
       };
     }
-    case 'unrealized': return {
-      title: 'Unrealized P&L', value: F.signed(k.unrealized),
-      what: 'What your open positions are worth now, less what they cost you. Nothing here has been sold, so none of it is booked.',
-      eq: html`${evEq([['Market value', F.money(k.marketValue || 0), ''], ['Cost basis', F.money(k.costBasis || 0), '−']], ['Unrealized P&L', F.signed(k.unrealized), (k.unrealized || 0) >= 0 ? 'up' : 'down'])}${evRounding([k.marketValue || 0, -(k.costBasis || 0)], k.unrealized || 0)}`,
-      table: evTable(['Symbol', 'Cost', 'Value', 'Gain'], rs.slice().sort((a, b) => b.gl - a.gl).map((r) => [bold(r.sym), F.money(r.cost), F.money(r.mktVal), tone(r.gl, F.signed(r.gl))])),
-      tableNote: evRounding(rs.map((r) => r.gl), k.unrealized || 0),
-      route: holdings,
-    };
+    case 'unrealized': {
+      // Unrealized is market value less the cost of the positions that HAVE a
+      // price. A position with no quote has an unknown value, not a value of
+      // zero, so its cost is left out rather than counted as a loss.
+      const priced = k.pricedCostBasis != null ? k.pricedCostBasis : (k.costBasis || 0);
+      const unpriced = unpricedSymbols();
+      return {
+        title: 'Unrealized P&L', value: F.signed(k.unrealized),
+        what: 'What your priced open positions are worth now, less what they cost you. Nothing here has been sold, so none of it is booked.',
+        eq: html`${evEq([['Market value', F.money(k.marketValue || 0), ''], [k.pricedCostBasis != null ? 'Cost basis of priced positions' : 'Cost basis', F.money(priced), '−']], ['Unrealized P&L', F.signed(k.unrealized), (k.unrealized || 0) >= 0 ? 'up' : 'down'])}${evRounding([k.marketValue || 0, -priced], k.unrealized || 0)}`,
+        table: evTable(['Symbol', 'Cost', 'Value', 'Gain'], rs.slice().sort((a, b) => b.gl - a.gl).map((r) => [bold(r.sym), F.money(r.cost), F.money(r.mktVal), tone(r.gl, F.signed(r.gl))])),
+        tableNote: evRounding(rs.map((r) => r.gl), k.unrealized || 0),
+        note: unpriced.length
+          ? unpriced.length + ' position' + (unpriced.length === 1 ? '' : 's') + ' with no price yet (' + unpriced.join(', ') + ', cost ' +
+            F.money(k.unpricedCostBasis || 0) + ') ' + (unpriced.length === 1 ? 'is' : 'are') + ' left out: an unknown price is not a loss.'
+          : undefined,
+        route: holdings,
+      };
+    }
     case 'cash': {
       const accts = cashEntries();
+      const counted = accts.filter((a) => a.inTotal);
+      const left = accts.filter((a) => !a.inTotal);
+      // A balance in another currency is shown in its own unit, never as money
+      // in the reporting currency, and is not part of the sum.
+      const bal = (a) => (a.inTotal || !a.currency ? F.money(a.cash) : F.num(a.cash, 2) + ' ' + a.currency);
       return {
         title: CASH_LABEL, value: F.money(k.cash || 0),
         what: 'The balance you last typed in for each account. PortfolioDB never contacts a broker, so this is not settled cash or buying power: it is exactly as current as your last entry and no more.',
-        eq: accts.length > 1 ? html`${evEq(accts.map((a, i) => [a.account, F.money(a.cash), i ? '+' : '']), [CASH_LABEL, F.money(k.cash || 0)])}${evRounding(accts.map((a) => a.cash), k.cash || 0)}` : '',
-        table: evTable(['Account', 'Balance', 'Entered'], accts.map((a) => [bold(a.account), F.money(a.cash), a.asOf ? entryDate(a.asOf) : '—'])),
-        note: 'Update it from Manage → Cash, or with make set-cash.',
+        eq: counted.length > 1 ? html`${evEq(counted.map((a, i) => [a.account, F.money(a.cash), i ? '+' : '']), [CASH_LABEL, F.money(k.cash || 0)])}${evRounding(counted.map((a) => a.cash), k.cash || 0)}` : '',
+        table: evTable(['Account', 'Balance', 'Entered', 'In total'], accts.map((a) => [bold(a.account), bal(a), a.asOf ? entryDate(a.asOf) : '—', a.inTotal ? 'yes' : 'no'])),
+        note: (left.length ? 'Only ' + app.cfg.currency + ' balances are added up; ' + left.length + ' in another currency ' + (left.length === 1 ? 'is' : 'are') + ' listed but left out. ' : '') +
+          'Update it from Manage → Cash, or with make set-cash.',
       };
     }
     case 'realized': return {
@@ -82,21 +99,33 @@ export function kpiEvidence(key, routes) {
       note: 'Every match is recomputed from the lots on each read — there is no stored total to drift.',
       route: { label: 'See every lot', run: () => routes.goView('history') },
     };
-    case 'totalReturn': return {
-      title: 'Total return', value: F.pct(k.totalReturnPct || 0),
-      what: 'Everything you have made, booked or not, against what you put in.',
-      eq: evEq([['Realized P&L', F.signed(k.realized), ''], ['Unrealized P&L', F.signed(k.unrealized), '+'], ['Cost basis', F.money(k.costBasis || 0), '÷']],
-        ['Total return', F.pct(k.totalReturnPct || 0), (k.totalReturnPct || 0) >= 0 ? 'up' : 'down']),
-      table: '',
-      note: 'Dividends are excluded here. With them it is ' + F.pct(k.totalReturnWithIncomePct || 0) + '.',
-    };
+    case 'totalReturn': {
+      // The divisor is invested capital when the server sends it (the most
+      // capital the ledger ever had committed), so selling most of a book no
+      // longer shrinks the denominator to what is still open.
+      const inv = k.investedCapital != null;
+      return {
+        title: 'Total return', value: F.pct(k.totalReturnPct),
+        what: inv ? 'Everything you have made, booked or not, against the most capital you ever had committed.'
+          : 'Everything you have made, booked or not, against what you put in.',
+        eq: evEq([['Realized P&L', F.signed(k.realized), ''], ['Unrealized P&L', F.signed(k.unrealized), '+'],
+          [inv ? 'Invested capital (peak)' : 'Cost basis', F.money(inv ? k.investedCapital : (k.costBasis || 0)), '÷']],
+        ['Total return', F.pct(k.totalReturnPct), k.totalReturnPct == null ? '' : (k.totalReturnPct >= 0 ? 'up' : 'down')]),
+        table: '',
+        note: (typeof k.totalReturnBasis === 'string' ? 'Basis: ' + k.totalReturnBasis + '. ' : '') +
+          (k.totalReturnPartial ? 'Positions without a price are not in the numerator. ' : '') +
+          'Dividends are excluded here. With them it is ' + F.pct(k.totalReturnWithIncomePct) + '.',
+      };
+    }
     case 'costBasis': return {
       title: 'Cost basis', value: F.money(k.costBasis || 0),
       what: 'What your open lots cost, including the fees you paid to buy them. Sold lots have left this number.',
       eq: '',
       table: evTable(['Symbol', 'Qty', 'Avg cost', 'Cost'], rs.slice().sort((a, b) => b.cost - a.cost).map((r) => [bold(r.sym), F.qty(r.qty), F.money(r.avgCost), F.money(r.cost)])),
       tableNote: evRounding(rs.map((r) => r.cost), k.costBasis || 0),
-      note: 'Fees paid so far: ' + F.money(k.totalFees || 0) + ', which is ' + F.pct(k.feeDragPct || 0) + ' of cost.',
+      note: 'Fees paid so far: ' + F.money(k.totalFees || 0) + ', which is ' + F.pct(k.feeDragPct) +
+        (k.investedCapital != null ? ' of invested capital.' : ' of cost.') +
+        (unpricedSymbols().length ? ' Includes ' + F.money(k.unpricedCostBasis || 0) + ' for positions with no price yet.' : ''),
       route: holdings,
     };
     case 'deltaLast': {
@@ -118,8 +147,11 @@ export function kpiEvidence(key, routes) {
       title: 'Dividends', value: F.money(k.dividends || 0),
       what: 'Income recorded against your holdings. Nothing is estimated or projected here — these are payments entered into the ledger.',
       eq: evEq([['All time', F.money(k.dividends || 0), ''], ['Last twelve months', F.money(k.dividendsTtm || 0), ''], ['Cost basis', F.money(k.costBasis || 0), '÷']],
-        ['Yield on cost (TTM)', F.pct(k.yieldOnCostPct || 0)]),
+        ['Yield on cost (TTM)', F.pct(k.yieldOnCostPct)]),
       table: '',
+      note: (app.D.currencyWarnings || []).some((w) => w && w.kind === 'income')
+        ? 'Only ' + app.cfg.currency + ' income is counted; income recorded in another currency is listed in the notice at the top of the page.'
+        : undefined,
     };
     default: return null;
   }

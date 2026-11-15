@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mount, makeParent, click, key, pointer, buildHtmlPlaceholders, STATIC } from './harness.mjs';
-import { demo, withConfig, SAMPLE_ALERTS } from './fixtures.mjs';
+import { demo, withConfig, w2b, SAMPLE_ALERTS } from './fixtures.mjs';
 
 const $ = (page, s) => page.document.querySelector(s);
 const $$ = (page, s) => Array.from(page.document.querySelectorAll(s));
@@ -243,7 +243,7 @@ test('stored alerts are listed, counted and routed to Manage; no in-memory form 
     assert.equal($(page, '#unread-count').textContent, '0');
     assert.deepEqual(JSON.parse(page.window.localStorage.getItem('pdb_alerts_read')), ['11']);
     click(page.window, $(page, '[data-manage-alerts]'));
-    assert.equal(parent.clicks.anchors.at(-1), '?view=manage&tab=alerts');
+    assert.equal(parent.clicks.anchors.at(-1), '?view=manage');
   });
   // A server without stored alerts: an empty list and the same route.
   withPage(demo(), {}, (page) => {
@@ -338,3 +338,84 @@ test('a payload missing whole sections still mounts', () => withPage({}, {}, (pa
   assert.equal($(page, '#kpi-total').textContent, '$0.00');
   for (const view of ['movers', 'stats', 'alerts', 'fundamentals', 'history']) click(page.window, $(page, '.nav a[data-view="' + view + '"]'));
 }));
+
+test('W2b contract: stored alerts show the split-restated level and "no quote" for triggered:null', () => withPage(w2b(), {}, (page) => {
+  click(page.window, $(page, '.nav a[data-view="alerts"]'));
+  const feed = $(page, '#feed').textContent;
+  assert.ok(feed.includes('NVDA is above $100.00'), 'effective_level is the one shown');
+  assert.ok(feed.includes('entered as $400.00, restated for a split'));
+  assert.ok(feed.includes('NO QUOTE'), 'triggered null is not "watching"');
+  assert.equal($(page, '#triggered-count').textContent, '1');
+  assert.ok($(page, '#alert-list').textContent.includes('NO QUOTE'));
+}));
+
+test('W2b contract: currency warnings are shown, and cash outside USD is listed but not summed', () => withPage(w2b(), {}, (page) => {
+  const warn = $(page, '#currency-warn');
+  assert.equal(warn.hidden, false);
+  assert.match(warn.textContent, /2 amounts are not in USD/);
+  assert.ok(warn.textContent.includes('SAP is registered in EUR'));
+  assert.equal($$(page, '#currency-warn li').length, 2);
+  assert.match($(page, '#kpi-cash-sub').textContent, /1 not in USD, left out$/);
+  click(page.window, $(page, '[data-kpi="cash"]'));
+  const bd = $(page, '[data-drawer-bd]').textContent;
+  assert.ok(bd.includes('900.00 EUR'), 'foreign balance shown in its own currency');
+  assert.ok(bd.includes('Only USD balances are added up'));
+}));
+
+test('no currency warnings: the notice stays hidden', () => withPage(demo(), {}, (page) => {
+  assert.equal($(page, '#currency-warn').hidden, true);
+}));
+
+test('W2b contract: unrealized uses priced cost basis; total return is over invested capital; null ratios read n/a', () => withPage(w2b(), {}, (page) => {
+  const p = w2b();
+  assert.equal($(page, '#kpi-return').textContent, 'n/a');
+  assert.match($(page, '#kpi-return-sub').textContent, /priced positions only/);
+  assert.match($(page, '#kpi-gl-sub').textContent, /1 unpriced left out/);
+  assert.match($(page, '#kpi-div-sub').textContent, /YoC n\/a/);
+  click(page.window, $(page, '[data-kpi="unrealized"]'));
+  let bd = $(page, '[data-drawer-bd]').textContent;
+  assert.ok(bd.includes('Cost basis of priced positions'));
+  assert.ok(bd.includes('$' + p.kpi.pricedCostBasis.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })));
+  assert.ok(bd.includes('ZZZZ') && bd.includes('an unknown price is not a loss'));
+  key(page.window, page.document, 'Escape');
+  click(page.window, $(page, '[data-kpi="totalReturn"]'));
+  bd = $(page, '[data-drawer-bd]').textContent;
+  assert.ok(bd.includes('Invested capital (peak)') && bd.includes('$60,000.00'), 'the divisor shown is invested capital');
+  assert.ok(!bd.includes('Cost basis'), 'no longer "÷ cost basis"');
+  assert.ok(bd.includes('peak net invested capital'));
+  key(page.window, page.document, 'Escape');
+  click(page.window, $(page, '[data-kpi="costBasis"]'));
+  assert.ok($(page, '[data-drawer-bd]').textContent.includes('of invested capital'));
+}));
+
+test('W2b contract: the 1Y value chart says when it is all history', () => withPage(w2b(), {}, (page) => {
+  const chip = $(page, '#pv-chips [data-range="1Y"]');
+  click(page.window, chip);
+  assert.match($(page, '#pv-chart .pv-plot').getAttribute('aria-label'), /All history \(less than 1Y collected\)/);
+  assert.ok($(page, '#pv-chart').textContent.includes('All history (less than 1Y collected)'));
+  assert.match(chip.title, /all history/);
+}));
+
+test('W2b contract: without a config block the benchmark the server used labels the page', () => {
+  const p = demo();
+  p.returns = { ...p.returns, benchmarkSymbol: 'VOO', benchmarkAvailable: false };
+  withPage(p, {}, (page) => {
+    assert.ok($(page, '#returns-strip').textContent.includes('VOO'));
+    assert.match($(page, '#returns-sub').textContent, /no VOO price history collected yet/);
+  });
+});
+
+test('native pages open through Streamlit’s hidden nav buttons when present (W5), else a page load', () => {
+  const parent = makeParent({ navButtons: ['manage', 'advisor', 'health'] });
+  withPage(demo(), { parent }, (page) => {
+    click(page.window, $(page, '.nav a[data-nav="health"]'));
+    click(page.window, $(page, '.nav a[data-nav="manage"]'));
+    assert.deepEqual(parent.clicks.nav, ['health', 'manage']);
+    assert.equal(parent.clicks.anchors.length, 0, 'no page load');
+  });
+  const bare = makeParent();
+  withPage(demo(), { parent: bare }, (page) => {
+    click(page.window, $(page, '.nav a[data-nav="advisor"]'));
+    assert.deepEqual(bare.clicks.anchors, ['?view=advisor']);
+  });
+});

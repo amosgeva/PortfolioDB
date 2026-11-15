@@ -109,6 +109,14 @@
   function initState(D) {
     app.D = D && typeof D === "object" ? D : {};
     app.cfg = readConfig(app.D);
+    const c = app.D.config && typeof app.D.config === "object" ? app.D.config : {};
+    if (!c.benchmark_symbol) {
+      const used = (app.D.returns || {}).benchmarkSymbol || (app.D.risk || {}).benchmark;
+      if (typeof used === "string" && used.trim()) {
+        app.cfg.benchmarkSymbol = used.trim();
+        if (!c.benchmark_label) app.cfg.benchmarkLabel = used.trim();
+      }
+    }
     app.stocks = app.D.stocks || {};
     app.cash = Number(app.D.cash) || 0;
   }
@@ -301,7 +309,10 @@
     // an element carrying this key class.
     refreshButton: ".st-key-bg_refresh button",
     // The flex item that reserves st.iframe's server-side height.
-    elementContainer: '[data-testid="stElementContainer"]'
+    elementContainer: '[data-testid="stElementContainer"]',
+    // st.button(key="pdb_nav_<view>") per native page: a rerun in the same
+    // session, so the unlock and form state survive (the fix for audit N-5).
+    navButton: (view) => ".st-key-pdb_nav_" + view + " button"
   };
   var REGISTRY = "__pdbHostListeners";
   function parentWin() {
@@ -403,6 +414,16 @@
     } catch (e) {
       window.location.href = qs;
     }
+  }
+  function nativeNav(view) {
+    const d = parentDoc();
+    const btn = d && /^[a-z_]+$/.test(view) ? d.querySelector(STREAMLIT.navButton(view)) : null;
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    topNavigate("?view=" + view);
+    return false;
   }
   function syncUrl(view, replace) {
     const p = parentWin();
@@ -891,6 +912,19 @@
       degEl.hidden = !degraded.length;
       degEl.textContent = degraded.length ? "Some sections could not be loaded and are shown empty — " + degraded.join(" · ") + ". Check the dashboard log." : "";
     }
+    renderCurrencyWarnings();
+  }
+  function renderCurrencyWarnings() {
+    const el3 = $("#currency-warn");
+    if (!el3) return;
+    const rows = (Array.isArray(app.D.currencyWarnings) ? app.D.currencyWarnings : []).filter((w) => w && typeof w === "object");
+    el3.hidden = !rows.length;
+    if (!rows.length) {
+      setHTML(el3, html``);
+      return;
+    }
+    const verb = (w) => w.treatment === "excluded" ? "left out of totals" : "added without conversion";
+    setHTML(el3, html`<b>${rows.length === 1 ? "One amount is" : rows.length + " amounts are"} not in ${app.cfg.currency}.</b><ul class="currency-warn__list">${rows.map((w) => html`<li>${w.message || (w.kind || "amount") + " in " + (w.currency || "?") + ": " + verb(w)}</li>`)}</ul>`);
   }
   var rail;
   var scrim;
@@ -1024,8 +1058,8 @@
     }
     if (!skipHistory) syncUrl(view);
   }
-  function goNative(view, extra) {
-    topNavigate("?view=" + view + (extra || ""));
+  function goNative(view) {
+    nativeNav(view);
   }
   function initNav() {
     $all(".nav a[data-view]").forEach((a) => clickable(a, () => switchView(a.dataset.view)));
@@ -1077,22 +1111,35 @@
   function cashEntries() {
     const k = app.D.kpi || {};
     const rows = Array.isArray(k.cashAccounts) ? k.cashAccounts : Array.isArray(app.D.cashAccounts) ? app.D.cashAccounts : [];
-    return rows.map((a) => ({ account: a.account, cash: Number(a.cash) || 0, asOf: a.as_of || a.asOf || null }));
+    return rows.map((a) => ({
+      account: a.account,
+      cash: Number(a.cash) || 0,
+      asOf: a.as_of || a.asOf || null,
+      currency: typeof a.currency === "string" ? a.currency : null,
+      inTotal: a.inTotal !== false
+    }));
+  }
+  function unpricedSymbols() {
+    const u = (app.D.kpi || {}).unpricedSymbols;
+    return Array.isArray(u) ? u.map(String) : [];
   }
   function entryDate(iso) {
     const t = Date.parse(String(iso || ""));
     return Number.isNaN(t) ? isoDay(iso) || null : fmtDate(t, "date");
   }
   function cashSub() {
-    const rows = cashEntries().filter((a) => a.asOf);
-    if (!rows.length) return cashEntries().length ? "entry date not recorded" : "no balance entered";
+    const all = cashEntries();
+    const left = all.filter((a) => !a.inTotal).length;
+    const tail = left ? " · " + left + " not in " + app.cfg.currency + ", left out" : "";
+    const rows = all.filter((a) => a.asOf && a.inTotal);
+    if (!rows.length) return (all.length ? "entry date not recorded" : "no balance entered") + tail;
     const oldest = rows.reduce((a, b) => Date.parse(a.asOf) <= Date.parse(b.asOf) ? a : b);
-    return (rows.length > 1 ? "oldest entry " : "entered ") + entryDate(oldest.asOf);
+    return (rows.length > 1 ? "oldest entry " : "entered ") + entryDate(oldest.asOf) + tail;
   }
   function narrative() {
     const k = app.D.kpi || {}, dc = k.dayChange || 0, parts = [];
     if (Math.abs(dc) < 5e-3) parts.push("Flat today");
-    else parts.push((dc > 0 ? "Up " : "Down ") + money(Math.abs(dc)) + " (" + pct(k.dayChangePct || 0) + ") today");
+    else parts.push((dc > 0 ? "Up " : "Down ") + money(Math.abs(dc)) + " (" + pct(k.dayChangePct) + ") today");
     const rs = holdingRows();
     if (rs.length && Math.abs(dc) >= 5e-3) {
       const top = rs.slice().sort((a, b) => Math.abs(b.day * b.qty) - Math.abs(a.day * a.qty))[0];
@@ -1136,17 +1183,19 @@
     }
     setText($("#kpi-mktval"), money(k.marketValue || 0));
     setKpi("kpi-gl", signed(k.unrealized), k.unrealized);
-    setHTML($("#kpi-gl-sub"), html`${deltaHTML(k.unrealized || 0, k.unrealizedPct, false)}${muted("open positions")}`);
+    const unpriced = unpricedSymbols();
+    setHTML($("#kpi-gl-sub"), html`${deltaHTML(k.unrealized || 0, k.unrealizedPct, false)}${muted("open positions" + (unpriced.length ? " · " + unpriced.length + " unpriced left out" : ""))}`);
     setText($("#kpi-cash"), money(k.cash || 0));
     setText($("#kpi-cash-sub"), cashSub());
     setKpi("kpi-realized", signed(k.realized), k.realized);
-    setKpi("kpi-return", pct(k.totalReturnPct || 0), k.totalReturnPct);
+    setKpi("kpi-return", pct(k.totalReturnPct), k.totalReturnPct);
+    setText($("#kpi-return-sub"), k.totalReturnPartial ? "Realized + unrealized · priced positions only" : "Realized + unrealized");
     setText($("#kpi-cost"), money(k.costBasis || 0));
     setHTML($("#kpi-cost-sub"), muted((k.activeCount || 0) + " active · " + (k.watchlistCount || 0) + " watching · " + money(k.totalFees || 0) + " fees"));
     setKpi("kpi-delta", signed(k.deltaLast), k.deltaLast);
     setHTML($("#kpi-delta-sub"), muted("since previous snapshot"));
     setText($("#kpi-div"), money(k.dividends || 0));
-    setHTML($("#kpi-div-sub"), muted("TTM " + money(k.dividendsTtm || 0) + " · YoC " + pct(k.yieldOnCostPct || 0) + " · w/ div " + pct(k.totalReturnWithIncomePct || 0)));
+    setHTML($("#kpi-div-sub"), muted("TTM " + money(k.dividendsTtm || 0) + " · YoC " + pct(k.yieldOnCostPct) + " · w/ div " + pct(k.totalReturnWithIncomePct)));
   }
 
   // app/dashboard/static/src/ui/evidence.js
@@ -1197,25 +1246,32 @@
           route: holdings
         };
       }
-      case "unrealized":
+      case "unrealized": {
+        const priced = k.pricedCostBasis != null ? k.pricedCostBasis : k.costBasis || 0;
+        const unpriced = unpricedSymbols();
         return {
           title: "Unrealized P&L",
           value: signed(k.unrealized),
-          what: "What your open positions are worth now, less what they cost you. Nothing here has been sold, so none of it is booked.",
-          eq: html`${evEq([["Market value", money(k.marketValue || 0), ""], ["Cost basis", money(k.costBasis || 0), "−"]], ["Unrealized P&L", signed(k.unrealized), (k.unrealized || 0) >= 0 ? "up" : "down"])}${evRounding([k.marketValue || 0, -(k.costBasis || 0)], k.unrealized || 0)}`,
+          what: "What your priced open positions are worth now, less what they cost you. Nothing here has been sold, so none of it is booked.",
+          eq: html`${evEq([["Market value", money(k.marketValue || 0), ""], [k.pricedCostBasis != null ? "Cost basis of priced positions" : "Cost basis", money(priced), "−"]], ["Unrealized P&L", signed(k.unrealized), (k.unrealized || 0) >= 0 ? "up" : "down"])}${evRounding([k.marketValue || 0, -priced], k.unrealized || 0)}`,
           table: evTable(["Symbol", "Cost", "Value", "Gain"], rs.slice().sort((a, b) => b.gl - a.gl).map((r) => [bold(r.sym), money(r.cost), money(r.mktVal), tone(r.gl, signed(r.gl))])),
           tableNote: evRounding(rs.map((r) => r.gl), k.unrealized || 0),
+          note: unpriced.length ? unpriced.length + " position" + (unpriced.length === 1 ? "" : "s") + " with no price yet (" + unpriced.join(", ") + ", cost " + money(k.unpricedCostBasis || 0) + ") " + (unpriced.length === 1 ? "is" : "are") + " left out: an unknown price is not a loss." : void 0,
           route: holdings
         };
+      }
       case "cash": {
         const accts = cashEntries();
+        const counted = accts.filter((a) => a.inTotal);
+        const left = accts.filter((a) => !a.inTotal);
+        const bal = (a) => a.inTotal || !a.currency ? money(a.cash) : num(a.cash, 2) + " " + a.currency;
         return {
           title: CASH_LABEL,
           value: money(k.cash || 0),
           what: "The balance you last typed in for each account. PortfolioDB never contacts a broker, so this is not settled cash or buying power: it is exactly as current as your last entry and no more.",
-          eq: accts.length > 1 ? html`${evEq(accts.map((a, i) => [a.account, money(a.cash), i ? "+" : ""]), [CASH_LABEL, money(k.cash || 0)])}${evRounding(accts.map((a) => a.cash), k.cash || 0)}` : "",
-          table: evTable(["Account", "Balance", "Entered"], accts.map((a) => [bold(a.account), money(a.cash), a.asOf ? entryDate(a.asOf) : "—"])),
-          note: "Update it from Manage → Cash, or with make set-cash."
+          eq: counted.length > 1 ? html`${evEq(counted.map((a, i) => [a.account, money(a.cash), i ? "+" : ""]), [CASH_LABEL, money(k.cash || 0)])}${evRounding(counted.map((a) => a.cash), k.cash || 0)}` : "",
+          table: evTable(["Account", "Balance", "Entered", "In total"], accts.map((a) => [bold(a.account), bal(a), a.asOf ? entryDate(a.asOf) : "—", a.inTotal ? "yes" : "no"])),
+          note: (left.length ? "Only " + app.cfg.currency + " balances are added up; " + left.length + " in another currency " + (left.length === 1 ? "is" : "are") + " listed but left out. " : "") + "Update it from Manage → Cash, or with make set-cash."
         };
       }
       case "realized":
@@ -1229,18 +1285,24 @@
           note: "Every match is recomputed from the lots on each read — there is no stored total to drift.",
           route: { label: "See every lot", run: () => routes.goView("history") }
         };
-      case "totalReturn":
+      case "totalReturn": {
+        const inv = k.investedCapital != null;
         return {
           title: "Total return",
-          value: pct(k.totalReturnPct || 0),
-          what: "Everything you have made, booked or not, against what you put in.",
+          value: pct(k.totalReturnPct),
+          what: inv ? "Everything you have made, booked or not, against the most capital you ever had committed." : "Everything you have made, booked or not, against what you put in.",
           eq: evEq(
-            [["Realized P&L", signed(k.realized), ""], ["Unrealized P&L", signed(k.unrealized), "+"], ["Cost basis", money(k.costBasis || 0), "÷"]],
-            ["Total return", pct(k.totalReturnPct || 0), (k.totalReturnPct || 0) >= 0 ? "up" : "down"]
+            [
+              ["Realized P&L", signed(k.realized), ""],
+              ["Unrealized P&L", signed(k.unrealized), "+"],
+              [inv ? "Invested capital (peak)" : "Cost basis", money(inv ? k.investedCapital : k.costBasis || 0), "÷"]
+            ],
+            ["Total return", pct(k.totalReturnPct), k.totalReturnPct == null ? "" : k.totalReturnPct >= 0 ? "up" : "down"]
           ),
           table: "",
-          note: "Dividends are excluded here. With them it is " + pct(k.totalReturnWithIncomePct || 0) + "."
+          note: (typeof k.totalReturnBasis === "string" ? "Basis: " + k.totalReturnBasis + ". " : "") + (k.totalReturnPartial ? "Positions without a price are not in the numerator. " : "") + "Dividends are excluded here. With them it is " + pct(k.totalReturnWithIncomePct) + "."
         };
+      }
       case "costBasis":
         return {
           title: "Cost basis",
@@ -1249,7 +1311,7 @@
           eq: "",
           table: evTable(["Symbol", "Qty", "Avg cost", "Cost"], rs.slice().sort((a, b) => b.cost - a.cost).map((r) => [bold(r.sym), qty(r.qty), money(r.avgCost), money(r.cost)])),
           tableNote: evRounding(rs.map((r) => r.cost), k.costBasis || 0),
-          note: "Fees paid so far: " + money(k.totalFees || 0) + ", which is " + pct(k.feeDragPct || 0) + " of cost.",
+          note: "Fees paid so far: " + money(k.totalFees || 0) + ", which is " + pct(k.feeDragPct) + (k.investedCapital != null ? " of invested capital." : " of cost.") + (unpricedSymbols().length ? " Includes " + money(k.unpricedCostBasis || 0) + " for positions with no price yet." : ""),
           route: holdings
         };
       case "deltaLast": {
@@ -1272,9 +1334,10 @@
           what: "Income recorded against your holdings. Nothing is estimated or projected here — these are payments entered into the ledger.",
           eq: evEq(
             [["All time", money(k.dividends || 0), ""], ["Last twelve months", money(k.dividendsTtm || 0), ""], ["Cost basis", money(k.costBasis || 0), "÷"]],
-            ["Yield on cost (TTM)", pct(k.yieldOnCostPct || 0)]
+            ["Yield on cost (TTM)", pct(k.yieldOnCostPct)]
           ),
-          table: ""
+          table: "",
+          note: (app.D.currencyWarnings || []).some((w) => w && w.kind === "income") ? "Only " + app.cfg.currency + " income is counted; income recorded in another currency is listed in the notice at the top of the page." : void 0
         };
       default:
         return null;
@@ -1403,6 +1466,12 @@
     if (pvRange === "1Y") return fmtDate(ms, "monthYear");
     return fmtDate(ms, "day");
   }
+  function fellBack(range) {
+    return (app.D.pvBasis || {})[range] === "all_history";
+  }
+  function rangeLabel(range) {
+    return fellBack(range) ? "All history (less than 1Y collected)" : range;
+  }
   function gapHours(mins) {
     if (mins < 60) return mins + " min";
     const h = Math.floor(mins / 60), m = mins % 60;
@@ -1489,11 +1558,11 @@
       xLabels.push(html`<span style="${place}">${axisDate(pairs[idx][0])}</span>`);
     }
     const gaps = gapList();
-    const ariaLabel = "Portfolio value, " + pvRange + " range, " + chgTxt + (bad.count ? ", " + bad.count + " incomplete snapshot" + (bad.count > 1 ? "s" : "") + " omitted" : "") + (gaps.length ? ", " + gaps.length + " collection gap" + (gaps.length > 1 ? "s" : "") + " marked" : "");
+    const ariaLabel = "Portfolio value, " + rangeLabel(pvRange) + " range, " + chgTxt + (bad.count ? ", " + bad.count + " incomplete snapshot" + (bad.count > 1 ? "s" : "") + " omitted" : "") + (gaps.length ? ", " + gaps.length + " collection gap" + (gaps.length > 1 ? "s" : "") + " marked" : "");
     setHTML(host, html`<div class="pv-wrap"><div class="pv-y">${yLabels}</div><div class="pv-plot inspectable"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" aria-label="${ariaLabel}"><defs><pattern id="pv-gap" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" stroke="var(--warn)" stroke-width="2.4" opacity=".5"/></pattern><linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".20"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>${ticks.map((t) => {
       const y = tickY(t).toFixed(1);
       return html`<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>`;
-    })}${ddRect}${gapMarkers(pairs, gaps, pts, 14, H - 14)}<path d="${area}" fill="url(#pvg)"/><path class="pv-line" d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/><line class="pv-cross" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><circle class="pv-cursor" cx="0" cy="0" r="4" fill="${color}" stroke="var(--surface)" stroke-width="1.5" opacity="0"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="4" fill="${color}"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="8" fill="${color}" opacity=".18"/></svg><div class="pv-tip" style="${TIP_STYLE}"></div><div class="sr-only pv-live" aria-live="polite" aria-atomic="true"></div><div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none"><span style="color:${color}">${pvRange + " " + chgTxt}</span>${maxDD >= 5e-3 ? html`<span style="color:var(--muted);font-weight:500">  ·  max DD −${(maxDD * 100).toFixed(1)}%</span>` : ""}</div>${bad.count ? html`<div style="position:absolute;bottom:26px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">${CLOCK} ${bad.count + " incomplete snapshot" + (bad.count > 1 ? "s" : "") + " omitted · see Data Health"}</div>` : ""}<div class="pv-x">${xLabels}</div></div></div>`);
+    })}${ddRect}${gapMarkers(pairs, gaps, pts, 14, H - 14)}<path d="${area}" fill="url(#pvg)"/><path class="pv-line" d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/><line class="pv-cross" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><circle class="pv-cursor" cx="0" cy="0" r="4" fill="${color}" stroke="var(--surface)" stroke-width="1.5" opacity="0"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="4" fill="${color}"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="8" fill="${color}" opacity=".18"/></svg><div class="pv-tip" style="${TIP_STYLE}"></div><div class="sr-only pv-live" aria-live="polite" aria-atomic="true"></div><div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none"><span style="color:${color}">${rangeLabel(pvRange) + " " + chgTxt}</span>${maxDD >= 5e-3 ? html`<span style="color:var(--muted);font-weight:500">  ·  max DD −${(maxDD * 100).toFixed(1)}%</span>` : ""}</div>${bad.count ? html`<div style="position:absolute;bottom:26px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">${CLOCK} ${bad.count + " incomplete snapshot" + (bad.count > 1 ? "s" : "") + " omitted · see Data Health"}</div>` : ""}<div class="pv-x">${xLabels}</div></div></div>`);
     const lineEl = host.querySelector(".pv-line");
     if (lineEl && !prefersReducedMotion() && lineEl.getTotalLength) {
       try {
@@ -1535,7 +1604,7 @@
     chips.forEach((c) => {
       const has = ((app.D.pv || {})[c.dataset.range] || []).length > 1;
       c.disabled = !has;
-      c.title = has ? "" : "No snapshots in this range yet";
+      c.title = !has ? "No snapshots in this range yet" : fellBack(c.dataset.range) ? "Less than a year of snapshots: this shows all history" : "";
       if (has && !firstWithData) firstWithData = c;
     });
     if (firstWithData) {
@@ -2109,7 +2178,8 @@
     if (!host) return;
     const periods = R.periods || [];
     const label = app.cfg.benchmarkLabel;
-    setText($("#returns-sub"), (R.basis ? R.basis + " · " : "") + "benchmark " + (R.benchmark || label));
+    const missing = R.benchmarkAvailable === false;
+    setText($("#returns-sub"), (R.basis ? R.basis + " · " : "") + "benchmark " + (R.benchmark || label) + (missing ? " · no " + label + " price history collected yet" : ""));
     if (!periods.some((p) => p.portfolio != null)) {
       setHTML(host, html`<div class="empty">Not enough snapshot history for period returns yet.</div>`);
       return;
@@ -2581,11 +2651,14 @@
     return alerts.map((a) => {
       const sym = String(a.symbol == null ? "" : a.symbol);
       const dir = dirOf(a);
-      const level = Number(a.level);
-      const levelTxt = Number.isFinite(level) ? money(level) : "—";
+      const entered = Number(a.level);
+      const eff = a.effective_level == null ? entered : Number(a.effective_level);
+      const levelTxt = Number.isFinite(eff) ? money(eff) : "—";
+      const restated = Number.isFinite(eff) && Number.isFinite(entered) && money(eff) !== money(entered) ? " (entered as " + money(entered) + ", restated for a split)" : "";
       const last = a.last_price == null ? null : Number(a.last_price);
       const lastTxt = last == null || !Number.isFinite(last) ? "no price collected yet" : "last " + money(last) + (a.last_price_ts ? " at " + when(a.last_price_ts) : "");
       const triggered = a.triggered === true;
+      const unknown = a.triggered !== true && a.triggered !== false;
       const title2 = triggered ? sym + (dir === "above" ? " is above " : " is below ") + levelTxt : sym + (dir === "above" ? " rises above " : " falls below ") + levelTxt;
       return {
         key: "alert:" + a.id,
@@ -2594,9 +2667,10 @@
         sym,
         dir,
         triggered,
+        unknown,
         status: triggered ? "triggered" : "armed",
         title: title2,
-        body: (a.note ? String(a.note) + " — " : "") + lastTxt + ".",
+        body: (a.note ? String(a.note) + " — " : "") + lastTxt + restated + ".",
         src: "Price alert",
         time: when(a.created_at) ? "set " + when(a.created_at) : "",
         unread: triggered && !read.has(String(a.id))
@@ -2632,7 +2706,8 @@
   function itemHTML(it) {
     const ic = iconFor(it);
     let badge;
-    if (it.cat === "alert" && it.status === "armed") badge = html`<span class="tag tag--neu">WATCHING</span>`;
+    if (it.cat === "alert" && it.unknown) badge = html`<span class="tag tag--neu" title="No price has been collected for this symbol, so the alert cannot be evaluated">NO QUOTE</span>`;
+    else if (it.cat === "alert" && it.status === "armed") badge = html`<span class="tag tag--neu">WATCHING</span>`;
     else if (it.cat === "alert") badge = html`<span class="tag ${it.dir === "below" ? "tag--down" : "tag--up"}">TRIGGERED</span>`;
     else badge = html`<span class="tag tag--neu">${it.sym || "—"}</span>`;
     const url = safeUrl(it.url);
@@ -2684,7 +2759,8 @@
       setHTML(host, html`<div class="empty" style="padding:14px 4px">No price alerts set.</div>`);
       return;
     }
-    setHTML(host, html`<ul class="alist">${alerts.map((it) => html`<li class="alist__row"><span class="tag ${it.status === "triggered" ? it.dir === "below" ? "tag--down" : "tag--up" : "tag--neu"}">${it.status === "triggered" ? "TRIGGERED" : "WATCHING"}</span><span class="alist__t">${it.title}</span></li>`)}</ul>`);
+    const tag = (it) => it.status === "triggered" ? "TRIGGERED" : it.unknown ? "NO QUOTE" : "WATCHING";
+    setHTML(host, html`<ul class="alist">${alerts.map((it) => html`<li class="alist__row"><span class="tag ${it.status === "triggered" ? it.dir === "below" ? "tag--down" : "tag--up" : "tag--neu"}">${tag(it)}</span><span class="alist__t">${it.title}</span></li>`)}</ul>`);
   }
   function markAllRead() {
     markRead(items2.filter((it) => it.unread).map((it) => it.key));
@@ -2705,7 +2781,7 @@
     const ma = $("#mark-all");
     if (ma) ma.addEventListener("click", markAllRead);
     const manage = $("[data-manage-alerts]");
-    if (manage) manage.addEventListener("click", () => goNative("manage", "&tab=alerts"));
+    if (manage) manage.addEventListener("click", () => goNative("manage"));
     renderAlertList();
     renderFeed();
   }

@@ -35,11 +35,20 @@ function countUp(el, target, fmt) {
   window.requestAnimationFrame(step);
 }
 
-/** The cash entries with their entry date, whichever key the server used. */
+/** The cash entries with their entry date, whichever key the server used.
+ *  `inTotal` is false for a balance in another currency, which the server
+ *  leaves out of kpi.cash. */
 export function cashEntries() {
   const k = app.D.kpi || {};
   const rows = Array.isArray(k.cashAccounts) ? k.cashAccounts : (Array.isArray(app.D.cashAccounts) ? app.D.cashAccounts : []);
-  return rows.map((a) => ({ account: a.account, cash: Number(a.cash) || 0, asOf: a.as_of || a.asOf || null }));
+  return rows.map((a) => ({ account: a.account, cash: Number(a.cash) || 0, asOf: a.as_of || a.asOf || null,
+    currency: typeof a.currency === 'string' ? a.currency : null, inTotal: a.inTotal !== false }));
+}
+
+/** Symbols held without any price (their cost is outside unrealized P&L). */
+export function unpricedSymbols() {
+  const u = (app.D.kpi || {}).unpricedSymbols;
+  return Array.isArray(u) ? u.map(String) : [];
 }
 /** "Nov 2, 2026" for an ISO timestamp, in the reporting zone. */
 export function entryDate(iso) {
@@ -51,17 +60,20 @@ export function entryDate(iso) {
 // (audit U-4). With several accounts the oldest entry is the one that bounds
 // how current the total is.
 function cashSub() {
-  const rows = cashEntries().filter((a) => a.asOf);
-  if (!rows.length) return cashEntries().length ? 'entry date not recorded' : 'no balance entered';
+  const all = cashEntries();
+  const left = all.filter((a) => !a.inTotal).length;
+  const tail = left ? ' · ' + left + ' not in ' + app.cfg.currency + ', left out' : '';
+  const rows = all.filter((a) => a.asOf && a.inTotal);
+  if (!rows.length) return (all.length ? 'entry date not recorded' : 'no balance entered') + tail;
   const oldest = rows.reduce((a, b) => (Date.parse(a.asOf) <= Date.parse(b.asOf) ? a : b));
-  return (rows.length > 1 ? 'oldest entry ' : 'entered ') + entryDate(oldest.asOf);
+  return (rows.length > 1 ? 'oldest entry ' : 'entered ') + entryDate(oldest.asOf) + tail;
 }
 
 // One-line story for the hero card: day move, top contributor, MTD vs benchmark.
 export function narrative() {
   const k = app.D.kpi || {}, dc = k.dayChange || 0, parts = [];
   if (Math.abs(dc) < 0.005) parts.push('Flat today');
-  else parts.push((dc > 0 ? 'Up ' : 'Down ') + F.money(Math.abs(dc)) + ' (' + F.pct(k.dayChangePct || 0) + ') today');
+  else parts.push((dc > 0 ? 'Up ' : 'Down ') + F.money(Math.abs(dc)) + ' (' + F.pct(k.dayChangePct) + ') today');
   const rs = holdingRows();
   if (rs.length && Math.abs(dc) >= 0.005) {
     const top = rs.slice().sort((a, b) => Math.abs(b.day * b.qty) - Math.abs(a.day * a.qty))[0];
@@ -109,16 +121,20 @@ export function renderKPIs() {
   }
   setText($('#kpi-mktval'), F.money(k.marketValue || 0));
   setKpi('kpi-gl', F.signed(k.unrealized), k.unrealized);
-  setHTML($('#kpi-gl-sub'), html`${deltaHTML(k.unrealized || 0, k.unrealizedPct, false)}${muted('open positions')}`);
+  const unpriced = unpricedSymbols();
+  setHTML($('#kpi-gl-sub'), html`${deltaHTML(k.unrealized || 0, k.unrealizedPct, false)}${muted('open positions' +
+    (unpriced.length ? ' · ' + unpriced.length + ' unpriced left out' : ''))}`);
   setText($('#kpi-cash'), F.money(k.cash || 0));
   setText($('#kpi-cash-sub'), cashSub());
   setKpi('kpi-realized', F.signed(k.realized), k.realized);
-  setKpi('kpi-return', F.pct(k.totalReturnPct || 0), k.totalReturnPct);
+  // Ratios can be null (no capital invested yet): "n/a", never a fake 0.00%.
+  setKpi('kpi-return', F.pct(k.totalReturnPct), k.totalReturnPct);
+  setText($('#kpi-return-sub'), k.totalReturnPartial ? 'Realized + unrealized · priced positions only' : 'Realized + unrealized');
   setText($('#kpi-cost'), F.money(k.costBasis || 0));
   setHTML($('#kpi-cost-sub'), muted((k.activeCount || 0) + ' active · ' + (k.watchlistCount || 0) + ' watching · ' + F.money(k.totalFees || 0) + ' fees'));
   setKpi('kpi-delta', F.signed(k.deltaLast), k.deltaLast);
   setHTML($('#kpi-delta-sub'), muted('since previous snapshot'));
   setText($('#kpi-div'), F.money(k.dividends || 0));
-  setHTML($('#kpi-div-sub'), muted('TTM ' + F.money(k.dividendsTtm || 0) + ' · YoC ' + F.pct(k.yieldOnCostPct || 0) +
-    ' · w/ div ' + F.pct(k.totalReturnWithIncomePct || 0)));
+  setHTML($('#kpi-div-sub'), muted('TTM ' + F.money(k.dividendsTtm || 0) + ' · YoC ' + F.pct(k.yieldOnCostPct) +
+    ' · w/ div ' + F.pct(k.totalReturnWithIncomePct)));
 }

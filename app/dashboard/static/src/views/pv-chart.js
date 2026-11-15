@@ -20,6 +20,12 @@ function axisDate(ms) {
   return F.fmtDate(ms, 'day');
 }
 
+// pvBasis says what window each range really covers. With less than a year of
+// snapshots the server draws "1Y" from all history, and the chart says so
+// rather than letting a few months pass for a year.
+function fellBack(range) { return ((app.D.pvBasis || {})[range]) === 'all_history'; }
+function rangeLabel(range) { return fellBack(range) ? 'All history (less than 1Y collected)' : range; }
+
 function gapHours(mins) {
   if (mins < 60) return mins + ' min';
   const h = Math.floor(mins / 60), m = mins % 60;
@@ -101,10 +107,10 @@ export function renderPV() {
     xLabels.push(html`<span style="${place}">${axisDate(pairs[idx][0])}</span>`);
   }
   const gaps = gapList();
-  const ariaLabel = 'Portfolio value, ' + pvRange + ' range, ' + chgTxt +
+  const ariaLabel = 'Portfolio value, ' + rangeLabel(pvRange) + ' range, ' + chgTxt +
     (bad.count ? ', ' + bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted' : '') +
     (gaps.length ? ', ' + gaps.length + ' collection gap' + (gaps.length > 1 ? 's' : '') + ' marked' : '');
-  setHTML(host, html`<div class="pv-wrap"><div class="pv-y">${yLabels}</div><div class="pv-plot inspectable"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" aria-label="${ariaLabel}"><defs><pattern id="pv-gap" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" stroke="var(--warn)" stroke-width="2.4" opacity=".5"/></pattern><linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".20"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>${ticks.map((t) => { const y = tickY(t).toFixed(1); return html`<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>`; })}${ddRect}${gapMarkers(pairs, gaps, pts, 14, H - 14)}<path d="${area}" fill="url(#pvg)"/><path class="pv-line" d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/><line class="pv-cross" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><circle class="pv-cursor" cx="0" cy="0" r="4" fill="${color}" stroke="var(--surface)" stroke-width="1.5" opacity="0"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="4" fill="${color}"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="8" fill="${color}" opacity=".18"/></svg><div class="pv-tip" style="${TIP_STYLE}"></div><div class="sr-only pv-live" aria-live="polite" aria-atomic="true"></div><div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none"><span style="color:${color}">${pvRange + ' ' + chgTxt}</span>${maxDD >= 0.005 ? html`<span style="color:var(--muted);font-weight:500">  ·  max DD −${(maxDD * 100).toFixed(1)}%</span>` : ''}</div>${bad.count ? html`<div style="position:absolute;bottom:26px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">${CLOCK} ${bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted · see Data Health'}</div>` : ''}<div class="pv-x">${xLabels}</div></div></div>`);
+  setHTML(host, html`<div class="pv-wrap"><div class="pv-y">${yLabels}</div><div class="pv-plot inspectable"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:240px;display:block" role="img" aria-label="${ariaLabel}"><defs><pattern id="pv-gap" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" stroke="var(--warn)" stroke-width="2.4" opacity=".5"/></pattern><linearGradient id="pvg" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".20"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>${ticks.map((t) => { const y = tickY(t).toFixed(1); return html`<line x1="0" x2="${W}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="2 4"/>`; })}${ddRect}${gapMarkers(pairs, gaps, pts, 14, H - 14)}<path d="${area}" fill="url(#pvg)"/><path class="pv-line" d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round"/><line class="pv-cross" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity="0"/><circle class="pv-cursor" cx="0" cy="0" r="4" fill="${color}" stroke="var(--surface)" stroke-width="1.5" opacity="0"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="4" fill="${color}"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="8" fill="${color}" opacity=".18"/></svg><div class="pv-tip" style="${TIP_STYLE}"></div><div class="sr-only pv-live" aria-live="polite" aria-atomic="true"></div><div class="num" style="position:absolute;top:6px;left:10px;font-size:var(--fs-meta);font-weight:600;pointer-events:none"><span style="color:${color}">${rangeLabel(pvRange) + ' ' + chgTxt}</span>${maxDD >= 0.005 ? html`<span style="color:var(--muted);font-weight:500">  ·  max DD −${(maxDD * 100).toFixed(1)}%</span>` : ''}</div>${bad.count ? html`<div style="position:absolute;bottom:26px;right:10px;font-size:var(--fs-meta);color:var(--muted);pointer-events:none">${CLOCK} ${bad.count + ' incomplete snapshot' + (bad.count > 1 ? 's' : '') + ' omitted · see Data Health'}</div>` : ''}<div class="pv-x">${xLabels}</div></div></div>`);
 
   // draw-in: reveal the line along its own length on (re)render
   const lineEl = host.querySelector('.pv-line');
@@ -143,7 +149,8 @@ export function initPVRange() {
   chips.forEach((c) => {
     const has = (((app.D.pv || {})[c.dataset.range]) || []).length > 1;
     c.disabled = !has;
-    c.title = has ? '' : 'No snapshots in this range yet';
+    c.title = !has ? 'No snapshots in this range yet'
+      : fellBack(c.dataset.range) ? 'Less than a year of snapshots: this shows all history' : '';
     if (has && !firstWithData) firstWithData = c;
   });
   if (firstWithData) { pvRange = firstWithData.dataset.range; activate(chips, firstWithData); }
