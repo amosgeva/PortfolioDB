@@ -16,6 +16,8 @@ from typing import Any
 
 from psycopg2 import sql
 
+import account_names
+
 
 def is_nan(value: Any) -> bool:
     """True only for a NaN float (or Decimal NaN).
@@ -107,9 +109,20 @@ def clean_record(r: dict[str, Any] | None) -> dict[str, Any] | None:
 # (list_accounts, allocation by account, per-account breakdowns). It is also
 # accepted back as a filter and selects exactly those lots: it used to be
 # compared with `account = '(none)'`, matched nothing and returned an empty
-# portfolio with no error (audit X-8). The label is reserved — an account
-# literally named "(none)" cannot be told apart from it.
-NONE_ACCOUNT = "(none)"
+# portfolio with no error (audit X-8).
+#
+# The label means account IS NULL and nothing else, in every reader. It is
+# reserved: the writers and the database refuse it as an account name, in any
+# case or spacing (app/account_names.py, migration 007). Before that, an
+# account literally named "(none)" could be stored, could not be selected,
+# merged into this bucket in the listing, vanished from allocation by account,
+# and lent its cash to this bucket (rescore NEW-1).
+NONE_ACCOUNT = account_names.UNASSIGNED_LABEL
+
+
+def is_none_account(account: str | None) -> bool:
+    """True when ``account`` is the unassigned label (any case or spacing)."""
+    return account is not None and account_names.is_reserved(account)
 
 
 def add_account_filter(
@@ -122,7 +135,7 @@ def add_account_filter(
     """
     if account is None:
         return query, params
-    if account == NONE_ACCOUNT:
+    if is_none_account(account):
         return query + sql.SQL(" AND account IS NULL"), params
     return query + sql.SQL(" AND account = %s"), [*params, account]
 
@@ -131,7 +144,7 @@ def account_matches(row_account: str | None, account: str | None) -> bool:
     """The same rule as add_account_filter, for rows already in memory."""
     if account is None:
         return True
-    if account == NONE_ACCOUNT:
+    if is_none_account(account):
         return row_account is None
     return row_account == account
 

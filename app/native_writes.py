@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+import account_names
 import corporate_actions
 import holdings
 import ledger_inputs
@@ -103,7 +104,9 @@ def parse_lot(*, symbol, account, side, trade_date, quantity, price, fees, notes
     price_d = ledger_numbers.parse_price(price)
     if price_d <= 0:
         raise ValueError("Price must be greater than 0.")
-    acct = (account or "").strip() or None
+    # Blank is "no account" (NULL); '(none)' — that bucket's label — is refused
+    # as a name (account_names; rescore NEW-1).
+    acct = account_names.normalize_account(account)
     return LotInput(
         symbol=normalize_symbol(symbol),
         account=acct,
@@ -283,7 +286,7 @@ def set_watchlist(conn, symbol: str, on: bool) -> None:
 
 
 def record_cash(conn, account: str, cash: Decimal, note: str | None) -> None:
-    account = (account or "").strip()
+    account = account_names.normalize_account(account)
     if not account:
         raise ValueError("Account is required.")
     run(conn, "INSERT INTO cash_snapshots(account, cash, note) VALUES (%s, %s, %s)",

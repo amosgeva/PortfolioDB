@@ -1,4 +1,4 @@
--- PortfolioDB schema v0.6
+-- PortfolioDB schema v0.7
 -- Append-only snapshots, lot-based cost basis, FIFO P&L
 --
 -- Every numeric ledger column carries a `<> 'NaN'` check besides its sign
@@ -56,7 +56,11 @@ CREATE TABLE IF NOT EXISTS lots (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT lots_quantity_not_nan CHECK (quantity <> 'NaN'::numeric),
   CONSTRAINT lots_price_not_nan    CHECK (price <> 'NaN'::numeric),
-  CONSTRAINT lots_fees_not_nan     CHECK (fees <> 'NaN'::numeric)
+  CONSTRAINT lots_fees_not_nan     CHECK (fees <> 'NaN'::numeric),
+  -- '(none)' is the label for account IS NULL everywhere it is read; an
+  -- account by that name (any case or spacing) is refused (migration 007).
+  CONSTRAINT lots_account_not_reserved
+    CHECK (lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)')
 );
 
 -- Prevent accidental duplicate lot inserts during imports.
@@ -128,7 +132,9 @@ CREATE TABLE IF NOT EXISTS cash_snapshots (
   currency      TEXT NOT NULL DEFAULT 'USD',
   note          TEXT,
   PRIMARY KEY (account, ts),
-  CONSTRAINT cash_snapshots_cash_not_nan CHECK (cash <> 'NaN'::numeric)
+  CONSTRAINT cash_snapshots_cash_not_nan CHECK (cash <> 'NaN'::numeric),
+  CONSTRAINT cash_snapshots_account_not_reserved
+    CHECK (lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)')
 );
 
 CREATE INDEX IF NOT EXISTS cash_snapshots_ts_idx ON cash_snapshots(ts);
@@ -152,6 +158,8 @@ CREATE TABLE IF NOT EXISTS income (
   CONSTRAINT income_amount_not_nan       CHECK (amount <> 'NaN'::numeric),
   CONSTRAINT income_tax_withheld_not_nan CHECK (tax_withheld <> 'NaN'::numeric),
   CONSTRAINT income_per_share_not_nan    CHECK (per_share <> 'NaN'::numeric),
+  CONSTRAINT income_account_not_reserved
+    CHECK (lower(regexp_replace(account, '[[:space:]]', '', 'g')) <> '(none)'),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

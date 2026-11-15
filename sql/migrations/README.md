@@ -42,6 +42,12 @@ run `apply_schema.py` against the result.)
   offending rows. The upgrade then never fails on old data, and
   `sql/schema.sql` re-tries every unvalidated CHECK on each run until the rows
   are fixed. 004 and 005 are the pattern.
+- **Unless an offending row makes figures silently wrong.** Then refuse: check
+  for such rows first and `RAISE EXCEPTION` naming every one and how to fix
+  it, so the file changes nothing and is not recorded until they are fixed.
+  Never rewrite them silently. 007 is the pattern: an account named `(none)`
+  is indistinguishable from "no account" in every reader, so a constraint left
+  unvalidated would leave the MCP's figures wrong behind a warning.
 - **Functions, views and triggers** go in `sql/schema.sql` as
   `CREATE OR REPLACE`, not in a migration: that file is re-applied on every
   upgrade, so they reach existing databases from there (005 explains this for
@@ -56,3 +62,5 @@ run `apply_schema.py` against the result.)
 | `003_finite_numeric_checks.sql` | `<> 'NaN'` checks on every numeric ledger column. |
 | `004_symbol_check.sql` | `instruments_symbol_format`: what a symbol may be (= `symbol_paths.SYMBOL_FILENAME_RE`). |
 | `005_corporate_actions_ratio_finite.sql` | `corporate_actions` ratio not NaN and consistent with `kind`; `price_snapshots.last_price > 0`. |
+| `006_price_alerts_and_lot_audit.sql` | The `price_alerts` and `lot_deletions` tables. |
+| `007_reserved_account_names.sql` | `*_account_not_reserved` on `lots`, `income`, `cash_snapshots`: `(none)` (any case or spacing) — the label for `account IS NULL` — is never a stored account name (= `app/account_names.py`). Refuses, changing nothing, while a row uses it. |

@@ -77,20 +77,27 @@ def register(mcp: FastMCP) -> None:
         """List broker accounts known to PortfolioDB.
 
         Aggregates from both lots.account and cash_snapshots.account, so an
-        account that holds only cash (no positions) is still reported.
+        account that holds only cash (no positions) is still reported. Lots
+        recorded without an account are listed as '(none)', the label every
+        tool accepts back as the filter for them; no real account can carry
+        that name (the database refuses it).
 
         Returns:
             List of dicts: {account, position_lot_count, has_cash, latest_cash_ts}.
         """
+        # Grouped and joined on the stored account, NULL included, and
+        # labelled afterwards: coalescing first merged an account literally
+        # named '(none)' into the unassigned bucket and joined that bucket to
+        # the named account's cash (rescore NEW-1). A NULL account never
+        # equals a cash account, so the unassigned bucket has no cash.
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     WITH lot_accts AS (
-                      SELECT COALESCE(account, '(none)') AS account,
-                             COUNT(*) AS lot_count
+                      SELECT account, COUNT(*) AS lot_count
                       FROM lots
-                      GROUP BY 1
+                      GROUP BY account
                     ),
                     cash_accts AS (
                       SELECT account, MAX(ts) AS latest_ts
@@ -102,14 +109,14 @@ def register(mcp: FastMCP) -> None:
                            c.latest_ts                    AS latest_cash_ts
                     FROM lot_accts l
                     FULL OUTER JOIN cash_accts c ON c.account = l.account
-                    ORDER BY account
+                    ORDER BY account NULLS FIRST
                     """,
                 )
                 rows = cur.fetchall()
         out: list[dict[str, Any]] = []
         for account, lot_count, latest_cash_ts in rows:
             out.append({
-                "account": account,
+                "account": common.account_label(account),
                 "position_lot_count": int(lot_count or 0),
                 "has_cash": latest_cash_ts is not None,
                 "latest_cash_ts": latest_cash_ts.isoformat() if latest_cash_ts else None,
@@ -187,7 +194,7 @@ _SCHEMA_DICT: dict[str, Any] = {
             "columns": {
                 "id": "BIGSERIAL.",
                 "symbol": "TEXT, FK -> instruments.symbol.",
-                "account": "TEXT, nullable. Broker / sub-account name. Tools report a NULL account as '(none)' and accept '(none)' back as a filter.",
+                "account": "TEXT, nullable. Broker / sub-account name. Tools report a NULL account as '(none)' and accept '(none)' back as a filter for exactly those lots; '(none)' (any case or spacing) is never a stored account name — the database refuses it.",
                 "side": "TEXT CHECK (BUY|SELL).",
                 "trade_date": "DATE.",
                 "quantity": "NUMERIC(20,8), always > 0 — direction is in side.",
@@ -217,7 +224,7 @@ _SCHEMA_DICT: dict[str, Any] = {
             "primary_key": "(account, ts)",
             "columns": {
                 "ts": "TIMESTAMPTZ, defaults to now().",
-                "account": "TEXT NOT NULL, default '(merged)'.",
+                "account": "TEXT NOT NULL, default '(merged)'. Never '(none)': cash always names an account, so the '(none)' filter returns no cash.",
                 "cash": "NUMERIC(20,2).",
                 "currency": "TEXT, defaults to 'USD'.",
                 "note": "TEXT, free text (returned as untrusted_text).",
@@ -230,7 +237,7 @@ _SCHEMA_DICT: dict[str, Any] = {
             "columns": {
                 "id": "BIGSERIAL.",
                 "symbol": "TEXT, FK -> instruments.symbol.",
-                "account": "TEXT, nullable.",
+                "account": "TEXT, nullable; NULL is reported as '(none)', which is never a stored name.",
                 "kind": "TEXT, e.g. DIVIDEND.",
                 "ex_date": "DATE, nullable.",
                 "pay_date": "DATE.",

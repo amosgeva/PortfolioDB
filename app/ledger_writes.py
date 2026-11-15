@@ -23,6 +23,7 @@ from psycopg2 import sql
 
 from db import fetch_all, run
 
+import account_names
 import symbol_paths
 
 
@@ -49,7 +50,13 @@ def insert_lot(
     Returns True when the row was written and False when ``lots_dedupe_idx``
     (symbol, account, side, trade_date, quantity, price) already held an
     identical lot, in which case nothing was written.
+
+    ValueError, before anything is sent, when ``account`` is a reserved label
+    (``account_names``: ``(none)`` means "no account" everywhere it is read).
+    The callers check earlier and say so in their own words; this is the
+    shared writer's own guard, and the database's CHECK is the last one.
     """
+    account_names.refuse_reserved(account)
     n = run(
         conn,
         """
