@@ -489,7 +489,16 @@
     openRail(false); window.scrollTo(0, 0);
     if (!skipHistory) syncHistory(name);
   }
-  function goNative(view) { topNavigate('?view=' + view); }
+  // Prefer the parent's hidden native-nav button (streamlit_app.py, key
+  // pdb_nav_<view>): a rerun in the same session, so nothing reloads and the
+  // dashboard's unlock and form state survive. Fall back to a page load.
+  function goNative(view) {
+    try {
+      var btn = window.parent.document.querySelector('.st-key-pdb_nav_' + view + ' button');
+      if (btn) { btn.click(); return; }
+    } catch (e) { /* sandboxed: fall through to the page load */ }
+    topNavigate('?view=' + view);
+  }
   function clickable(el, fn) {
     el.addEventListener('click', function (e) { e.preventDefault(); fn(); });
     el.addEventListener('keydown', function (e) {

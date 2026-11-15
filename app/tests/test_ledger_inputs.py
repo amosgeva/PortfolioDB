@@ -609,6 +609,10 @@ def test_no_reader_queries_lots_behind_the_loaders_back():
         "snapshot_prices.py",            # MIN(trade_date): the earliest date a split can matter
         "modern2_native.py", "streamlit_app.py",
         "data_quality.py", "market_overview.py",
+        # The Manage page's writes and checks: delete-with-audit, find-by-id, and
+        # which named accounts hold a symbol (quantities come from the loader and
+        # lot_open_quantities()).
+        "native_writes.py",
         # Symbol universes now come from lot_open_quantities() or
         # ledger_inputs.open_symbols() (audit R-1); what is left in these is
         # not a net quantity.
