@@ -16,6 +16,78 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+### Changed — figures computed differently (reports, dashboard payload, Advisor)
+
+- **Total return is over invested capital** (audit F-5, Q-4). It was lifetime
+  realized + unrealized P&L divided by the cost still *open*, so it exploded
+  after a large sale (900% on a book that made 90%) and read 0% after a full
+  one. It is now divided by peak net invested capital — the most of your money
+  the ledger ever had committed — on the dashboard (`kpi.totalReturnPct`,
+  `totalReturnWithIncomePct`, new `investedCapital`), in the executive report
+  and in the Advisor snapshot. Fee drag moves to the same denominator. See
+  `docs/methodology.md` §12. The MCP follows in its own change.
+- **An unpriced position is not a loss** (audit F-12, Q-2). The dashboard and
+  the Advisor subtracted its whole cost from the value of the priced positions.
+  Market value and unrealized P&L now cover priced positions only, unrealized %
+  is over their cost, and the unpriced cost is reported on its own
+  (`kpi.pricedCostBasis`, `unpricedCostBasis`, `unpricedSymbols`). All four
+  owned surfaces call one module, `app/portfolio_kpis.py`, and a parity test
+  runs them over a priced + unpriced pair, with fakes and against Postgres.
+- **1Y is "n/a" without a year of history** instead of quietly showing the
+  since-inception figure, like WTD/MTD/YTD (audit F-14). This is the shared
+  TWR engine, so the MCP's period returns change too. The first week/month of
+  the period statistics is complete when coverage began before it. A 1Y value
+  chart that falls back to the whole history says so in `pvBasis`.
+- **The dashboard computes against the configured benchmark** (audit U-3):
+  `PORTFOLIODB_BENCHMARK_SYMBOL` now drives the returns strip, the risk beta and
+  the chart universe, resolved by `app/benchmark.py`, which the MCP now uses
+  too. `PORTFOLIODB_BENCHMARK_LABEL` names it on screen.
+- **Money in another currency is not summed as dollars** (audit F-11, Q-8).
+  Income and cash recorded in a non-USD currency are left out of every total
+  (including the TWR's dividend term) and listed; an instrument registered in
+  another currency stays in the valuation and is flagged. Dashboard
+  `currencyWarnings`, Advisor `currency_warnings`, and warning lines in every
+  report.
+- **The reports agree about stale prices** (audit F-8). The daily report
+  values each holding at its latest quote at or before the report instant
+  instead of dropping one that missed the last run; both it and the executive
+  report list a quote from an earlier day as stale and keep it out of the
+  day's change. The executive report's "as of" and previous session come from
+  the holdings' own quotes, not a benchmark's, so a Sunday futures quote no
+  longer produces a $0.00 day change, and it says which session the change is
+  ("on Fri, Nov 13"). The daily report's day-start baseline skips
+  benchmark-only snapshots.
+- **The weekly change says what it is** (audit F-9): a change in securities +
+  entered cash, not a return, printed with the flow-adjusted market P&L and the
+  week's net trade outlay beside it, and a warning for each account whose cash
+  was not re-entered during the week.
+
+### Added
+
+- Dashboard payload: `config` (`benchmark_symbol`, `benchmark_label`,
+  `reporting_tz`, `currency`, `logo_cdn` from `PORTFOLIODB_LOGO_CDN`);
+  `alerts`, the active rows of `price_alerts` evaluated on read against the
+  split-restated latest price (an empty list until that table exists, and no
+  other error is absorbed); `as_of` and `currency` on every cash entry;
+  `returns.benchmarkSymbol` / `benchmarkAvailable`; `risk.benchmark`.
+- The executive report lists unpriced positions, stale quotes and currency
+  warnings, and shows each cash balance with the date it was entered.
+- The Advisor snapshot carries the same totals as the dashboard, the date of
+  each cash entry, and notes telling the model what the figures cover. Its
+  latest quotes are now restated through the prepared ledger like every other
+  reader's.
+
+### Internal
+
+- `exec_report.py` (1,055 lines) is split into `exec_report_queries`,
+  `exec_report_analytics` and `exec_report_render` (audit R-4). Its output is
+  unchanged, proved by a golden-output test over the demo ledger captured
+  before the split.
+- `reporting_utils` and the reports no longer resolve the reporting timezone —
+  and so possibly open a database connection — at import (audit R-5).
+- The positions CLI, both text reports and the Advisor close their
+  connections instead of leaving them to the garbage collector (audit R-6).
+
 ## [1.7.7] — 2026-11-15
 
 A maintenance release, a month after 1.7.6. The image scan had started failing
