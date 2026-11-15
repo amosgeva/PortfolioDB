@@ -18,6 +18,7 @@ from typing import Any
 import portfolio_kpis
 
 from app.mcp.deps import get_conn
+from app.mcp.services import common
 
 
 def latest_cash(
@@ -25,9 +26,15 @@ def latest_cash(
 ) -> dict[str, Any]:
     """{total, by_account, excluded_non_usd} at ``as_of_ts`` (None = now).
 
-    ``account`` keeps one account; '(none)' matches nothing, because a cash
-    balance always names an account (cash_snapshots.account is NOT NULL).
+    ``account`` keeps one account; '(none)' — the unassigned bucket, account
+    IS NULL — matches nothing, because a cash balance always names an account
+    (cash_snapshots.account is NOT NULL). It used to be compared as a name, so
+    a cash account literally called '(none)' was returned as the unassigned
+    bucket's cash (rescore NEW-1); such a name is now refused by the writers
+    and the database, and this reader no longer asks.
     """
+    if common.is_none_account(account):
+        return {"total": 0.0, "by_account": [], "excluded_non_usd": portfolio_kpis.currency_warnings(cash=[])}
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Latest row per account — a global ORDER BY ts LIMIT N would drop

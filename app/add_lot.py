@@ -10,7 +10,8 @@ Exit status:
   0  the lot was recorded
   1  nothing was written: an identical lot is already in the ledger (the dedupe
      guard refused it — see the message for what to do about a second fill)
-  2  bad input (argparse), or refused: a non-USD listing without --allow-non-usd
+  2  bad input (argparse — including the reserved account name '(none)'), or
+     refused: a non-USD listing without --allow-non-usd
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import argparse
 import sys
 from datetime import date
 
+import account_names
 import ledger_inputs
 import ledger_numbers
 import ledger_writes
@@ -44,6 +46,9 @@ def record_lot(conn, *, symbol, account, side, trade_date, qty, price, fees, not
     """
     out = out or sys.stdout
     err = err or sys.stderr
+    if account_names.is_reserved(account):
+        print(f"REFUSED: {account_names.refusal(account)}", file=err)
+        return EXIT_REFUSED
     problem = ledger_writes.currency_scope_problem(conn, symbol)
     if problem:
         if not allow_non_usd:
@@ -83,7 +88,9 @@ def build_parser(*, side_choice: bool = True) -> argparse.ArgumentParser:
     # Validated and uppercased here: a symbol is rendered into the dashboard
     # and becomes a file name, so it must look like one (audit A-3/D-2).
     ap.add_argument("--symbol", required=True, type=symbol_paths.symbol_arg)
-    ap.add_argument("--account", default=None)
+    # Stripped, blank → no account; '(none)' — the label for "no account" —
+    # is refused as a name, exit 2 (account_names; rescore NEW-1).
+    ap.add_argument("--account", default=None, type=account_names.account_arg)
     ap.add_argument("--trade-date", required=True, type=date.fromisoformat, help="YYYY-MM-DD")
     if side_choice:
         ap.add_argument("--side", choices=["BUY", "SELL"], default="BUY")

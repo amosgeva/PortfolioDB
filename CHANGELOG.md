@@ -16,6 +16,54 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+**Upgrading (account names, migration 007)**
+
+- Apply `sql/migrations/007_reserved_account_names.sql` (`make schema`, or
+  `docker compose run --rm dashboard python app/apply_schema.py`, which
+  records it in `schema_migrations`). It adds a CHECK to `lots`, `income` and
+  `cash_snapshots`: no account may read as `(none)`. Only the ASCII letters
+  and parentheses of a name are compared, case-insensitively, so `(NONE)`,
+  `( none )`, a `(none)` padded with no-break or zero-width spaces, and
+  `(none 2)` all count; a name spelled with other letters (fullwidth,
+  mathematical) is an ordinary name. The rule is one SQL function,
+  `pdb_account_fold`, which `sql/schema.sql` creates. The schema version is
+  now 0.7 (`sql/schema.sql` header and the MCP's `schema_version`).
+- **If any row already uses that name, the migration refuses and changes
+  nothing** — it does not rewrite your data. The error lists each table, how
+  many rows, and the account's code points (so a no-break space is visible);
+  rename the account (or, for lots and income meant to have no account, set
+  it to NULL) and run it again. The file's header has the `UPDATE`
+  statements. Until it is applied, the writers already refuse the name.
+- The read-only MCP role (`sql/create_ro_role.sql`) needs nothing new: the
+  function is only evaluated by the CHECKs, on writes.
+
+### Fixed — account identity (rescore NEW-1, audit X-3/X-8)
+
+- **`(none)` is no longer accepted as an account name.** It is the label every
+  report and the MCP server use for lots recorded without an account, and the
+  MCP accepts it back as the filter for exactly those lots (`account IS
+  NULL`). An account actually named `(none)` used to be stored by the Manage
+  page, the CLIs and the CSV importer; the MCP then merged it into the
+  unassigned bucket in `list_accounts`, dropped its value from allocation by
+  account (a $30 book allocated as $10) and returned its cash as the
+  unassigned bucket's. The Manage page (lots and cash), `add_lot`,
+  `sell_lot`, `set_cash`, `add_income` and `import_csv_history` now refuse
+  it, and the database refuses it from any other writer (migration 007). Both
+  compare a folded name — every character but A–Z, a–z, `(` and `)` deleted,
+  then A–Z lowercased — defined once in `app/account_names.py` and
+  implemented the same way in SQL. The fold uses no Unicode tables or locale,
+  so Python and PostgreSQL agree whatever their versions; tests run both over
+  every code point.
+- The MCP treats the label as `account IS NULL` and nothing else, in every
+  reader and in any spelling (`(NONE)` included): `list_accounts` groups by
+  the stored account before labelling it, allocation by account filters with
+  the same rule as every other reader, and asking for the unassigned bucket's
+  cash returns none — a cash balance always names an account.
+- `apply_schema.py` now reports a failing file's own error and names the
+  file. A file that failed inside its own transaction used to leave the
+  session aborted, and the cleanup's "current transaction is aborted" replaced
+  the message that said what was wrong.
+
 **Upgrading (dashboard write pages, migration 006)**
 
 - **The dashboard's write pages now need a password.** Set

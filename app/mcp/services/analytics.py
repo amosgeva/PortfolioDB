@@ -252,17 +252,27 @@ def _allocation_by_account(
     `account IS NULL` filter. They used to be valued with account=None — which
     means "no filter", the whole portfolio — and then the named accounts were
     added on top, double-counting every named account (audit X-3).
+
+    Buckets are the stored accounts (NULL included) and are filtered with
+    the same rule as every reader (common.account_matches). The labels used
+    to be computed first and de-duplicated, so an account literally named
+    '(none)' collapsed into the NULL bucket and its value disappeared — a $30
+    book allocated as $10 (rescore NEW-1). That name is now refused by the
+    writers and the database; NULL is the only account labelled '(none)'.
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT DISTINCT account FROM lots")
-            accounts = [common.account_label(r[0]) for r in cur.fetchall()]
-    if account is not None:
-        accounts = [a for a in accounts if a == account]
+            stored = [r[0] for r in cur.fetchall()]
+    # One bucket per stored account, valued through its filter: NULL is
+    # selected by the '(none)' label, a name by itself.
+    accounts = sorted(
+        {common.account_label(a) for a in stored if common.account_matches(a, account)}
+    )
 
     buckets: dict[str, float] = defaultdict(float)
     total_mv = 0.0
-    for acct in sorted(set(accounts)):
+    for acct in accounts:
         summary = positions_service.positions_summary(
             "fifo", account=acct, cutoff=cutoff, include_income=False
         )

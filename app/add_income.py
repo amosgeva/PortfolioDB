@@ -40,6 +40,7 @@ import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
+import account_names
 import holdings
 import ledger_inputs
 import ledger_numbers
@@ -98,7 +99,9 @@ def _shares_held_on(conn, symbol: str, as_of, *, per_account: bool = False) -> d
 
 def _insert_income(conn, **f) -> int:
     """Insert one income row; returns 1 when written, 0 when the dedupe key
-    (symbol, account, kind, pay_date, amount) already existed."""
+    (symbol, account, kind, pay_date, amount) already existed. ValueError for
+    a reserved account label (account_names), before anything is sent."""
+    account_names.refuse_reserved(f["account"])
     return run(
         conn,
         """
@@ -218,7 +221,9 @@ def main(argv=None):
                          "landing beside them. With --since, only estimates dated on or after "
                          "it are deleted — the same dates that are rebuilt. Manual rows are "
                          "never touched.")
-    ap.add_argument("--account", default=None)
+    # Stripped, blank → no account; the reserved '(none)' is a usage error
+    # (account_names; rescore NEW-1).
+    ap.add_argument("--account", default=None, type=account_names.account_arg)
     ap.add_argument("--kind", choices=KINDS, default="DIVIDEND")
     ap.add_argument("--ex-date", default=None, help="YYYY-MM-DD")
     ap.add_argument("--pay-date", default=None, help="YYYY-MM-DD")

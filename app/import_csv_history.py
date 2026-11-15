@@ -45,6 +45,8 @@ Account mapping:
 - Each lot's account comes from the CSV Comment column when it names one of
   --tagged-accounts as a whole word (case-insensitive: "IRA" matches "Roth IRA"
   but not "SMALLIRA"); otherwise it falls back to --default-account.
+- '(none)' (any case or spacing) is refused as either: it is the label for
+  lots recorded without an account (app/account_names.py).
 
 Usage:
   set PORTFOLIODB_PASSWORD=...
@@ -69,6 +71,7 @@ from zoneinfo import ZoneInfo
 
 from dateutil import parser as dtparser
 
+import account_names
 import ledger_numbers
 import ledger_writes
 import oversell
@@ -235,6 +238,7 @@ def upsert_instrument(conn, symbol: str) -> int:
 
 
 def insert_lot(conn, symbol: str, account: str | None, trade_date, qty, price, fees, notes: str | None, side: str = "BUY") -> int:
+    account_names.refuse_reserved(account)
     return run(
         conn,
         """
@@ -398,7 +402,10 @@ def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | No
     comment = r.get('Comment')
     return {
         "symbol": sym,
-        "account": infer_account(comment, args.default_account, tagged_accounts),
+        # '(none)' is the label for "no account", never a name (account_names).
+        "account": account_names.refuse_reserved(
+            infer_account(comment, args.default_account, tagged_accounts)
+        ),
         "side": parse_side(r.get('Side')),
         "trade_date": parse_trade_date(trade_date_raw),
         "quantity": parse_quantity(qty_raw),
@@ -664,6 +671,12 @@ def main() -> int:
                          "and will sum their prices as dollars.")
     args = ap.parse_args()
     tagged_accounts = [t.strip() for t in args.tagged_accounts.split(",") if t.strip()]
+    # Refused before any file is read: '(none)' is the label for lots without
+    # an account, and every row would otherwise be rejected one by one.
+    for name in [args.default_account, *tagged_accounts]:
+        if account_names.is_reserved(name):
+            print(f"Refusing to run: {account_names.refusal(name)}")
+            return EXIT_FAILED
 
     base_dir = Path(args.dir).resolve()
     if not base_dir.is_dir():

@@ -1,4 +1,4 @@
--- PortfolioDB schema v0.6
+-- PortfolioDB schema v0.7
 -- Append-only snapshots, lot-based cost basis, FIFO P&L
 --
 -- Every numeric ledger column carries a `<> 'NaN'` check besides its sign
@@ -14,6 +14,21 @@
 -- (sql/migrations/), and are repeated inline below for fresh installs.
 
 BEGIN;
+
+-- The account-name fold, defined in app/account_names.py: delete every
+-- character that is not an ASCII letter or ( or ), then lowercase A-Z and
+-- nothing else. It uses no Unicode data and no locale (code points, COLLATE
+-- "C", translate), so Python and PostgreSQL compute it identically whatever
+-- their versions; two earlier drafts ([[:space:]], then NFKC) did not (QA of
+-- PR #133, B1/B2). A test holds this definition to the Python and to
+-- migration 007's copy, and runs both over every code point. The '(none)'
+-- CHECKs on lots, income and cash_snapshots use it.
+CREATE OR REPLACE FUNCTION pdb_account_fold(account_name text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+  AS $fold$
+    SELECT translate(regexp_replace(account_name COLLATE "C", '[^A-Za-z()]', '', 'g'),
+                     'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+  $fold$;
 
 CREATE TABLE IF NOT EXISTS instruments (
   symbol        TEXT PRIMARY KEY,
@@ -56,7 +71,11 @@ CREATE TABLE IF NOT EXISTS lots (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT lots_quantity_not_nan CHECK (quantity <> 'NaN'::numeric),
   CONSTRAINT lots_price_not_nan    CHECK (price <> 'NaN'::numeric),
-  CONSTRAINT lots_fees_not_nan     CHECK (fees <> 'NaN'::numeric)
+  CONSTRAINT lots_fees_not_nan     CHECK (fees <> 'NaN'::numeric),
+  -- '(none)' is the label for account IS NULL everywhere it is read; an
+  -- account whose name folds to it (pdb_account_fold) is refused (migration 007).
+  CONSTRAINT lots_account_not_reserved
+    CHECK (pdb_account_fold(account) <> '(none)')
 );
 
 -- Prevent accidental duplicate lot inserts during imports.
@@ -128,7 +147,9 @@ CREATE TABLE IF NOT EXISTS cash_snapshots (
   currency      TEXT NOT NULL DEFAULT 'USD',
   note          TEXT,
   PRIMARY KEY (account, ts),
-  CONSTRAINT cash_snapshots_cash_not_nan CHECK (cash <> 'NaN'::numeric)
+  CONSTRAINT cash_snapshots_cash_not_nan CHECK (cash <> 'NaN'::numeric),
+  CONSTRAINT cash_snapshots_account_not_reserved
+    CHECK (pdb_account_fold(account) <> '(none)')
 );
 
 CREATE INDEX IF NOT EXISTS cash_snapshots_ts_idx ON cash_snapshots(ts);
@@ -152,6 +173,8 @@ CREATE TABLE IF NOT EXISTS income (
   CONSTRAINT income_amount_not_nan       CHECK (amount <> 'NaN'::numeric),
   CONSTRAINT income_tax_withheld_not_nan CHECK (tax_withheld <> 'NaN'::numeric),
   CONSTRAINT income_per_share_not_nan    CHECK (per_share <> 'NaN'::numeric),
+  CONSTRAINT income_account_not_reserved
+    CHECK (pdb_account_fold(account) <> '(none)'),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

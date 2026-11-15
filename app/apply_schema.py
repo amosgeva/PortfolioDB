@@ -32,7 +32,9 @@ leaves ``schema_migrations`` empty, and the next run of this script applies
 and records them.
 
 Exit status: 0 on success (including a changed migration, which is reported,
-not fatal), 1 when there is no SQL to apply or a file fails.
+not fatal), 1 when there is no SQL to apply or a file fails — then the file
+is named, its own error is printed, and it is not recorded. (Migration 007
+fails on purpose while an account is named ``(none)``, listing the rows.)
 """
 
 from __future__ import annotations
@@ -142,8 +144,16 @@ def _execute_file(conn, path: Path) -> None:
     resolved = path.resolve()
     if SQL_DIR.resolve() not in resolved.parents:
         raise ValueError(f"refusing to apply {path}: not under {SQL_DIR}")
-    with conn.cursor() as cur:
-        cur.execute(resolved.read_text(encoding="utf-8"))  # NOSONAR — shipped schema file, see docstring
+    try:
+        with conn.cursor() as cur:
+            cur.execute(resolved.read_text(encoding="utf-8"))  # NOSONAR — shipped schema file, see docstring
+    except psycopg2.Error:
+        # Say which file: the error alone does not (migration 007 refuses on
+        # purpose while a reserved account name is in use).
+        sys.stdout.flush()
+        print(f"FAILED applying {_rel(path)} - nothing in it was applied or recorded.",
+              file=sys.stderr, flush=True)
+        raise
 
 
 def _record(conn, path: Path, cs: str) -> None:
@@ -236,6 +246,13 @@ def run(conn, *, dry_run: bool = False) -> int:
         _print_pending(conn)
         return 0
     finally:
+        # A file that fails inside its own BEGIN leaves the session in an
+        # aborted transaction. Without this ROLLBACK the unlock below fails as
+        # well, and its "current transaction is aborted" replaces the error
+        # that says what went wrong.
+        if conn.get_transaction_status() == psycopg2.extensions.TRANSACTION_STATUS_INERROR:
+            with conn.cursor() as cur:
+                cur.execute("ROLLBACK")
         with conn.cursor() as cur:
             cur.execute("SELECT pg_advisory_unlock(%s, %s)", LOCK_KEY)
 
