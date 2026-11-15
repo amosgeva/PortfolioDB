@@ -7,7 +7,10 @@ from typing import Any
 
 from psycopg2 import sql
 
+import portfolio_kpis
+
 from app.mcp.deps import get_conn
+from app.mcp.services import cash as cash_service
 from app.mcp.services import common
 from app.mcp.services.cutoff import LOCAL_TZ
 
@@ -164,35 +167,27 @@ def trading_activity(
 
 
 def cash_balance(account: str | None = None) -> dict[str, Any]:
-    """Current cash. None = merged across all accounts (sum of latest per account)."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                # Latest row per account — a global ORDER BY ts LIMIT N would
-                # drop accounts whose newest snapshot falls outside the N rows.
-                """
-                SELECT DISTINCT ON (account) account, cash, ts
-                FROM cash_snapshots
-                ORDER BY account, ts DESC
-                """,
-            )
-            rows = cur.fetchall()
+    """Current cash. None = merged across all accounts (sum of latest per account).
 
-    latest: dict[str, dict[str, Any]] = {}
-    for acct, cash, ts in rows:
-        key = acct or "(merged)"
-        if key not in latest:
-            latest[key] = {"account": key, "cash": float(cash), "ts": ts.isoformat() if ts else None}
-
+    Through the shared reader (services/cash.py) the KPIs and the review use,
+    so the totals agree: USD balances only. A balance entered in another
+    currency is listed with its currency and ``included: false`` and described
+    in ``excluded_non_usd``; it is never added to the dollar total (audit Q-8 —
+    this tool used to sum USD 50 and EUR 500 as 550).
+    """
+    info = cash_service.latest_cash(None, account=account)
     if account is not None:
-        rec = latest.get(account)
-        return rec or {"account": account, "cash": 0.0, "ts": None}
-
-    total = sum(r["cash"] for r in latest.values())
+        rec = info["by_account"][0] if info["by_account"] else None
+        if rec is None:
+            return {"account": account, "cash": 0.0, "currency": None, "included": True,
+                    "ts": None, "excluded_non_usd": []}
+        return {**rec, "excluded_non_usd": info["excluded_non_usd"]}
     return {
         "account": None,  # merged
-        "total_cash": float(total),
-        "by_account": list(latest.values()),
+        "total_cash": float(info["total"]),
+        "currency": "USD",
+        "by_account": info["by_account"],
+        "excluded_non_usd": info["excluded_non_usd"],
     }
 
 
@@ -208,7 +203,7 @@ def cash_history(
     # Query only what exists.
     common.check_limit("limit", limit, MAX_ROWS)
     lo, hi = _day_bounds(since, until)
-    query = sql.SQL("SELECT ts, account, cash, note FROM cash_snapshots WHERE 1=1")
+    query = sql.SQL("SELECT ts, account, cash, note, currency FROM cash_snapshots WHERE 1=1")
     params: list[Any] = []
     query, params = common.add_account_filter(query, params, account)
     if lo is not None:
@@ -222,13 +217,16 @@ def cash_history(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(query, params)
-            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     return [{
-        "ts": r[0].isoformat() if r[0] else None,
-        "account": r[1],
-        "cash": float(r[2]),
+        "ts": r["ts"].isoformat() if r.get("ts") else None,
+        "account": r["account"],
+        "cash": float(r["cash"]),
+        # Raw history, unconverted: the currency says what the number is in.
+        "currency": portfolio_kpis.currency_of(r),
         # Free text typed by the operator (audit M-6).
-        "note": common.untrusted(r[3]),
+        "note": common.untrusted(r.get("note")),
     } for r in rows]
 
 

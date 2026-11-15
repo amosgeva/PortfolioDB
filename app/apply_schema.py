@@ -19,7 +19,7 @@ from pathlib import Path
 
 import psycopg2
 
-from db import load_config
+from db import connect_params, load_config
 
 # app/apply_schema.py → repo root (or /app in the image), then sql/
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
@@ -48,10 +48,8 @@ def main() -> int:
         return 0
 
     cfg = load_config()
-    conn = psycopg2.connect(
-        host=cfg.host, port=cfg.port, dbname=cfg.dbname,
-        user=cfg.user, password=cfg.password,
-    )
+    # connect_params carries the connect timeout (audit A-6 / E-4).
+    conn = psycopg2.connect(**connect_params(cfg))
     # Autocommit because the files carry their own BEGIN/COMMIT; wrapping them
     # in another transaction would nest and warn.
     conn.autocommit = True

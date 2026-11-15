@@ -174,3 +174,21 @@ def test_a_statement_past_the_deadline_is_cancelled_and_the_pool_survives(ro_con
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             assert cur.fetchone()[0] == 1
+
+
+def test_the_role_can_run_the_sql_net_quantity_function(ro_conn):
+    """The 1.8.0 ledger core adds lot_open_quantities(), an invoker SQL
+    function over the corporate_actions_in_effect view, and moves the MCP's
+    active-symbol queries onto it. The narrowed grants must cover the view, or
+    every one of those queries fails on privilege (QA of PR #126). Skipped on a
+    database that predates the function."""
+    ro_conn.rollback()
+    with ro_conn.cursor() as cur:
+        cur.execute("SELECT to_regprocedure('public.lot_open_quantities(date)') IS NOT NULL")
+        if not cur.fetchone()[0]:
+            pytest.skip("this database has no lot_open_quantities() (pre-1.8.0 ledger core)")
+        cur.execute("SELECT has_table_privilege('corporate_actions_in_effect', 'SELECT')")
+        assert cur.fetchone()[0] is True
+        cur.execute("SELECT * FROM lot_open_quantities(NULL) LIMIT 5")
+        cur.fetchall()
+    ro_conn.rollback()

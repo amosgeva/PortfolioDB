@@ -103,6 +103,10 @@ def _refresh_if_stale(force: bool = False) -> None:
     global _cache, _cache_at, _db_ok, _refreshing, _generation, _stored_generation
     now = time.monotonic()
     with _lock:
+        # _cache_at is stamped when a read FINISHES, never when one is claimed:
+        # stamping it at the claim made a concurrent cold reader see a "fresh"
+        # empty cache and answer with defaults while the first read was still
+        # in flight.
         fresh = bool(_cache_at) and now - _cache_at < TTL_SECONDS
         if fresh and not force:
             return
@@ -113,7 +117,6 @@ def _refresh_if_stale(force: bool = False) -> None:
             gen = None
         else:
             _refreshing = True
-            _cache_at = now
             _generation += 1
             gen = _generation
             wait_for_first = False
@@ -132,6 +135,9 @@ def _refresh_if_stale(force: bool = False) -> None:
         with _lock:
             if gen > _stored_generation:
                 _cache, _db_ok, _stored_generation = values, ok, gen
+                # A failed read is cached for the TTL too, so a dead database
+                # is not retried on every call.
+                _cache_at = time.monotonic()
             if gen == _generation:
                 _refreshing = False
         _first_load.set()

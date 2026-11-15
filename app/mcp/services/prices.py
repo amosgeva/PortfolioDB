@@ -24,6 +24,10 @@ import holdings as holdings_module
 # Windows accepted by get_price_change / get_top_movers.
 VALID_WINDOWS = ("1d", "1w", "1m", "3m", "6m", "ytd", "1y", "all")
 
+# The parity contract's lot query in its processing order: two constant
+# psycopg2.sql fragments, no caller input.
+_VALUE_LOTS_SQL = ledger_inputs.LOTS_SQL + ledger_inputs.LOTS_ORDER
+
 # How historical series value the portfolio.
 HOLDINGS_BASES = ("historical", "current_constant")
 
@@ -533,7 +537,7 @@ def _value_lots(
     do, instead of netting one account's sale against another's purchase.
     """
     with conn.cursor() as cur:
-        cur.execute(ledger_inputs.LOTS_SQL + ledger_inputs.LOTS_ORDER)
+        cur.execute(_VALUE_LOTS_SQL)
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     adjusted = ledger_inputs.prepare(rows, actions).lots

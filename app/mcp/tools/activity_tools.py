@@ -63,7 +63,12 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     def get_cash_balance(account: str | None = None) -> dict[str, Any]:
-        """Current cash. None = merged total across all accounts."""
+        """Current cash. None = merged total across all accounts.
+
+        Totals are USD only. A balance entered in another currency is listed
+        with its currency and `included: false`, and described under
+        `excluded_non_usd`; it is never added to the dollar total.
+        """
         return activity_service.cash_balance(account)
 
     @mcp.tool

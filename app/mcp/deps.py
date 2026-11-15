@@ -181,6 +181,25 @@ def _build_pool() -> ThreadedConnectionPool:
     )
 
 
+def install_settings_source() -> None:
+    """Read app/settings.py through this pool. MCP server processes only.
+
+    The default settings source logs in with the application's read-write
+    password, which the MCP process deliberately does not hold, so the
+    reporting timezone and the saved one-pager silently fell back to the
+    environment (audit X-4, Q-5). The read-only role holds SELECT on
+    `settings` (sql/create_ro_role.sql).
+
+    Called by the server at startup (app/mcp/server.py), never at import: the
+    dashboard imports MCP services too (Data Health), and a process-global
+    swap there sent its settings through an MCP role it does not have.
+    Registering connects nothing; the first settings read does.
+    """
+    import settings
+
+    settings.use_connection_source(get_conn)
+
+
 def init_pool() -> ThreadedConnectionPool:
     """Initialize the pool eagerly. Safe to call multiple times."""
     return _get_pool()

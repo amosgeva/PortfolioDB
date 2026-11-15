@@ -377,8 +377,11 @@ def test_x4_q5_read_only_process_reads_the_settings_table(admin, fixtures):
                     "('philosophy_md', 'W3 one-pager: buy what you understand.')")
     env = {k: v for k, v in os.environ.items() if k != "PORTFOLIODB_PASSWORD"}
     env["PORTFOLIODB_TZ"] = "UTC"  # the fallback the table must win over
+    env.setdefault("PORTFOLIODB_MCP_TOKEN", "live-surface-test-token-0123456789-abcdef")
     code = (
         "import sys; sys.path.insert(0, '.');"
+        # The server's own startup — which is what installs the RO source.
+        "import app.mcp.server;"
         "from app.mcp.services import cutoff;"
         "import advisor, db, os;"
         "assert not os.getenv('PORTFOLIODB_PASSWORD');"
@@ -513,3 +516,60 @@ def test_non_usd_money_is_excluded_everywhere(fixtures):
     dq = data_quality.portfolio_data_quality(cutoff=c)
     codes = {i["code"] for i in dq["material_issues"]}
     assert {"foreign_currency_income", "foreign_currency_cash"} <= codes
+
+
+# ────────────────────────── QA round 1 ──────────────────────────
+
+
+def test_importing_mcp_services_leaves_the_dashboards_settings_alone(admin, fixtures):
+    """The dashboard imports MCP data quality for Data Health. With the
+    application's credentials and NO MCP role configured, settings must still
+    come from the table afterwards — the MCP used to swap the process-global
+    settings source at package import, and every later refresh fell back."""
+    with admin.cursor() as cur:
+        cur.execute("INSERT INTO settings(key, value) VALUES ('reporting_tz', 'Asia/Tokyo')")
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("PORTFOLIODB_MCP_")}
+    code = (
+        "import sys; sys.path.insert(0, 'app'); sys.path.insert(0, '.');"
+        "import settings;"
+        "print(settings.get('reporting_tz'), settings.db_available());"
+        "import app.mcp.services.data_quality, app.mcp.services.review;"
+        "settings.refresh();"
+        "print(settings.get('reporting_tz'), settings.db_available());"
+        "print(settings._connection_source is settings._application_connection)"
+    )
+    try:
+        out = subprocess.run([sys.executable, "-c", code], cwd=REPO, env=env,
+                             capture_output=True, text=True, timeout=60)
+    finally:
+        with admin.cursor() as cur:
+            cur.execute("DELETE FROM settings WHERE key = 'reporting_tz'")
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().splitlines() == ["Asia/Tokyo True", "Asia/Tokyo True", "True"]
+
+
+def test_cash_balance_tool_is_usd_only(admin, fixtures):
+    """USD 50 + EUR 500 in two accounts: the public cash tool agrees with the
+    KPIs (50), lists the euros, and never reports 550."""
+    from app.mcp.services import activity, kpis
+
+    with admin.cursor() as cur:
+        cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s)", (ACCT, EUR_ACCT))
+        cur.execute("INSERT INTO cash_snapshots(ts, account, cash, currency) VALUES "
+                    "(now() - interval '1 minute', %s, 50, 'USD'), "
+                    "(now() - interval '1 minute', %s, 500, 'EUR')", (ACCT, EUR_ACCT))
+    try:
+        bal = activity.cash_balance()
+        mine = {r["account"]: r for r in bal["by_account"]}
+        assert mine[ACCT]["included"] is True and mine[ACCT]["cash"] == 50.0
+        assert mine[EUR_ACCT]["included"] is False and mine[EUR_ACCT]["currency"] == "EUR"
+        assert any(w["account"] == EUR_ACCT for w in bal["excluded_non_usd"])
+        assert bal["total_cash"] == pytest.approx(kpis.portfolio_kpis("fifo")["cash"])
+        one = activity.cash_balance(EUR_ACCT)
+        assert one["included"] is False and one["excluded_non_usd"]
+        hist = activity.cash_history(EUR_ACCT, limit=5)
+        assert hist[0]["currency"] == "EUR"
+    finally:
+        with admin.cursor() as cur:
+            cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s)", (ACCT, EUR_ACCT))

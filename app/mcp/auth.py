@@ -111,7 +111,8 @@ def load_token() -> str:
 # installers generate 40 random characters, comfortably above it.
 MIN_TOKEN_LENGTH = 32
 MIN_DISTINCT_CHARS = 10
-ALLOW_WEAK_TOKEN_ENV = "PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN"
+# The NAME of an environment variable, not a secret — scanners match the word.
+ALLOW_WEAK_TOKEN_ENV = "PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN"  # nosec B105  # nosemgrep
 
 
 def token_weakness(token: str) -> str | None:

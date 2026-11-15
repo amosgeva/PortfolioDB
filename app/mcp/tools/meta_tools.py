@@ -63,6 +63,9 @@ def register(mcp: FastMCP) -> None:
             d = dict(zip(cols, r))
             d["has_open_position"] = bool(d["has_open_position"])
             d["watchlist"] = bool(d["watchlist"])
+            # Enriched from the vendor (yfinance): free text, marked and capped
+            # like every other vendor field (audit M-6).
+            d["name"] = common.untrusted(d.get("name"))
             if held_only and not d["has_open_position"]:
                 continue
             if watchlist_only and not d["watchlist"]:

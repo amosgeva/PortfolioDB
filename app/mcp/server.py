@@ -28,6 +28,16 @@ if str(_APP_DIR.parent) not in sys.path:
 
 from fastmcp import FastMCP
 
+# This is the MCP server process: read settings (reporting timezone, the saved
+# one-pager) through the read-only pool. First, before anything below imports
+# a module that reads a setting at import (exec_report does), or that read
+# would go through the default source, fail for want of the write password,
+# and be cached. Done here and not in the package __init__, so a process that
+# merely imports MCP services (the dashboard's Data Health page) keeps its own.
+from app.mcp.deps import install_settings_source  # noqa: E402
+
+install_settings_source()
+
 from app.mcp import healthz
 from app.mcp.auth import build_verifier
 from app.mcp.deps import close_pool, init_pool

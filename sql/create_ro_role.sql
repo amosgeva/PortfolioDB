@@ -49,6 +49,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE portfoliouser IN SCHEMA public
 --                     (cutoff, portfolio://philosophy, the prompts)
 --   advisor_briefs  — portfolio://reports/executive/latest
 --   fd_*            — the fundamentals tools and the executive report
+--   corporate_actions_in_effect — read by lot_open_quantities() (1.8.0 ledger
+--                     core), the SQL net-quantity function the active-symbol
+--                     queries call; it runs as the caller, so the caller needs
+--                     the view
 -- A table missing from this database (the fd_* tables before enrichment's
 -- schema was applied) is skipped rather than failing the whole script.
 DO $$
@@ -60,10 +64,20 @@ BEGIN
     'corporate_actions', 'snapshot_runs', 'settings', 'advisor_briefs',
     'fd_company_facts', 'fd_financial_metrics', 'fd_financial_statements',
     'fd_earnings', 'fd_filings', 'fd_insider_trades',
-    'fd_institutional_ownership', 'fd_news'
+    'fd_institutional_ownership', 'fd_news',
+    'corporate_actions_in_effect'
   ] LOOP
     IF to_regclass('public.' || t) IS NOT NULL THEN
       EXECUTE format('GRANT SELECT ON public.%I TO portfoliodb_ro', t);
     END IF;
   END LOOP;
+END $$;
+
+-- The SQL net-quantity function, when this database has it. Functions are
+-- executable by PUBLIC by default; granted explicitly so a hardened database
+-- that revoked that still serves the MCP.
+DO $$ BEGIN
+  IF to_regprocedure('public.lot_open_quantities(date)') IS NOT NULL THEN
+    GRANT EXECUTE ON FUNCTION public.lot_open_quantities(date) TO portfoliodb_ro;
+  END IF;
 END $$;

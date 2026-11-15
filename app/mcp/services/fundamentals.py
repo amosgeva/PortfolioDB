@@ -13,6 +13,7 @@ on GLD.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import fd_store
@@ -38,8 +39,10 @@ VENDOR_TEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "ownership": ("investor",),
     "news": ("title", "source", "url"),
 }
-# Most numeric line items a statement row carries from its raw payload.
+# Most numeric line items a statement row carries from its raw payload, and
+# the shape a line-item label must have to be returned at all.
 MAX_LINE_ITEMS = 200
+_LINE_ITEM_KEY = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
 def is_etf(symbol: str) -> bool:
@@ -220,11 +223,20 @@ def _statement(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if row is None:
         return None
     raw = row.get("raw") if isinstance(row.get("raw"), dict) else {}
-    items = {
-        str(k): v for k, v in raw.items()
-        if isinstance(v, (int, float)) and not isinstance(v, bool)
-    }
+    # Keys are vendor text too: only identifier-shaped labels (the vendor's
+    # snake_case field names, at most 64 characters) are kept. Anything else
+    # — a sentence, a 2,500-character instruction — is dropped and counted.
+    items: dict[str, Any] = {}
+    dropped = 0
+    for k, v in raw.items():
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            continue
+        if isinstance(k, str) and _LINE_ITEM_KEY.fullmatch(k):
+            items[k] = v
+        else:
+            dropped += 1
     out = _vendor(row, "statements") or {}
     out["line_items"] = dict(list(items.items())[:MAX_LINE_ITEMS])
     out["line_items_truncated"] = len(items) > MAX_LINE_ITEMS
+    out["line_items_dropped_labels"] = dropped
     return out

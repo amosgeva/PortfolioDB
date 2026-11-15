@@ -47,10 +47,14 @@ def latest_cash(
     by_account: list[dict[str, Any]] = []
     other: list[dict[str, Any]] = []
     total = 0.0
+    seen: set[str] = set()
     for r in rows:
         acct = r.get("account") or "(merged)"
         if account is not None and acct != account:
             continue
+        if acct in seen:  # first (newest) row per account wins
+            continue
+        seen.add(acct)
         currency = portfolio_kpis.currency_of(r)
         included = currency == portfolio_kpis.BASE_CURRENCY
         amount = float(r["cash"])

@@ -288,3 +288,64 @@ def test_r5_lazy_zone_pins_only_a_value_read_from_the_table(monkeypatch):
     assert zone.resolve().key == "UTC"          # env fallback: not pinned
     assert zone.resolve().key == "Asia/Tokyo"   # from the table: pinned
     assert zone.resolve().key == "Asia/Tokyo"   # and kept
+
+
+def test_a6_a_concurrent_cold_reader_waits_for_the_first_read(live_settings):
+    """Two readers, nothing ever read: the second must wait for the first
+    read and get the table's value, not answer with the default at once."""
+    gate = threading.Event()
+    entered = threading.Event()
+
+    @contextlib.contextmanager
+    def slow():
+        entered.set()
+        gate.wait(5)
+        yield _Conn({"reporting_tz": "Asia/Tokyo"})
+
+    settings.use_connection_source(slow)
+    first = {}
+    t = threading.Thread(target=lambda: first.update(v=settings.get("reporting_tz", default="UTC")))
+    t.start()
+    assert entered.wait(2)
+    threading.Timer(0.2, gate.set).start()
+    t0 = time.monotonic()
+    second = settings.get("reporting_tz", default="UTC")
+    waited = time.monotonic() - t0
+    t.join(5)
+    assert first["v"] == "Asia/Tokyo"
+    assert second == "Asia/Tokyo"
+    assert waited >= 0.1
+
+
+def test_a6_schema_applier_connects_with_a_timeout(monkeypatch):
+    """apply_schema used to call psycopg2.connect with no connect_timeout."""
+    import apply_schema
+
+    seen = {}
+
+    class _Cur:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            return False
+
+        def execute(self, sql):
+            pass
+
+    class _Conn:
+        autocommit = False
+
+        def cursor(self):
+            return _Cur()
+
+        def close(self):
+            pass
+
+    one = apply_schema.SQL_DIR / "schema.sql"
+    monkeypatch.setattr(apply_schema, "load_config", lambda: db.DbConfig("h", 1, "d", "u", "p"))
+    monkeypatch.setattr(apply_schema, "sql_files", lambda: [one])
+    monkeypatch.setattr(apply_schema.psycopg2, "connect", lambda **kw: seen.update(kw) or _Conn())
+    monkeypatch.setattr(sys, "argv", ["apply_schema.py"])
+    assert apply_schema.main() == 0
+    assert seen["connect_timeout"] >= 2
