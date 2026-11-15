@@ -38,6 +38,16 @@ if [ -n "$staged" ]; then
         echo "pre-commit: unused imports (see above)" >&2
         exit 1
     fi
+    # The same ruff rule set CI's `Lint (ruff)` job runs, on the staged files,
+    # when ruff is installed (pip install -r tools/requirements-ci.txt). Skipped
+    # rather than failed without it, like the rest of this hook's tooling.
+    if "$python" -m ruff --version >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        if ! "$python" -m ruff check --config tools/ruff.toml $staged; then
+            echo "pre-commit: ruff (see above)" >&2
+            exit 1
+        fi
+    fi
 fi
 
 # ---------- 2. test suites ----------
