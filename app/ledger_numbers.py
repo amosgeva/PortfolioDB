@@ -28,6 +28,7 @@ from decimal import Decimal, InvalidOperation
 # a database error that aborts a transaction.
 NUMERIC_MAX_EXCLUSIVE = Decimal("1e12")
 NUMERIC_SCALE = 8
+_SCALE_QUANTUM = Decimal(1).scaleb(-NUMERIC_SCALE)
 
 
 def parse_decimal(
@@ -58,6 +59,15 @@ def parse_decimal(
     if abs(value) >= NUMERIC_MAX_EXCLUSIVE:
         raise ValueError(
             f"{field} {text} is too large: the ledger stores at most 12 integer digits"
+        )
+    # More decimals than the column keeps: PostgreSQL would round silently, so
+    # 0.123456789 would be stored as 0.12345679 and a quantity of 1E-9 as 0
+    # (audit D-5). Trailing zeros past the eighth place are not precision, so
+    # "1.500000000" is fine.
+    if value != value.quantize(_SCALE_QUANTUM):
+        raise ValueError(
+            f"{field} {text} has more than {NUMERIC_SCALE} decimal places, which the "
+            f"ledger cannot store without rounding; round it to {NUMERIC_SCALE} places"
         )
     if minimum is not None:
         if exclusive_minimum and value <= minimum:

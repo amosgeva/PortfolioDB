@@ -12,12 +12,11 @@ import pandas as pd
 
 from fifo import Lot, run_fifo
 from avg_cost import Lot as AvgLot, run_avg_cost
+from ledger_core import to_decimal
+
+__all__ = ["compute_fifo_merged", "compute_avg_cost_merged", "to_decimal"]
 
 _COLUMNS = ["symbol", "qty", "open_cost", "avg_cost", "realized_pnl"]
-
-
-def to_decimal(x) -> Decimal:
-    return Decimal(str(x))
 
 
 def _compute_merged(lot_rows: list[dict], lot_cls, engine) -> pd.DataFrame:

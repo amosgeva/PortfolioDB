@@ -20,7 +20,6 @@ import sys
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
-from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
@@ -32,10 +31,6 @@ from portfolio import compute_fifo_merged, compute_avg_cost_merged
 from reporting_utils import local_tz, money as fmt_money, utf8_stdout
 
 UTC = timezone.utc
-
-
-def _dec(x) -> Decimal:
-    return Decimal(str(x))
 
 
 @dataclass

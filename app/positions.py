@@ -21,14 +21,11 @@ from decimal import Decimal
 import ledger_inputs
 from db import connect, load_config
 from fifo import Lot, run_fifo
+from ledger_core import to_decimal  # the one Decimal helper (audit R-4)
 from portfolio import compute_fifo_merged
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
-
-
-def to_decimal(x) -> Decimal:
-    return Decimal(str(x))
 
 
 def print_positions(symbol: str | None = None) -> None:

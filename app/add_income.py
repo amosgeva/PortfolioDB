@@ -10,8 +10,9 @@ Manual usage:
       --kind DIVIDEND --amount 4.00 [--ex-date 2026-03-01] \
       [--tax-withheld 0.60] [--per-share 0.04] [--notes "Q1"]
 
-Backfill usage (cash = per-share × shares held on the ex-date, reconstructed
-from your lots; merged across accounts, account left NULL):
+Backfill usage (cash = per-share × shares held at the close before the
+ex-date, reconstructed from your lots; merged across accounts, account left
+NULL):
   python add_income.py --backfill --symbol NVDA [--since 2024-01-01]
 
 Both insert with ON CONFLICT DO NOTHING (dedupe on symbol, account, kind,
@@ -26,17 +27,29 @@ on or after it are deleted, and only those dates are rebuilt; without it, all
 of them. Nothing is deleted unless there is something to rebuild, and the
 command is one transaction, so a failed insert restores the deleted rows.
 Manual rows are never touched.
+
+USD only: PortfolioDB has no FX conversion, and every income total is a plain
+sum, so a payment in another currency is refused rather than stored and added
+as if it were dollars (audit Q-8). Convert it and record the USD amount.
 """
 
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+import sys
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 import holdings
 import ledger_inputs
 import ledger_numbers
+import symbol_paths
 from db import load_config, run, transaction
+from ledger_core import ZERO, to_decimal
+
+# NUMERIC(20,8): amounts are computed exactly and rounded once, to the scale
+# the column stores, rather than left for PostgreSQL to round silently.
+_AMOUNT_QUANTUM = Decimal(1).scaleb(-ledger_numbers.NUMERIC_SCALE)
 
 KINDS = ["DIVIDEND", "INTEREST", "CAP_GAIN_DIST"]
 
@@ -47,8 +60,18 @@ KINDS = ["DIVIDEND", "INTEREST", "CAP_GAIN_DIST"]
 BACKFILL_NOTE = "auto-backfill (estimate: pay_date = ex_date; entitlement from ledger, split-adjusted)"
 
 
-def _shares_held_on(conn, symbol: str, as_of, *, per_account: bool = False) -> dict[str | None, float]:
-    """Shares of ``symbol`` held on ``as_of``, in TODAY's split units.
+def entitlement_date(ex_date: date) -> date:
+    """The day whose closing position is entitled to a dividend with this
+    ex-date: the day before it. A share bought ON the ex-date trades without
+    the dividend and a share sold on it still receives it; the backfill used to
+    count holdings at the end of the ex-date itself, so both were wrong (audit
+    F-6). A calendar day suffices: no trade can be dated on a non-trading day
+    between that close and the ex-date's open."""
+    return ex_date - timedelta(days=1)
+
+
+def _shares_held_on(conn, symbol: str, as_of, *, per_account: bool = False) -> dict[str | None, Decimal]:
+    """Shares of ``symbol`` held at the close of ``as_of``, in TODAY's split units.
 
     The lots are selected by the ex-date; their quantity is stated in current
     units, because that is the unit yfinance states every historical
@@ -65,14 +88,12 @@ def _shares_held_on(conn, symbol: str, as_of, *, per_account: bool = False) -> d
     ledger = ledger_inputs.load(conn, symbol=symbol, as_of=as_of, units="current")
     sym = symbol.upper()
     if not per_account:
-        return {None: holdings.holdings_on(ledger.lots, as_of).get(sym, 0.0)}
-    by_account: dict[str | None, float] = {}
-    for account in {lot.get("account") for lot in ledger.lots}:
-        subset = [lot for lot in ledger.lots if lot.get("account") == account]
-        qty = holdings.holdings_on(subset, as_of).get(sym, 0.0)
-        if qty:
-            by_account[account] = qty
-    return by_account
+        return {None: holdings.open_quantities(ledger.lots, as_of=as_of).get(sym, ZERO)}
+    return {
+        account: qty
+        for (s, account), qty in holdings.net_quantities(ledger.lots, as_of=as_of).items()
+        if s == sym and qty > 0
+    }
 
 
 def _insert_income(conn, **f) -> int:
@@ -161,16 +182,19 @@ def _backfill(
 
     inserted = duplicates = 0
     for ex_d, per_share in to_rebuild:
-        for account, shares in _shares_held_on(conn, symbol, ex_d, per_account=per_account).items():
-            if shares <= 0:
+        per_share_d = to_decimal(per_share).quantize(_AMOUNT_QUANTUM)
+        entitled = _shares_held_on(conn, symbol, entitlement_date(ex_d), per_account=per_account)
+        for account, shares in entitled.items():
+            shares_d = to_decimal(shares)
+            if shares_d <= 0:
                 continue
-            amount = round(float(per_share) * shares, 8)
+            amount = (to_decimal(per_share) * shares_d).quantize(_AMOUNT_QUANTUM)
             if amount <= 0:
                 continue
             wrote = _insert_income(
                 conn, symbol=symbol, account=account, kind="DIVIDEND", ex_date=ex_d,
-                pay_date=ex_d, amount=amount, currency="USD", tax_withheld=0,
-                per_share=float(per_share), source="yfinance", notes=BACKFILL_NOTE,
+                pay_date=ex_d, amount=amount, currency="USD", tax_withheld=ZERO,
+                per_share=per_share_d, source="yfinance", notes=BACKFILL_NOTE,
             )
             if wrote:
                 inserted += 1
@@ -179,9 +203,9 @@ def _backfill(
     return inserted, duplicates
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--symbol", required=True)
+    ap.add_argument("--symbol", required=True, type=symbol_paths.symbol_arg)
     ap.add_argument("--backfill", action="store_true",
                     help="Pull dividend history from yfinance instead of manual entry")
     ap.add_argument("--since", default=None, help="YYYY-MM-DD (backfill lower bound)")
@@ -200,13 +224,23 @@ def main():
     ap.add_argument("--pay-date", default=None, help="YYYY-MM-DD")
     # Finite, non-negative, exact Decimal — see app/ledger_numbers.py.
     ap.add_argument("--amount", type=ledger_numbers.money_arg, default=None, help="gross cash received")
-    ap.add_argument("--currency", default="USD")
+    ap.add_argument("--currency", default="USD",
+                    help="must be USD: the ledger has no FX conversion (convert first)")
     ap.add_argument("--tax-withheld", type=ledger_numbers.money_arg, default=ledger_numbers.parse_money("0"))
     ap.add_argument("--per-share", type=ledger_numbers.money_arg, default=None)
     ap.add_argument("--notes", default=None)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    symbol = args.symbol.strip().upper()
+    symbol = args.symbol
+    currency = (args.currency or "USD").strip().upper()
+    if currency != "USD":
+        print(
+            f"REFUSED: income in {currency}. PortfolioDB is USD-only — every income "
+            "total is a plain sum, so this amount would be added as if it were dollars. "
+            "Convert it at the payment date's rate and record the USD amount.",
+            file=sys.stderr,
+        )
+        return 2
 
     cfg = load_config()
     # One transaction for the whole command: instrument upsert + income
@@ -231,22 +265,32 @@ def main():
                 f" ({duplicates} already present). Rows are estimates: pay date = ex-date,"
                 " entitlement from the ledger in today's split-adjusted shares."
             )
-            return
+            return 0
 
         if args.pay_date is None or args.amount is None:
             ap.error("--pay-date and --amount are required for manual entry")
 
-        _insert_income(
+        wrote = _insert_income(
             conn, symbol=symbol, account=args.account, kind=args.kind,
             ex_date=args.ex_date, pay_date=args.pay_date, amount=args.amount,
-            currency=args.currency, tax_withheld=args.tax_withheld,
+            currency=currency, tax_withheld=args.tax_withheld,
             per_share=args.per_share, source="manual", notes=args.notes,
         )
+        if not wrote:
+            # The dedupe key (symbol, account, kind, pay_date, amount) already
+            # holds this payment: say so instead of claiming it was added.
+            print(
+                f"DUPLICATE — NOT RECORDED: a {args.kind} of {args.amount} for {symbol} paid "
+                f"{args.pay_date} is already in the ledger.",
+                file=sys.stderr,
+            )
+            return 1
         print(
-            f"OK added {args.kind} {args.amount} {args.currency} for {symbol} "
+            f"OK added {args.kind} {args.amount} {currency} for {symbol} "
             f"pay_date={args.pay_date}"
         )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

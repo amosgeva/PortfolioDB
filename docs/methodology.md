@@ -21,7 +21,7 @@ and realized P&L are recomputed from `lots` on every read.
 | `price_snapshots` | Time-series quotes, PK `(symbol, ts)`. |
 | `cash_snapshots` | Manual cash balances. Latest row per account wins. |
 | `income` | Dividends, interest, distributions — deliberately outside `lots`. |
-| `corporate_actions` | Splits, applied at read time (§6). |
+| `corporate_actions` | Splits, applied at read time (§7). |
 
 Matching is scoped to `(symbol, account)` in both engines. Cross-account
 fungibility happens only at the merge step in `portfolio.py`.
@@ -87,7 +87,29 @@ a real difference between the methods, not a rounding artifact.
 
 ---
 
-## 3. What counts as a trade
+## 3. Processing order and open quantity
+
+Trades carry a date, not a time. Within one trade date **every BUY is processed
+before any SELL**, then lots go in id order (`app/ledger_core.py`,
+`processing_key`). For a day round trip this is exact — the position ends flat
+and the realized P&L is (sell − buy) × quantity whichever came first — and it
+means a same-day sale stored ahead of its purchase (a CSV listing sales first)
+is matched instead of dropped. Before 1.8.0 FIFO dropped it and left the
+purchase open, while every net-quantity reader counted zero.
+
+Shorts are still unsupported: a SELL larger than what its `(symbol, account)`
+stream holds after that day's purchases is truncated at the open quantity, with
+a warning. **Open quantity is defined by that walk**, and there is one
+implementation of it (`holdings.net_quantities`, and the SQL function
+`lot_open_quantities()` for SQL readers, held equal by a database test). So a
+sale entered against the wrong account does not reduce another account's
+position anywhere, and a later purchase is not swallowed by an earlier
+oversell. The collector, the reports, the dashboard and the write-time
+oversell check all agree with the engines by construction.
+
+---
+
+## 4. What counts as a trade
 
 `get_trade_quality` defines a **trade** as one closing SELL lot.
 
@@ -116,7 +138,7 @@ older — this is how a tax report reads.
 
 ---
 
-## 4. Returns
+## 5. Returns
 
 `get_period_returns` reports **time-weighted return**. Holdings are
 reconstructed per snapshot day and daily sub-period returns are chained, so
@@ -138,6 +160,18 @@ bought has no capital at work; the growth factor passes through it unchanged,
 and a period made only of such days reports `null` rather than 0%. Income that
 arrives after a position was sold is credited against the last capital that
 earned it.
+
+Missing and broken prices: a symbol bought before its first quote is valued
+at its own fill price until the quote arrives (a fill is a real price
+observation; valuing it at nothing read as a loss and then a gain). The fill
+price for a snapshot day is the quantity-weighted average price of the
+symbol's fills — buys and sells, every account — on the latest trade date
+bucketed to that day. It depends only on which lots exist, not on the order a
+query returns them, so every surface values the day alike. A price
+that is not positive is no price — the collector, the importer and the
+database refuse one — and the growth factor is never multiplied by a
+non-positive number: such a day carries through unchanged and its flows count
+the next day.
 
 **Not available, and why:**
 
@@ -176,7 +210,7 @@ in `pvBasis` (`"all_history"`).
 
 ---
 
-## 5. Holdings basis for historical series
+## 6. Holdings basis for historical series
 
 Series that value the past — `get_drawdown_stats`, `get_portfolio_value_history`
 — accept `holdings_basis`:
@@ -192,7 +226,7 @@ Series that value the past — `get_drawdown_stats`, `get_portfolio_value_histor
 value. A market-value series falls when securities are sold and rises when
 money is added, so a withdrawal read as a drawdown and a deposit could hide
 one. `get_drawdown_stats` for the whole portfolio therefore runs on the same
-daily flow-adjusted curve as §4 (`basis: "twr_growth_curve"`; `peak` and
+daily flow-adjusted curve as §5 (`basis: "twr_growth_curve"`; `peak` and
 `trough` are index levels with 1.0 at the first observation). A single symbol's
 drawdown is on its split-adjusted price (`basis: "price"`); the
 `current_constant` comparison keeps the old market-value definition
@@ -200,7 +234,7 @@ drawdown is on its split-adjusted price (`basis: "price"`); the
 
 ---
 
-## 6. Splits
+## 7. Splits
 
 `corporate_actions` is the source of truth and is applied at **read** time —
 `lots` and `price_snapshots` are never rewritten, preserving the append-only
@@ -228,9 +262,27 @@ Two independent flags, because they answer different questions:
 would otherwise misclassify that day's pre-open snapshots.
 
 Splits reported by the price vendor are recorded automatically by
-`snapshot_prices.py`, with prices adjusted but **lots never** — the vendor knows
-the quote series was rebased and cannot know whether the broker credited shares.
-Those rows land `reviewed=FALSE` pending confirmation.
+`snapshot_prices.py` **pending review** (`reviewed = FALSE`), and a pending row
+changes nothing — neither prices nor lots — until approved:
+
+```bash
+python app/check_splits.py                      # lists pending reviews
+python app/check_splits.py --approve NVDA:2024-06-10 --shares-credited
+python app/check_splits.py --approve NVDA:2024-06-10 --quantities-already-post-split
+```
+
+The vendor knows the quote series was rebased; it cannot know whether the
+broker credited the shares, which is the question the two flags answer. Before
+1.8.0 such a row took effect at once with prices adjusted and lots not, so a
+2:1 split halved every position's value until someone noticed. Rows entered
+by hand (`source = 'manual'`) apply as entered.
+
+**One split is applied once.** Two records of the same symbol, kind and ratio
+within seven days of each other (a manual row and a vendor row a session
+apart) are one event: the reviewed, then hand-entered, then earlier one is
+applied and the other ignored with a warning. The database refuses to store
+such a pair (trigger `corporate_actions_near_duplicate`); the view
+`corporate_actions_in_effect` is the SQL statement of the rule.
 
 Beyond that, `app/check_splits.py` scans for unrecorded discontinuities
 heuristically and **cross-references every hit against the vendor**. The
@@ -245,7 +297,7 @@ construction, and they stop the scanner re-reporting a settled question.
 
 ---
 
-## 7. One cutoff per request
+## 8. One cutoff per request
 
 `cutoff.resolve()` pins an instant and records which observation it landed on
 per symbol and account. Lots filter on `trade_date <= cutoff.trade_date`, prices
@@ -263,7 +315,7 @@ response-level rather than per-field.
 
 ---
 
-## 8. Data freshness
+## 9. Data freshness
 
 A symbol is **stale** when a snapshot run completed successfully but that symbol
 got no price in it — judged against `snapshot_runs`, not the wall clock.
@@ -278,7 +330,7 @@ Collector liveness is a separate portfolio-level check, alarming above 72h.
 
 ---
 
-## 9. Nulls
+## 10. Nulls
 
 A ratio whose denominator is absent returns `null` with an entry in
 `null_reasons`, never `0.0` — those are different facts and a consumer cannot
@@ -298,7 +350,7 @@ with a missing denominator* are nullable.
 
 ---
 
-## 10. Volume — recorded, not yet reported
+## 11. Volume — recorded, not yet reported
 
 `price_snapshots.volume` records the session's cumulative share count at the
 moment of each snapshot. Collection began **2026-08-12**.
@@ -324,11 +376,14 @@ zero quote as missing.
 
 ---
 
-## 11. Reporting currency
+## 12. Reporting currency
 
 `USD`, stated explicitly in every `meta` block. The ledger is single-currency:
-every instrument is taken to be USD, there is no FX table and no rate source,
-and nothing checks an instrument's quote currency. An instrument quoted in
+every instrument is taken to be USD, there is no FX table and no rate source.
+The writers check what they can: `add-lot`, `sell-lot` and the CSV importer
+refuse a symbol with a non-US exchange suffix (`.TA`, `.L`, `.HK` …) or an
+instrument registered in another currency unless `--allow-non-usd` is passed,
+and `add_income.py` refuses income in another currency. An instrument quoted in
 another currency would be summed at face value — wrong, not approximate — so
 import one currency, or one account per currency and read them separately
 (see the CSV import guide). Endpoints accept
@@ -351,7 +406,7 @@ figures" block; the daily and weekly reports as warning lines.
 
 ---
 
-## 12. Portfolio totals and total return
+## 13. Portfolio totals and total return
 
 Defined once, in `app/portfolio_kpis.py`, and used by the dashboard payload,
 the Advisor snapshot, the executive report and the daily report.
@@ -396,7 +451,7 @@ read 0%. With an unpriced position the figure is marked partial
 no purchases.
 
 It is a money measure, not a performance measure. For performance, use the
-time-weighted return (section 4); the two answer different questions and are
+time-weighted return (section 5); the two answer different questions and are
 not expected to agree.
 
 Two other lifetime ratios moved to the same denominator for the same reason:
@@ -406,7 +461,7 @@ conventional definition.
 
 ---
 
-## 13. Prices in the reports
+## 14. Prices in the reports
 
 The executive and the daily report follow one rule
 (`portfolio_kpis.portfolio_as_of` / `stale_quotes`):
@@ -426,10 +481,10 @@ The executive and the daily report follow one rule
 - The **previous session** for the day change is the last earlier day on which
   a held symbol was quoted. The report says which session it is ("on Fri, Nov
   13"), not "today".
-- A held symbol with no quote at all is **unpriced** (section 12).
+- A held symbol with no quote at all is **unpriced** (section 13).
 
 This "stale" is a report-level label: a carried-forward quote. The data-quality
-staleness of section 8 (a symbol a completed collector run did not price) is a
+staleness of section 9 (a symbol a completed collector run did not price) is a
 different, per-run check.
 
 The weekly report's **weekly change** is the change in securities plus entered
@@ -440,7 +495,7 @@ cash was last entered before the week began.
 
 ---
 
-## 14. What every surface must compute the same way
+## 15. What every surface must compute the same way
 
 The KPI parity promise covers the dashboard, the Advisor, the reports and the
 MCP. As of 1.8.0 the first three call `portfolio_kpis`; the MCP mirrors these
@@ -451,7 +506,7 @@ definitions:
 | `positions_summary` / `portfolio_kpis`: `market_value`, `unrealized_pnl` | priced rows only (already so) |
 | `unrealized_pct` | unrealized / **priced** cost basis (was / total cost basis) |
 | `cost_basis` | total open cost; plus `priced_cost_basis`, `unpriced_cost_basis`, `unpriced_symbols` |
-| `total_return_pct`, `total_return_with_income_pct`, review `return_on_cost_pct` | section 12, over `peak_net_invested` of the same lots the figure was computed from (cutoff- and account-filtered alike) |
+| `total_return_pct`, `total_return_with_income_pct`, review `return_on_cost_pct` | section 13, over `peak_net_invested` of the same lots the figure was computed from (cutoff- and account-filtered alike) |
 | `fee_drag_pct` | total fees / peak net invested |
 | income totals, `yield_on_cost`, TWR dividends, XIRR income | USD income only; others listed |
 | cash totals | USD balances only; others listed |
