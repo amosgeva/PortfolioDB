@@ -25,7 +25,7 @@ needs a schema step says so under **Upgrading**.
   the ledger ever had committed — on the dashboard (`kpi.totalReturnPct`,
   `totalReturnWithIncomePct`, new `investedCapital`), in the executive report
   and in the Advisor snapshot. Fee drag moves to the same denominator. See
-  `docs/methodology.md` §12. The MCP follows in its own change.
+  `docs/methodology.md` §13. The MCP follows in its own change.
 - **An unpriced position is not a loss** (audit F-12, Q-2). The dashboard and
   the Advisor subtracted its whole cost from the value of the priced positions.
   Market value and unrealized P&L now cover priced positions only, unrealized %

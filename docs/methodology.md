@@ -406,7 +406,7 @@ figures" block; the daily and weekly reports as warning lines.
 
 ---
 
-## 12. Portfolio totals and total return
+## 13. Portfolio totals and total return
 
 Defined once, in `app/portfolio_kpis.py`, and used by the dashboard payload,
 the Advisor snapshot, the executive report and the daily report.
@@ -451,7 +451,7 @@ read 0%. With an unpriced position the figure is marked partial
 no purchases.
 
 It is a money measure, not a performance measure. For performance, use the
-time-weighted return (section 4); the two answer different questions and are
+time-weighted return (section 5); the two answer different questions and are
 not expected to agree.
 
 Two other lifetime ratios moved to the same denominator for the same reason:
@@ -461,7 +461,7 @@ conventional definition.
 
 ---
 
-## 13. Prices in the reports
+## 14. Prices in the reports
 
 The executive and the daily report follow one rule
 (`portfolio_kpis.portfolio_as_of` / `stale_quotes`):
@@ -481,10 +481,10 @@ The executive and the daily report follow one rule
 - The **previous session** for the day change is the last earlier day on which
   a held symbol was quoted. The report says which session it is ("on Fri, Nov
   13"), not "today".
-- A held symbol with no quote at all is **unpriced** (section 12).
+- A held symbol with no quote at all is **unpriced** (section 13).
 
 This "stale" is a report-level label: a carried-forward quote. The data-quality
-staleness of section 8 (a symbol a completed collector run did not price) is a
+staleness of section 9 (a symbol a completed collector run did not price) is a
 different, per-run check.
 
 The weekly report's **weekly change** is the change in securities plus entered
@@ -495,7 +495,7 @@ cash was last entered before the week began.
 
 ---
 
-## 14. What every surface must compute the same way
+## 15. What every surface must compute the same way
 
 The KPI parity promise covers the dashboard, the Advisor, the reports and the
 MCP. As of 1.8.0 the first three call `portfolio_kpis`; the MCP mirrors these
@@ -506,7 +506,7 @@ definitions:
 | `positions_summary` / `portfolio_kpis`: `market_value`, `unrealized_pnl` | priced rows only (already so) |
 | `unrealized_pct` | unrealized / **priced** cost basis (was / total cost basis) |
 | `cost_basis` | total open cost; plus `priced_cost_basis`, `unpriced_cost_basis`, `unpriced_symbols` |
-| `total_return_pct`, `total_return_with_income_pct`, review `return_on_cost_pct` | section 12, over `peak_net_invested` of the same lots the figure was computed from (cutoff- and account-filtered alike) |
+| `total_return_pct`, `total_return_with_income_pct`, review `return_on_cost_pct` | section 13, over `peak_net_invested` of the same lots the figure was computed from (cutoff- and account-filtered alike) |
 | `fee_drag_pct` | total fees / peak net invested |
 | income totals, `yield_on_cost`, TWR dividends, XIRR income | USD income only; others listed |
 | cash totals | USD balances only; others listed |
