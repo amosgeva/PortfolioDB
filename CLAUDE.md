@@ -8,9 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - All Python entry points require `PORTFOLIODB_PASSWORD` in the environment. `app/db.py::load_config` raises if it is missing. Other `PORTFOLIODB_*` env vars override the docker-compose defaults. **Exception:** a process that brings its own role reads only where the database is, through `db.load_target()` (host, port, dbname; no credentials) — the MCP server does this on its read-only role, which is why the `mcp` compose service is not given the write password.
 - `.env` at the repo root holds real secrets and is read by compose and by `app/db.py` alike. Runtime *settings* (display name, timezone, collector window, LLM provider) live in the `settings` table and are edited on the dashboard's Manage → Settings page; `.env` only bootstraps them and holds the secrets.
 - The MCP server runs read-only: its pool forces `default_transaction_read_only=on`.
-- The MCP server connects as the SELECT-only `portfoliodb_ro` role from `PORTFOLIODB_MCP_RO_USER`/`_PASSWORD` and refuses to start without it. **Exception:** `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` runs it on the application's credentials, with a warning on every start.
+- The MCP server connects as the SELECT-only `portfoliodb_ro` role from `PORTFOLIODB_MCP_RO_USER`/`_PASSWORD`. Without them the process still starts, but it opens no database connection: `/healthz` answers 503, every database-backed tool call fails, and the server log names the two missing lines. **Exception:** `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` connects on the application's credentials, with a warning on every start.
 - `make ro-role` (`app/create_ro_role.py`) creates that role. Re-run it after an upgrade that changes what the MCP reads: it revokes and re-grants.
-- The MCP bearer token needs 32 or more characters. A client on another machine needs its host name in `PORTFOLIODB_MCP_ALLOWED_HOSTS`; other hosts are refused (421).
+- By default the MCP server refuses to start with a bearer token under 32 characters or with fewer than 10 distinct ones (`app/mcp/auth.py`). **Exception:** `PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN=1` starts it anyway with a logged warning (`docs/exposure.md`).
+- A client on another machine needs its host name in `PORTFOLIODB_MCP_ALLOWED_HOSTS`; other hosts are refused (421).
 - The dashboard's write pages need `PORTFOLIODB_DASHBOARD_PASSWORD`: Manage (with its Settings tab) and Advisor. Unset means read-only, not open. The read-only views and Data Health need no password.
 - Each dashboard write calls `native_auth.require_unlocked()` just before it writes. That call is the control; a disabled button is a courtesy. **Exception:** the CLIs and the scheduler do not use the password.
 - Every published port binds to `127.0.0.1`: dashboard 8501, Postgres 54320, MCP 8765, pgAdmin 58080. **Exception:** reaching the dashboard from the local network is an opt-in `ports: !override` block in `docker-compose.override.yml` (see `docs/exposure.md`).
@@ -100,7 +101,7 @@ is installed (`tools/ruff.toml`, the rule set CI's `Lint (ruff)` job runs:
 `ruff check --config tools/ruff.toml .`), and both test suites.
 `git commit --no-verify` bypasses it for work in progress.
 
-`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the required checks: both test-suite jobs, `Lint (ruff)`, the image build and both Windows runner jobs. When `main` moves, merge it in rather than force-pushing.
+`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the seven required checks: both test-suite jobs, `Lint (ruff)`, the image build, both Windows runner jobs and the front end's `Build check, lint, tests`. When `main` moves, merge it in rather than force-pushing.
 
 Every push to `main` publishes the image as `latest`. **Exception:** `[skip publish]` in the merge commit's message skips publishing that push; a version tag publishes regardless.
 
@@ -116,11 +117,14 @@ pytest tests/test_fifo.py::TestSingleBuy -v   # single class / test
 # (fails as a misleading "FastMCP server support is not installed").
 pytest app/mcp/tests/
 
-# The reconciliation suite runs the real services against the live database and
-# takes ~30s, so it is marked `slow` and skipped by the pre-commit hook.
+# The reconciliation suite runs the real services against a database seeded
+# with the demo ledger and takes ~30s, so it is marked `slow` and skipped by the
+# pre-commit hook and `make test`.
 pytest app/mcp/tests/ -m slow          # just it
 pytest app/mcp/tests/ -m "not slow"    # everything else (what the hook runs)
 ```
+
+The two halves no longer interfere: against a seeded database the whole MCP suite passes in one process. CI still runs them as separate steps, the slow one first while the database holds exactly the demo ledger.
 
 ## Architecture
 
@@ -149,10 +153,10 @@ Around the ledger:
 A few rows are updated in place: `settings`, instrument flags, `price_alerts.active` (alerts are deactivated, not deleted) and a split's `reviewed` flag.
 
 **Schema changes:**
-- Add a numbered, idempotent file under `sql/migrations/`, and make the same change in `sql/schema.sql`. Fresh installs read that file alone.
+- Add a numbered, idempotent file under `sql/migrations/`, and make the same change in `sql/schema.sql`. `schema.sql` stays the complete current core schema, mirroring every migration.
 - Bump the version header in `schema.sql` and `SCHEMA_VERSION` in `app/mcp/services/cutoff.py`.
-- `app/apply_schema.py` (`make schema`) applies each migration once and records its checksum in `schema_migrations`.
-- It reports a migration whose text changed after it was applied. So fix a shipped migration with a new one.
+- `app/apply_schema.py` (`make schema`) is the one installer, for fresh and existing databases alike. It applies `schema.sql`, then `schema_fd.sql`, then each migration not yet recorded.
+- The installer records each migration's checksum in `schema_migrations` and reports one whose text changed after it was applied. So fix a shipped migration with a new one.
 - Functions, views and triggers go in `schema.sql` as replaceable definitions, because that file is re-applied on every upgrade.
 - `sql/migrations/README.md` has the pattern for adding a check constraint to a table with existing rows.
 
@@ -203,7 +207,7 @@ Readers get their lots from `ledger_inputs.load(conn)`. It reads them in FIFO pr
 
 ### Dashboard (`app/streamlit_app.py`)
 Two halves share one Streamlit session.
-- The read-only views (Portfolio through History, Alerts & News) are a custom front end in a `components.html` iframe. It is served from `app/dashboard/static/` (`shell.html`, `app.css`, `app.js`) and cannot write.
+- The read-only views (Portfolio through History, Alerts & News) are a custom front end in an iframe (`st.iframe`). It is served from `app/dashboard/static/` (`shell.html`, `app.css`, `app.js`) and cannot write.
 - Its data comes from `dashboard/payload.py`, with the queries in `dashboard/queries.py`.
 - Manage, Advisor and Data Health are native Streamlit pages in `modern2_native.py`. Manage has tabs for trades, watchlist, cash, alerts, settings and export.
 - The native pages write through `native_writes.py`, behind the gate in `native_auth.py`.

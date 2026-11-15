@@ -564,6 +564,9 @@ needs a schema step says so under **Upgrading**.
   build (`npm run build`, the `Front end` workflow), and the README's privacy
   note names the opt-in logo CDN. The README screenshots are retaken from
   the demo ledger on 1.8 (audit K-1): same files, same size, dark theme.
+  The host-run Streamlit command binds `127.0.0.1` and turns Streamlit's
+  usage statistics off, as the container does. The old warning that the slow
+  and fast MCP suites fail in one process is retired: they no longer interfere.
 
 ## [1.7.7] — 2026-11-15
 

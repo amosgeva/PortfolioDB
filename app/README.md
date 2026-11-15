@@ -33,8 +33,15 @@ scripts from this directory — they import each other as bare modules:
 ```bash
 cd app
 python positions.py
-streamlit run streamlit_app.py
+streamlit run streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
 ```
+
+Keep both flags on a host run. Without `--server.address` Streamlit listens on
+every interface — a host process has no loopback-only port mapping in front of
+it, as the containers do — and without the second it sends Streamlit's usage
+statistics, which the image turns off (`STREAMLIT_BROWSER_GATHER_USAGE_STATS=false`).
+Reaching it from another machine is the same deliberate step as for the stack:
+see [docs/exposure.md](../docs/exposure.md).
 
 The tests: `pytest tests/` from here, and the MCP suite from the repo root
 (`pytest app/mcp/tests/ -m "not slow"`) — see

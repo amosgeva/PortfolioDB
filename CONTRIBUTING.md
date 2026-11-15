@@ -69,11 +69,17 @@ as top-level `mcp`, shadowing the official `mcp` SDK that fastmcp needs. It
 fails as a confusing *"FastMCP server support is not installed"*.
 
 The `slow` marker covers tests that run the real services against a live
-database (~30s). Run them separately, not in the same process as the fast suite:
+database seeded with the demo ledger (~30s); the pre-commit hook and `make test`
+leave them out. Run them on their own, or the whole MCP suite in one process —
+the two no longer interfere:
 
 ```bash
 pytest app/mcp/tests/ -m slow
+pytest app/mcp/tests/              # everything, against a seeded database
 ```
+
+CI runs the slow suite first, while its database holds exactly the demo ledger,
+then the fast suite as a separate step.
 
 Other tests talk SQL to a real database without a marker — the SQL integration
 modules, the Streamlit AppTest — and skip when no database is configured. CI's
@@ -120,7 +126,9 @@ npm test                       # jsdom: every view, refresh, theme, CSV export, 
 Edit the sources, never the generated files. The `Front end` workflow runs
 `npm run build:check` (the committed bundle must be what the sources build),
 the lint and the tests. Markup goes through the escaping `html` template in
-`src/core/html.js`; the lint rules fail any other way of writing HTML.
+`src/core/html.js`. The lint and an AST guard refuse the other markup sinks and
+source patterns that contract lists; its exact rules and known limits are at the
+top of `core/html.js`.
 
 ## What the code expects of you
 
@@ -160,11 +168,13 @@ the lint and the tests. Markup goes through the escaping `html` template in
 
 Add a numbered file under `sql/migrations/` **and** make the same change in
 `sql/schema.sql` in the same commit, then bump the version header there and
-`SCHEMA_VERSION` in `app/mcp/services/cutoff.py`. Fresh installs read
-`schema.sql`; existing ones apply migrations in order through
-`app/apply_schema.py` (`make schema`), which records each one in
-`schema_migrations` with a checksum and reports a migration whose text changed
-after it was applied — so fix a shipped migration with a new one. If the MCP
+`SCHEMA_VERSION` in `app/mcp/services/cutoff.py`. `schema.sql` must stay the
+complete current core schema on its own. The installer is the same for fresh
+and existing databases: `app/apply_schema.py` (`make schema`) applies
+`schema.sql`, then `schema_fd.sql`, then every migration not yet recorded — on
+a fresh database too, where each is a no-op over the complete schema. It records
+each migration in `schema_migrations` with a checksum and reports one whose text
+changed after it was applied — so fix a shipped migration with a new one. If the MCP
 server must read the new table, add it to the read-only role's grant list
 (`sql/create_ro_role.sql`) and say in the changelog that `make ro-role` needs
 re-running. See `sql/migrations/README.md`.
@@ -207,10 +217,10 @@ one concern per PR where you can. CI runs both suites on Linux; a green run and
 a description of how you verified the change by hand is plenty.
 
 `main` is protected. A pull request merges only when it is up to date with
-`main` and these checks pass: `Test suites (no database)`, `Lint (ruff)`,
+`main` and these seven checks pass: `Test suites (no database)`, `Lint (ruff)`,
 `Test suites (live database)`, `Application image (build and self-test)`,
-`Windows runner (init, both PowerShell hosts)` and `Windows runner
-(backup/restore round trip)`. When `main` moves under your branch, merge it in
+`Windows runner (init, both PowerShell hosts)`, `Windows runner
+(backup/restore round trip)` and the front end's `Build check, lint, tests`. When `main` moves under your branch, merge it in
 rather than force-pushing.
 
 ### Merging without publishing: `[skip publish]`

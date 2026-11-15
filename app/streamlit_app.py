@@ -2,14 +2,18 @@
 
 Renders the "PortfolioDB" design system (deep-slate rail, tabular-mono
 numerics, indigo accent, finance green/red semantics) by embedding HTML/CSS/JS
-via ``st.components.v1.html`` and feeding it live Postgres data. Native
+via ``st.iframe`` and feeding it live Postgres data. Native
 Streamlit widgets are used only for the Manage/Advisor views (see
 ``modern2_native.py``).
 
 Run it with the stack (`make up`, or `docker compose up -d`), or on a host
 from app/ with PORTFOLIODB_PASSWORD in the environment:
 
-    cd app && streamlit run streamlit_app.py
+    cd app && streamlit run streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+
+(A host process has no loopback-only port mapping in front of it, so the
+address flag is what keeps it off the network. In the image, usage statistics
+are already off and the published port decides who reaches it.)
 """
 
 import contextlib

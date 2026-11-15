@@ -359,7 +359,11 @@ covers tunnels, a tailnet and proxies, which are safer than a LAN bind.
 
 Prefer running Python on the host? That still works: install
 `app/requirements.txt`, set `PORTFOLIODB_PASSWORD`, and run the scripts from
-`app/`.
+`app/`. Start the dashboard there with
+`streamlit run streamlit_app.py --server.address 127.0.0.1 --browser.gatherUsageStats false`:
+a host process has no loopback-only port mapping in front of it, so without the
+first flag it listens on every interface, and the second keeps Streamlit's usage
+statistics off as the image does ([app/README.md](app/README.md#running-from-here)).
 
 ---
 
@@ -532,8 +536,10 @@ existing role picks up a changed list (1.8.0 adds `settings`, for the reporting
 timezone and the saved one-pager). `python app/create_ro_role.py --password
 <current>` keeps the password you have.
 
-The server refuses to start with a token under 32 characters or with fewer
-than 10 distinct ones (`make init` generates 40). It accepts requests whose
+By default the server refuses to start with a token under 32 characters or
+with fewer than 10 distinct ones (`make init` generates 40);
+`PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN=1` is the logged opt-out
+([exposure](docs/exposure.md#the-mcp-server)). It accepts requests whose
 `Host` header is a loopback name or one listed in
 `PORTFOLIODB_MCP_ALLOWED_HOSTS` and answers anything else with 421, which is
 what stops a DNS-rebinding web page from reaching it through your browser. An
@@ -682,7 +688,7 @@ git config core.hooksPath .githooks
 - `philosophy.md` is **gitignored.** It contains personal financial context. Use the `.template` to start; edit the real file locally.
 - The database lives in the `pgdata` named volume (or a directory you point at via an override). Postgres owns it — never edit, move, or delete files inside it while the stack is running.
 - `.env`, `cache/`, `backups/`, and `archive/` are gitignored.
-- Nothing phones home. The only outbound requests are yfinance price lookups, your LLM provider if you enable the advisor, Financial Datasets if you enable enrichment, and ticker logos — fetched into a local cache by `fetch_ticker_logos.py`, and loaded from the logo CDN by your browser only if you set `PORTFOLIODB_LOGO_CDN`. The dashboard's fonts are self-hosted.
+- Nothing phones home. The image turns off Streamlit's usage statistics (`STREAMLIT_BROWSER_GATHER_USAGE_STATS=false`); a host run needs `--browser.gatherUsageStats false` for the same. Otherwise the only outbound requests are yfinance price lookups, your LLM provider if you enable the advisor, Financial Datasets if you enable enrichment, and ticker logos — fetched into a local cache by `fetch_ticker_logos.py`, and loaded from the logo CDN by your browser only if you set `PORTFOLIODB_LOGO_CDN`. The dashboard's fonts are self-hosted.
 
 ---
 
