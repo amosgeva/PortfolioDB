@@ -7,9 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Postgres runs in Docker (`docker-compose.yml`): host `127.0.0.1`, port `54320`, db `portfoliodb`, user `portfoliouser`.
 - All Python entry points require `PORTFOLIODB_PASSWORD` in the environment. `app/db.py::load_config` raises if it is missing. Other `PORTFOLIODB_*` env vars override the docker-compose defaults. **Exception:** a process that brings its own role reads only where the database is, through `db.load_target()` (host, port, dbname; no credentials) — the MCP server does this on its read-only role, which is why the `mcp` compose service is not given the write password.
 - `.env` at the repo root holds real secrets and is read by compose and by `app/db.py` alike. Runtime *settings* (display name, timezone, collector window, LLM provider) live in the `settings` table and are edited on the dashboard's Manage → Settings page; `.env` only bootstraps them and holds the secrets.
-- The MCP server runs read-only: its pool forces `default_transaction_read_only=on`, and it connects as the SELECT-only `portfoliodb_ro` role named by `PORTFOLIODB_MCP_RO_USER`/`_PASSWORD` in `.env`, refusing to start without it. `make ro-role` (`app/create_ro_role.py`) creates the role with an explicit list of grants; re-run it after an upgrade that changes what the MCP reads, since it revokes and re-grants. **Exception:** `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` runs it on the application's credentials, with a warning on every start. A bearer token under 32 characters refuses to start, and a client on another machine needs its host name in `PORTFOLIODB_MCP_ALLOWED_HOSTS` (otherwise 421).
-- The dashboard's write pages — Manage (including its Settings tab) and Advisor — need `PORTFOLIODB_DASHBOARD_PASSWORD`; unset means read-only, not open. The read-only views and Data Health need no password. Each write path calls `native_auth.require_unlocked()` immediately before it writes, so a disabled button is a courtesy and that call is the control. **Exception:** the CLIs and the scheduler run as the operator and do not use the password.
-- Every published port binds to `127.0.0.1` (dashboard 8501, Postgres 54320, MCP 8765, pgAdmin 58080). **Exception:** LAN access is an explicit opt-in, a `ports: !override` block in `docker-compose.override.yml` — `docs/exposure.md` has it, and the tunnels that are safer.
+- The MCP server runs read-only: its pool forces `default_transaction_read_only=on`.
+- The MCP server connects as the SELECT-only `portfoliodb_ro` role from `PORTFOLIODB_MCP_RO_USER`/`_PASSWORD` and refuses to start without it. **Exception:** `PORTFOLIODB_MCP_ALLOW_RW_FALLBACK=1` runs it on the application's credentials, with a warning on every start.
+- `make ro-role` (`app/create_ro_role.py`) creates that role. Re-run it after an upgrade that changes what the MCP reads: it revokes and re-grants.
+- The MCP bearer token needs 32 or more characters. A client on another machine needs its host name in `PORTFOLIODB_MCP_ALLOWED_HOSTS`; other hosts are refused (421).
+- The dashboard's write pages need `PORTFOLIODB_DASHBOARD_PASSWORD`: Manage (with its Settings tab) and Advisor. Unset means read-only, not open. The read-only views and Data Health need no password.
+- Each dashboard write calls `native_auth.require_unlocked()` just before it writes. That call is the control; a disabled button is a courtesy. **Exception:** the CLIs and the scheduler do not use the password.
+- Every published port binds to `127.0.0.1`: dashboard 8501, Postgres 54320, MCP 8765, pgAdmin 58080. **Exception:** reaching the dashboard from the local network is an opt-in `ports: !override` block in `docker-compose.override.yml` (see `docs/exposure.md`).
 - The database lives in the `pgdata` **named volume** by default. A host directory (`./data`) is opt-in through `docker-compose.override.yml` — which is what the operator's own box does. Wherever it lives, Postgres owns it: never edit, move, or delete files inside it.
 
 ## Common commands
@@ -96,13 +100,9 @@ is installed (`tools/ruff.toml`, the rule set CI's `Lint (ruff)` job runs:
 `ruff check --config tools/ruff.toml .`), and both test suites.
 `git commit --no-verify` bypasses it for work in progress.
 
-`main` is branch-protected: a pull request must be up to date with `main` and
-pass the required checks — both test-suite jobs, `Lint (ruff)`, the image build
-and both Windows runner jobs. Merge `main` in when it moves rather than
-force-pushing. Every push to `main` publishes the image as `latest`.
-**Exception:** `[skip publish]` in the merge commit's message skips publishing
-that push, for a release assembled from several pull requests; a version tag
-always publishes.
+`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the required checks: both test-suite jobs, `Lint (ruff)`, the image build and both Windows runner jobs. When `main` moves, merge it in rather than force-pushing.
+
+Every push to `main` publishes the image as `latest`. **Exception:** `[skip publish]` in the merge commit's message skips publishing that push; a version tag publishes regardless.
 
 Tests — the two suites have **different working directories**:
 ```powershell
@@ -129,21 +129,40 @@ PortfolioDB is an append-only, lot-based personal portfolio ledger on Postgres, 
 ### Data model (`sql/schema.sql`, `sql/schema_fd.sql`)
 The ledger:
 - `instruments` — symbol registry (`watchlist` flag marks non-held symbols to still snapshot; `currency`). The database refuses a symbol that does not match `instruments_symbol_format`; writers validate first with `symbol_paths.normalize_symbol`.
-- `lots` — every BUY/SELL trade. `side` + positive `quantity` encode direction; a unique index on `(symbol, COALESCE(account,''), side, trade_date, quantity, price)` is a best-effort dedupe guard, and every writer reports a refused duplicate ("DUPLICATE — NOT RECORDED", exit 1 from the CLIs) instead of claiming success.
-- `price_snapshots` — time-series quotes, PK `(symbol, ts)`, written by `snapshot_prices.py`; `last_price > 0` is enforced.
+- `lots` — every trade, buy or sell. `side` + positive `quantity` encode direction. A unique index on `(symbol, account, side, trade_date, quantity, price)` is a best-effort dedupe guard (a null account counts as empty). Every writer reports a refused duplicate instead of claiming success.
+- `price_snapshots` — time-series quotes, primary key `(symbol, ts)`, written by `snapshot_prices.py`. The database refuses a `last_price` of zero or below.
 - `cash_snapshots` — manual cash balances (no auto-pull from brokers). Latest row per `account` wins.
-- `income` — dividends, interest, distributions; a separate additive term, never part of cost basis.
+- `income` — dividends, interest and distributions. Income adds to total return and stays out of cost basis.
 - `corporate_actions` — splits, applied at read time (see the prepared ledger below).
 
-Around it: `settings` (runtime settings, read DB → env → default through `app/settings.py`), `price_alerts` (Manage → Alerts), `lot_deletions`, `snapshot_runs` (the collector's run log, which price freshness is judged against), `advisor_briefs` / `chat_log`, `schema_migrations`, and the optional Financial Datasets `fd_*` tables in `sql/schema_fd.sql`.
+Around the ledger:
+- `settings` — runtime settings, read DB → env → default through `app/settings.py`.
+- `price_alerts` — written from Manage → Alerts.
+- `lot_deletions` — the audit row for each lot deleted on the Manage page.
+- `snapshot_runs` — the collector's run log, which price freshness is judged against.
+- `advisor_briefs` and `chat_log` — the Advisor's history.
+- `schema_migrations` — which migrations `apply_schema.py` has applied.
+- `fd_*` — the optional Financial Datasets tables, in `sql/schema_fd.sql`.
 
-**Rule:** the ledger is append-only — a correction is a new row, and nothing rewrites `lots` or `price_snapshots`. **Exception:** a lot deleted on the Manage page leaves `lots`, and its full row, the time and the operator's reason go to `lot_deletions` in the same statement; `settings`, instrument flags, `price_alerts.active` (alerts are deactivated, not deleted) and a split's `reviewed` flag are updated in place.
+**Rule:** the ledger is append-only. A correction is a new row, and nothing rewrites `lots` or `price_snapshots`. **Exception:** deleting a lot on the Manage page removes it from `lots` and writes the full row, the time and the reason to `lot_deletions` in the same statement.
 
-**Schema changes:** add a numbered, idempotent file under `sql/migrations/` and make the same change in `sql/schema.sql` (fresh installs read only that), bumping its version header and `SCHEMA_VERSION` in `app/mcp/services/cutoff.py`. `app/apply_schema.py` (`make schema`) applies `schema.sql` and `schema_fd.sql` every time and each migration once, recording filename and checksum in `schema_migrations`; it reports a migration whose text changed after it was applied, so a shipped migration stays as shipped. **Exception:** functions, views and triggers go in `schema.sql` as `CREATE OR REPLACE`, since it is re-applied on every upgrade. `sql/migrations/README.md` has the pattern for a CHECK on a table with existing rows.
+A few rows are updated in place: `settings`, instrument flags, `price_alerts.active` (alerts are deactivated, not deleted) and a split's `reviewed` flag.
+
+**Schema changes:**
+- Add a numbered, idempotent file under `sql/migrations/`, and make the same change in `sql/schema.sql`. Fresh installs read that file alone.
+- Bump the version header in `schema.sql` and `SCHEMA_VERSION` in `app/mcp/services/cutoff.py`.
+- `app/apply_schema.py` (`make schema`) applies each migration once and records its checksum in `schema_migrations`.
+- It reports a migration whose text changed after it was applied. So fix a shipped migration with a new one.
+- Functions, views and triggers go in `schema.sql` as replaceable definitions, because that file is re-applied on every upgrade.
+- `sql/migrations/README.md` has the pattern for adding a check constraint to a table with existing rows.
 
 **Rule:** there is **no positions table**. Open quantity, cost basis, and realized P&L are derived from `lots` on read and never stored, so a new lot changes every derived figure without a backfill step.
 
-**Exception:** a read may be served from a short-lived cache rather than recomputed. The MCP positions service (`app/mcp/services/positions.py`) memoises its positions frame for 60s (`_FRAME_CACHE_TTL_SECONDS`; bypassed inside a review's single snapshot) and the dashboard caches its payload for 120s (`@st.cache_data(ttl=120)`), so a figure can be stale by up to that long. A cache entry is a memo of the computation, not a recorded position — the derivation is still the only source of truth. Keep both TTLs short and do not remove them: they exist because a backfill mutates history behind the cutoff, and a longer window would serve figures computed from lots that have since changed. If you need a guaranteed-fresh read, clear the cache (`clear_frame_cache()` / `build_payload.clear()`) rather than lengthening or deleting the TTL.
+**Exception:** a read may be served from a short-lived cache rather than recomputed. The MCP positions service (`app/mcp/services/positions.py`) memoises its positions frame for 60s (`_FRAME_CACHE_TTL_SECONDS`), except inside a review's single snapshot. The dashboard caches its payload for 120s (`@st.cache_data(ttl=120)`). A figure can be stale by up to that long.
+
+A cache entry is a memo of the computation, not a recorded position; the derivation is still the source of truth. Keep both lifetimes short, and keep them. A backfill mutates history behind the cutoff, and a longer window would serve figures computed from lots that have since changed.
+
+**Exception:** for a guaranteed-fresh read, clear the cache (`clear_frame_cache()` / `build_payload.clear()`) rather than lengthening or deleting its lifetime.
 
 ### P&L engines (`app/fifo.py`, `app/avg_cost.py`)
 Two parallel engines over one `Lot` class (`ledger_core.Lot`), with `run_*` entry points:
@@ -156,7 +175,7 @@ Shared invariants across both:
 - Shorts are not supported — SELL exceeding open BUYs logs a warning and is truncated.
 - Processing order is `ledger_core.processing_key`: trade date, then every BUY before any SELL that day, then id. A same-day sale stored before its purchase is still matched. Sort lots with that key, not by `id` or by insertion order.
 
-**Rule:** "what is held" has one implementation — `holdings.net_quantities` (and `open_symbols` / `open_quantities` over it) in Python, `lot_open_quantities()` in SQL — both following the engines' rules (per account, processing order, an oversell truncated). `app/tests/test_ledger_sql.py` holds the two equal. **Exception:** a writer checking a proposed sale uses `oversell.check_sell()`, which runs the same walk with the new lot added.
+**Rule:** "what is held" has one implementation. In Python it is `holdings.net_quantities`, with `open_symbols` / `open_quantities` over it; in SQL it is `lot_open_quantities()`. Both follow the engines' rules: per account, in processing order, with an oversell truncated. `app/tests/test_ledger_sql.py` holds the two equal. **Exception:** a writer checking a proposed sale uses `oversell.check_sell()`, which walks the stream with the new lot added.
 
 ### Prepared ledger (`app/ledger_inputs.py`) and aggregation (`app/portfolio.py`)
 Readers get their lots from `ledger_inputs.load(conn)`. It reads them in FIFO processing order together with the recorded `corporate_actions` and restates them into post-split units. The `PreparedLedger` it returns also carries `price_by_day` / `price_points` / `price_rows`, which restate that reader's price series with the same actions. **This is the parity contract.** The dashboard payload, the positions CLI, both reports, the income backfill and the MCP positions service all go through it. A reader that queries `lots` or adjusts prices on its own disagrees with the others the day a split is recorded. That is what happened before the loader existed: a shared engine over differently prepared inputs is not parity. Apply each factor once. Never adjust lots and leave prices raw, or the reverse.
@@ -167,12 +186,30 @@ Readers get their lots from `ledger_inputs.load(conn)`. It reads them in FIFO pr
 
 **Exception:** `corporate_actions.fetch_actions` returns an empty list only when the table does not exist (a database that never had the migration). Any other failure propagates: a transient error that read as "no actions" silently restated every figure into pre-split units, and a wrong cost basis is worse than an error.
 
-**Rule:** only the actions in effect adjust anything. `fetch_actions` returns `corporate_actions.effective_actions()` of the recorded rows; the SQL statement of the same rule is the `corporate_actions_in_effect` view. A split the collector recorded is pending (`reviewed = FALSE`) and changes no figure — neither prices nor lots — until approved with `python app/check_splits.py --approve SYMBOL:YYYY-MM-DD --shares-credited` (or `--quantities-already-post-split`); `apply_schema.py` lists pending ones. A hand-entered row applies as entered, and two records of one split within seven days apply once (a trigger refuses the second). Confirm a suspected split against the vendor (`yfinance` `Ticker.splits`, which `check_splits.py` does) before recording one: a price ratio alone cannot tell a split from a crash. **Exception:** `fetch_recorded_actions` returns the whole register, pending rows included, for the scanners and reports that show it; it is not input for an adjuster.
+**Rule:** the actions in effect are the ones that adjust anything.
+- `fetch_actions` returns `corporate_actions.effective_actions()` of the recorded rows. The view `corporate_actions_in_effect` states the same rule in SQL.
+- A split the collector recorded is pending: its `reviewed` flag is false. It changes no figure, prices or lots, until it is approved.
+- Approve one with `python app/check_splits.py --approve SYMBOL:YYYY-MM-DD --shares-credited`, or with `--quantities-already-post-split`. `apply_schema.py` lists pending ones.
+- A hand-entered row applies as entered. Two records of one split within seven days apply once, and a trigger refuses the second.
+- Before recording a suspected split, confirm it against the vendor (`yfinance` `Ticker.splits`, as `check_splits.py` does). A price ratio by itself does not tell a split from a crash.
 
-**Rule:** the ledger is USD-only — no FX table, no conversion. Writers refuse what they can detect: `add_lot.py`, `sell_lot.py` and the CSV importer refuse a non-US listing suffix (`.TA`, `.L`, `.HK` …) or an instrument registered in another currency, and `add_income.py` refuses non-USD income. Readers leave non-USD income and cash out of every total and list them, and flag a non-USD instrument while keeping it in the valuation (`portfolio_kpis.currency_warnings()`, `docs/methodology.md` §12). **Exception:** `--allow-non-usd` records one anyway, and Manage asks for confirmation instead of refusing.
+**Exception:** `fetch_recorded_actions` returns the whole register, pending rows included, for the scanners and reports that show it. It is not input for an adjuster.
+
+**Rule:** the ledger is kept in US dollars, with no currency conversion. **Exception:** `--allow-non-usd` records a lot in another currency anyway, and the Manage page asks before recording one.
+- `add_lot.py`, `sell_lot.py` and `import_csv_history.py` refuse a foreign listing suffix (`.TA`, `.L`, `.HK` …) or an instrument registered in another currency.
+- `add_income.py` refuses income in another currency.
+- Readers leave other-currency income and cash out of every total, and list them.
+- An instrument in another currency stays in the valuation, flagged. See `portfolio_kpis.currency_warnings()` and `docs/methodology.md` §12.
 
 ### Dashboard (`app/streamlit_app.py`)
-Two halves in one Streamlit session. The read-only views (Portfolio through History, Alerts & News) are a custom front end rendered in a `components.html` iframe from `app/dashboard/static/` (`shell.html`, `app.css`, `app.js`), fed the JSON that `dashboard/payload.py` builds (SQL in `dashboard/queries.py`); it cannot write. Manage (tabs: Trades, Watchlist, Cash, Alerts, Settings, Export), Advisor and Data Health are native Streamlit pages in `modern2_native.py`, themed from the front end's own stylesheet, writing through `native_writes.py` behind `native_auth.py`. Moving between the halves is a rerun in the same session, not a page load, so an unlock and form drafts survive. The figures the payload, the reports, the Advisor and the MCP share come from `app/portfolio_kpis.py`. The front-end change in PR #122 turns `app.js` / `app.css` into an esbuild bundle of the ES modules under `static/src/` (`npm run build`, checked in CI); once it is merged, edit the modules and rebuild rather than editing the bundle.
+Two halves share one Streamlit session.
+- The read-only views (Portfolio through History, Alerts & News) are a custom front end in a `components.html` iframe. It is served from `app/dashboard/static/` (`shell.html`, `app.css`, `app.js`) and cannot write.
+- Its data comes from `dashboard/payload.py`, with the queries in `dashboard/queries.py`.
+- Manage, Advisor and Data Health are native Streamlit pages in `modern2_native.py`. Manage has tabs for trades, watchlist, cash, alerts, settings and export.
+- The native pages write through `native_writes.py`, behind the gate in `native_auth.py`.
+- Moving between the halves is a rerun in the same session, so an unlock and form drafts survive.
+- The totals that the payload, the reports, the Advisor and the MCP share come from `app/portfolio_kpis.py`.
+- Pull request #122 turns `app.js` and `app.css` into an esbuild bundle of the JavaScript modules under `static/src/`, rebuilt with `npm run build`. Once it is merged, edit the modules and rebuild instead of editing the bundle.
 
 ### Layers
 - `app/db.py` — psycopg2 connection + `fetch_all` / `execute` helpers. Everything in `app/` goes through this; the ad-hoc scripts at the repo root often open their own psycopg2 connections.
