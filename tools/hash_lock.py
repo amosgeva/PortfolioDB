@@ -106,7 +106,9 @@ def _fetch(name: str, version: str) -> dict:
         INDEX.format(name=name, version=version),
         headers={"Accept": "application/json", "User-Agent": "portfoliodb-hash-lock"},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - fixed https URL
+    # The URL is the https INDEX constant with two path components filled in;
+    # no caller-supplied scheme can reach urlopen.
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310  # nosec B310
         return json.load(resp)
 
 
