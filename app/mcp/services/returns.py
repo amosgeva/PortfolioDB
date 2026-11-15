@@ -21,7 +21,7 @@ from typing import Any
 # (a sibling of fifo.py/portfolio.py) resolves regardless of how tests are run.
 from psycopg2 import sql
 
-from app.mcp.deps import get_conn
+from app.mcp.deps import consistent_read, get_conn
 from app.mcp.services import common
 from app.mcp.services.cutoff import Cutoff, LOCAL_TZ, tz_name
 
@@ -68,6 +68,7 @@ def _records(cutoff: Cutoff | None, account: str | None, price_by_day):
     )
 
 
+@consistent_read
 def period_returns(
     *,
     today: date | None = None,
@@ -93,6 +94,7 @@ def period_returns(
     }
 
 
+@consistent_read
 def volatility(
     *,
     cutoff: Cutoff | None = None,
@@ -136,6 +138,7 @@ def volatility(
     }
 
 
+@consistent_read
 def benchmark_comparison(
     period: str = "YTD",
     *,

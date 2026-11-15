@@ -14,7 +14,7 @@ from typing import Any
 
 import pandas as pd
 
-from app.mcp.deps import get_conn
+from app.mcp.deps import consistent_read, get_conn
 from app.mcp.services import common
 from app.mcp.services import positions as positions_service
 from app.mcp.services import prices as prices_service
@@ -459,6 +459,7 @@ _window_since = common.window_start
 # ────────────────────────── drawdown ──────────────────────────
 
 
+@consistent_read
 def drawdown_stats(
     symbol: str | None = None,
     *,

@@ -375,6 +375,26 @@ def snapshot() -> Iterator[psycopg2.extensions.connection]:
         _release(pool, conn)
 
 
+def consistent_read(fn):
+    """Run ``fn`` inside ``snapshot()`` — one database state for all its reads.
+
+    For a service that reads in several steps — corporate actions, then lots,
+    then prices — and must restate all of them with the same actions. Under
+    READ COMMITTED a split approved between two of those reads put lots and
+    prices in different units (QA of PR #126: 20 shares × an unadjusted price).
+    Re-entrant: inside an existing snapshot (the review) it adds nothing.
+    ``snapshot`` is looked up at call time so a test's replacement applies.
+    """
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with globals()["snapshot"]():
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
 def in_snapshot() -> bool:
     """True inside ``snapshot()`` — callers that cache reads key on this."""
     return _pinned.get() is not None

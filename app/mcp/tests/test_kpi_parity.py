@@ -202,7 +202,7 @@ def patched_services(monkeypatch, env_token, fake_db):
     from app.mcp.services import prices as prices_service
 
     # 1) Lots fetch returns our fixture (used by positions_service).
-    def fake_fetch_lots(conn, *, account=None, symbol=None, as_of=None):
+    def fake_fetch_lots(conn, *, account=None, symbol=None, as_of=None, actions=None):
         return [
             {"id": r[0], "symbol": r[1], "account": r[2], "side": r[3],
              "trade_date": r[4], "quantity": Decimal(r[5]),

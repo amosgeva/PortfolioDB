@@ -22,7 +22,7 @@ def patched(monkeypatch, env_token, fake_db):
     from app.mcp.services import positions as positions_service
     from app.mcp.services import prices as prices_service
 
-    def fake_fetch_lots(conn, *, account=None, symbol=None, as_of=None):
+    def fake_fetch_lots(conn, *, account=None, symbol=None, as_of=None, actions=None):
         return [
             {"id": r[0], "symbol": r[1], "account": r[2], "side": r[3],
              "trade_date": r[4], "quantity": Decimal(r[5]),

@@ -26,6 +26,7 @@ import corporate_actions
 import ledger_inputs
 import portfolio_kpis
 
+from app.mcp import deps
 from app.mcp.deps import get_conn, snapshot_memo
 from app.mcp.services import common
 from app.mcp.services import prices as prices_service
@@ -40,6 +41,7 @@ def _fetch_lots(
     account: str | None = None,
     symbol: str | None = None,
     as_of: date | None = None,
+    actions: list | None = None,
 ) -> list[dict[str, Any]]:
     """Pull lot rows in the column order portfolio.compute_*_merged expects.
 
@@ -70,9 +72,9 @@ def _fetch_lots(
     # reported twenty shares against a pre-split quote (re-audit F03, case A).
     # Quantity and price move inversely, so cost basis and realized P&L are
     # unchanged — only share count and per-share cost are corrected.
-    return ledger_inputs.prepare(
-        lot_rows, corporate_actions.fetch_actions(conn), as_of=as_of
-    ).lots
+    if actions is None:
+        actions = corporate_actions.fetch_actions(conn)
+    return ledger_inputs.prepare(lot_rows, actions, as_of=as_of).lots
 
 
 def _engine(method: str):
@@ -181,14 +183,25 @@ def positions_dataframe(
             return cached
 
     effective_as_of = as_of if as_of is not None else (cutoff.trade_date if cutoff else None)
+    # One database state for the actions, the lots and the quotes: they are
+    # read in three steps and must all be restated with the same actions (QA of
+    # PR #126 — a split approved between two reads mixed units). The actions
+    # are read once and handed to the lot loader, not re-read.
+    with deps.snapshot():
+        merged, latest, actions = _read_frame(engine, account, effective_as_of, cutoff)
+    return _finish_frame(merged, latest, actions, key)
+
+
+def _read_frame(engine, account, effective_as_of, cutoff):
     with get_conn() as conn:
-        lot_rows = _fetch_lots(conn, account=account, as_of=effective_as_of)
+        recorded = corporate_actions.fetch_actions(conn)
+        lot_rows = _fetch_lots(
+            conn, account=account, as_of=effective_as_of, actions=recorded
+        )
         # The actions that had happened by the observation date — the same set
         # _fetch_lots restated the lots with — so the quotes below can be put in
         # the same units.
-        actions = ledger_inputs.prepare(
-            [], corporate_actions.fetch_actions(conn), as_of=effective_as_of
-        ).actions
+        actions = ledger_inputs.prepare([], recorded, as_of=effective_as_of).actions
     merged = engine(lot_rows)
     # The total-return denominator, from exactly the lots this frame values
     # (same account and date filter, restated alike): docs/methodology.md §12.
@@ -199,6 +212,10 @@ def positions_dataframe(
     latest = prices_service.latest_price_map_with_ts(
         as_of_ts=cutoff.ts if cutoff else None
     )
+    return merged, latest, actions
+
+
+def _finish_frame(merged, latest, actions, key):
     # A quote is in the units of the moment it was observed. The latest quote
     # at or before the cutoff is normally after every applicable action and
     # needs nothing; a *stale* one — last observed before an ex-date that the

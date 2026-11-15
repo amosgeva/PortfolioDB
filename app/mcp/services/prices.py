@@ -11,7 +11,9 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
-from app.mcp.deps import get_conn
+from psycopg2 import sql
+
+from app.mcp.deps import consistent_read, get_conn
 from app.mcp.services import common
 from app.mcp.services.cutoff import LOCAL_TZ, tz_name
 
@@ -20,9 +22,14 @@ from app.mcp.services.cutoff import LOCAL_TZ, tz_name
 import corporate_actions
 import ledger_inputs
 import holdings as holdings_module
+from db import fetch_all
 
 # Windows accepted by get_price_change / get_top_movers.
 VALID_WINDOWS = ("1d", "1w", "1m", "3m", "6m", "ytd", "1y", "all")
+
+# The parity contract's lot query in processing order, as one composition of
+# its two constant fragments.
+_VALUE_LOTS_QUERY = sql.Composed([ledger_inputs.LOTS_SQL, ledger_inputs.LOTS_ORDER])
 
 # How historical series value the portfolio.
 HOLDINGS_BASES = ("historical", "current_constant")
@@ -420,6 +427,7 @@ def top_movers(
 # ────────────────────────── portfolio value history ──────────────────────────
 
 
+@consistent_read
 def portfolio_value_history(
     since: date,
     until: date | None = None,
@@ -527,17 +535,18 @@ def _value_lots(
 ) -> list[dict[str, Any]]:
     """Lot rows for holdings reconstruction, restated into post-split units.
 
-    Read through the parity contract itself (``ledger_inputs.load``), so each
-    row carries ``id`` and ``account``: the holdings walk matches per (symbol,
-    account) and truncates an oversell within its own account, as the engines
-    do, instead of netting one account's sale against another's purchase.
+    The parity contract's own query (ledger_inputs.LOTS_SQL in LOTS_ORDER), so
+    each row carries ``id`` and ``account``: the holdings walk matches per
+    (symbol, account) and truncates an oversell within its own account, as the
+    engines do, instead of netting one account's sale against another's.
 
-    ``load`` restates with every action in effect — the same set the callers
-    fetched as ``actions`` to restate their prices with — so the two stay in
-    one set of units. ``actions`` is kept for the callers' signature.
+    Restated with exactly ``actions`` — the set the caller restates its prices
+    with. Re-reading the actions here (as ``ledger_inputs.load`` would) let a
+    split approved between the two reads put lots and prices in different
+    units (QA of PR #126).
     """
-    del actions  # load() fetches the identical set on this connection
-    adjusted = ledger_inputs.load(conn).lots
+    rows = fetch_all(conn, _VALUE_LOTS_QUERY)
+    adjusted = ledger_inputs.prepare(rows, actions).lots
     for r in adjusted:
         r["quantity"] = float(r["quantity"])
     return adjusted

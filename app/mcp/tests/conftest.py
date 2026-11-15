@@ -299,6 +299,25 @@ def mcp_server(env_token, fake_db):
 
 
 @pytest.fixture(autouse=True)
+def _snapshot_is_a_no_op_outside_live_tests(request, monkeypatch):
+    """Services that read in several steps run inside deps.snapshot(), which
+    borrows a real pooled connection. Unit tests have no database and stub the
+    reads underneath, so there the snapshot pins nothing. Live (slow) tests
+    keep the real one — they are what proves the isolation."""
+    if request.node.get_closest_marker("slow") is not None:
+        yield
+        return
+    from app.mcp import deps
+
+    @contextmanager
+    def no_op_snapshot():
+        yield None
+
+    monkeypatch.setattr(deps, "snapshot", no_op_snapshot)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_healthz_cache():
     """/healthz caches its probe for a couple of seconds; tests that stub the
     probe differently must not see each other's answer."""
