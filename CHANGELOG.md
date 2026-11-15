@@ -33,6 +33,10 @@ needs a schema step says so under **Upgrading**.
   (`kpi.pricedCostBasis`, `unpricedCostBasis`, `unpricedSymbols`). All four
   owned surfaces call one module, `app/portfolio_kpis.py`, and a parity test
   runs them over a priced + unpriced pair, with fakes and against Postgres.
+  An unpriced holding also counts as active: the dashboard's `activeCount` and
+  the daily report's "Active Positions" are every open quantity > 0, as the
+  MCP's `active_symbols` is, and `kpi.dayChangePct` is null rather than 0.0
+  when no holding has a priced previous close.
 - **1Y is "n/a" without a year of history** instead of quietly showing the
   since-inception figure, like WTD/MTD/YTD (audit F-14). This is the shared
   TWR engine, so the MCP's period returns change too. The first week/month of

@@ -419,7 +419,9 @@ def main():
         unrl_avg = float(r_avg["unrealized_pnl"])
         unrl_pct_fifo = kpis.as_float(r_fifo["unrealized_pct"]) or 0.0
         unrl_pct_avg = kpis.as_float(r_avg["unrealized_pct"]) or 0.0
-        active = int((fifo["qty"] > 0).sum())
+        # Open positions, priced or not (the dashboard's activeCount and the
+        # MCP's active_symbols); an unpriced one is listed on its own line.
+        active = int((fifo_full["qty"] > 0).sum())
 
         held = fifo_full[fifo_full["qty"] > 0]["symbol"].tolist()
         stale = kpis.stale_quotes({s: q.get("ts") for s, q in quotes.items()}, held, snap.ts, tz)

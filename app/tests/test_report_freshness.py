@@ -187,6 +187,8 @@ class TestDailyReport:
         daily()
         out = capsys.readouterr().out
         assert "Unpriced:          CCC — cost $60.00" in out
+        # Active = open quantity > 0, priced or not (dashboard/MCP convention).
+        assert "Active Positions:  3" in out
         assert "Cost Basis FIFO:   $1,250.00" in out          # priced cost only
 
     def test_stale_symbols_are_kept_out_of_the_deltas(self, daily, capsys):
