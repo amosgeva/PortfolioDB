@@ -6,10 +6,11 @@ default. The default is UTC — the only defensible default for a tool other
 people install; every deployment that cares sets its own zone (this repo's
 own instance pins Asia/Jerusalem in .env).
 
-Note: several modules capture this in module-level constants at import, and
-the MCP side reads it once at server start (cutoff.py::REPORTING_TZ — keep
-the two defaults in sync), so a timezone change applies to those components
-on their next restart. The Settings UI says so next to the field.
+Note: module-level constants should use ``lazy_tzinfo()``, which resolves on
+first use (not at import) and then pins the value read from the settings
+table; the MCP reads it the same way through its read-only pool
+(app/mcp/services/cutoff.py). A timezone change therefore applies to running
+processes on their next restart. The Settings UI says so next to the field.
 """
 
 from __future__ import annotations

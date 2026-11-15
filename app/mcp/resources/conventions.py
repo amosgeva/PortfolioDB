@@ -53,18 +53,33 @@ when interpreting numbers or composing analyses.
   `GLD, IAU, VOO, QQQ, SPY, XLE, XLK, IWM, TLT, IBIT, EZBC`.
   See `fd_store.ETF_SYMBOLS`.
 - All Financial Datasets enrichment lives in `fd_*` tables. Each row carries
-  `fetched_at`; the full API payload is preserved in a `raw` JSONB column.
+  `fetched_at`; the full API payload is kept in a `raw` JSONB column, which
+  the tools do not return (vendor text is returned as untrusted_text).
 - The weekly enrichment job (`fd_weekly_enrichment.py`) is what populates
   these tables. If a symbol has no fundamentals, the enrichment may not have
   been run for it yet.
 
 ## KPI definitions (mirror the Streamlit dashboard)
-- **AUM** = `Σ market_value(symbols)` + `Σ cash(accounts)` using the latest
-  cash row per account.
-- **Cost basis** = `Σ open_cost` from the chosen engine.
-- **Unrealized P&L** = `Σ (qty × last_price) − open_cost`.
+The same definitions the dashboard computes through app/portfolio_kpis.py
+(docs/methodology.md §12, §14):
+- **AUM** = `Σ market_value(priced symbols)` + `Σ USD cash(accounts)` using the
+  latest cash row per account. Cash in another currency is listed, not added.
+- **Cost basis** = `Σ open_cost` from the chosen engine, split into
+  `priced_cost_basis` and `unpriced_cost_basis` (+ `unpriced_symbols`).
+- **Unrealized P&L** = `Σ (qty × last_price) − open_cost` over **priced**
+  positions; an unpriced position is unknown, not a loss.
+- **Unrealized %** = unrealized P&L / priced cost basis × 100.
 - **Realized P&L** = `Σ realized_pnl` from the chosen engine.
-- **Total Return %** = `(realized_pnl + unrealized_pnl) / cost_basis × 100`.
+- **Peak net invested** = the most capital the ledger had committed at any
+  trade date's close: running Σ BUY (qty × price + fees) − Σ SELL
+  (qty × price − fees), maximised over dates, over the same lots (account- and
+  cutoff-filtered alike).
+- **Total Return %** = `(realized_pnl + unrealized_pnl) / peak net invested × 100`;
+  `total_return_with_income_pct` adds USD income. Marked
+  `total_return_partial` when a position is unpriced.
+- **Fee drag %** = total fees / peak net invested × 100.
+- **Income** totals are USD only; other currencies are listed under
+  `excluded_non_usd`.
 - **Active symbols** = count of symbols with qty > 0.
 
 ## Symbol casing
