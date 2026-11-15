@@ -86,10 +86,14 @@ def test_cash_balance_specific_account(env_token, fake_db):
         ],
     )])
     out = activity.cash_balance("Blink")
+    # Through the shared USD-aware reader: currency and inclusion travel along.
     assert out == {
         "account": "Blink",
         "cash": 150.0,
+        "currency": "USD",
+        "included": True,
         "ts": datetime(2026, 5, 17, tzinfo=timezone.utc).isoformat(),
+        "excluded_non_usd": [],
     }
 
 
@@ -100,4 +104,5 @@ def test_cash_balance_unknown_account_returns_zero(env_token, fake_db):
         [("IBKR", Decimal("500.00"), datetime(2026, 5, 18, tzinfo=timezone.utc))],
     )])
     out = activity.cash_balance("Nope")
-    assert out == {"account": "Nope", "cash": 0.0, "ts": None}
+    assert out == {"account": "Nope", "cash": 0.0, "currency": None, "included": True,
+                   "ts": None, "excluded_non_usd": []}

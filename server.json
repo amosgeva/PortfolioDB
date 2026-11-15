@@ -33,14 +33,21 @@
           "isSecret": true
         },
         {
-          "name": "PORTFOLIODB_PASSWORD",
-          "description": "Password for the application's Postgres user. This server needs its own database — it reads your ledger, it does not host one.",
+          "name": "PORTFOLIODB_MCP_RO_USER",
+          "description": "The SELECT-only Postgres role this server connects as (normally `portfoliodb_ro`). Required: the server refuses to connect without it. `make ro-role` (or `pdb.ps1`/`python app/create_ro_role.py --generate`) creates the role and prints this line. Never give this server the application's read-write password.",
+          "isRequired": true,
+          "isSecret": false,
+          "default": "portfoliodb_ro"
+        },
+        {
+          "name": "PORTFOLIODB_MCP_RO_PASSWORD",
+          "description": "Password for the SELECT-only role above, as printed by `make ro-role`.",
           "isRequired": true,
           "isSecret": true
         },
         {
           "name": "PORTFOLIODB_HOST",
-          "description": "Postgres host. Inside the shipped docker-compose network this is `postgres`.",
+          "description": "Postgres host. This server reads your ledger, it does not host one. Inside the shipped docker-compose network this is `postgres`.",
           "default": "127.0.0.1"
         },
         {
@@ -49,14 +56,10 @@
           "default": "54320"
         },
         {
-          "name": "PORTFOLIODB_MCP_RO_USER",
-          "description": "Optional SELECT-only Postgres role for this server to use instead of the application user. Create it with `make ro-role`.",
+          "name": "PORTFOLIODB_MCP_ALLOWED_HOSTS",
+          "description": "Comma-separated Host-header names to accept besides localhost/127.0.0.1/::1, e.g. `192.168.1.20,nas.lan` when other machines connect. Any other Host is refused (421). `*` disables the check.",
+          "isRequired": false,
           "isSecret": false
-        },
-        {
-          "name": "PORTFOLIODB_MCP_RO_PASSWORD",
-          "description": "Password for the SELECT-only role above.",
-          "isSecret": true
         }
       ]
     }

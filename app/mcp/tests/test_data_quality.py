@@ -63,6 +63,8 @@ def stub(monkeypatch):
             "_first_trade_dates": lambda c: {"BIG": date(2026, 1, 5), "TINY": date(2026, 1, 5)},
             "_suspected_splits": lambda c: {},
             "_foreign_currency": lambda c: {},
+            "_foreign_money": lambda c: [],
+            "_pending_splits": lambda c: {},
         }
         defaults.update(overrides)
         for name, fn in defaults.items():

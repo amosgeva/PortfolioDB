@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from fastmcp import FastMCP
 
@@ -11,11 +13,19 @@ from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import analytics as analytics_service
 
 
+Account = Annotated[
+    str | None,
+    Field(description="One broker account; '(none)' selects lots recorded without one. None = all accounts."),
+]
+
+
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     def get_concentration(
-        top_n: int = 10, as_of: date | None = None
+        top_n: Annotated[int, Field(ge=1, le=analytics_service.MAX_TOP_N)] = 10,
+        as_of: date | None = None,
+        account: Account = None,
     ) -> dict[str, Any]:
         """Top-N weights, HHI, % held in top-N, single-name max.
 
@@ -27,7 +37,9 @@ def register(mcp: FastMCP) -> None:
         holdings and prices both pinned there. None = now.
         """
         return analytics_service.concentration(
-            top_n, cutoff=cutoff_service.resolve(as_of) if as_of else None
+            top_n,
+            cutoff=cutoff_service.resolve(as_of) if as_of else None,
+            account=account,
         )
 
     @mcp.tool
@@ -42,7 +54,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool
     def get_allocation(
-        dimension: str = "sector", as_of: date | None = None
+        dimension: str = "sector",
+        as_of: date | None = None,
+        account: Account = None,
     ) -> dict[str, Any]:
         """Portfolio market-value weight bucketed by one dimension.
 
@@ -60,14 +74,18 @@ def register(mcp: FastMCP) -> None:
         as_of pins holdings and prices to the end of that date. None = now.
         """
         return analytics_service.allocation_by(
-            dimension, cutoff=cutoff_service.resolve(as_of) if as_of else None
+            dimension,
+            cutoff=cutoff_service.resolve(as_of) if as_of else None,
+            account=account,
         )
 
     @mcp.tool
     def get_correlation_matrix(
-        symbols: list[str] | None = None,
+        symbols: Annotated[
+            list[str] | None, Field(max_length=analytics_service.MAX_CORRELATION_SYMBOLS)
+        ] = None,
         window: str = "3m",
-        min_observations: int = 20,
+        min_observations: Annotated[int, Field(ge=2, le=10_000)] = 20,
         resample: str = "daily",
     ) -> dict[str, Any]:
         """Pairwise correlations of daily returns over a window.
@@ -76,7 +94,7 @@ def register(mcp: FastMCP) -> None:
         uses, so numbers stay consistent with what the user sees.
 
         Args:
-            symbols: list, or None = currently-held positions.
+            symbols: list (at most 60), or None = the largest held positions.
             window: '1m' | '3m' | '6m' | '1y' | 'all'.
             min_observations: skip pairs with fewer overlapping days.
             resample: 'daily' (default) or 'raw' (rare — usually too noisy).
@@ -93,6 +111,7 @@ def register(mcp: FastMCP) -> None:
         symbol: str | None = None,
         since: date | None = None,
         holdings_basis: str = "historical",
+        account: Account = None,
     ) -> dict[str, Any]:
         """Max + current drawdown. Prices are split-adjusted.
 
@@ -116,7 +135,7 @@ def register(mcp: FastMCP) -> None:
         peak_ts, trough, trough_ts, recovered, observations, holdings_basis}.
         """
         return analytics_service.drawdown_stats(
-            symbol, since=since, holdings_basis=holdings_basis
+            symbol, since=since, holdings_basis=holdings_basis, account=account
         )
 
     @mcp.tool

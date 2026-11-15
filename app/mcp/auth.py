@@ -47,12 +47,19 @@ class StaticBearerVerifier(TokenVerifier):
         if not token:
             raise ValueError("StaticBearerVerifier requires a non-empty token")
         self._token = token
+        self._token_bytes = token.encode("utf-8")
         self._client_id = client_id
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token:
             return None
-        if not hmac.compare_digest(token, self._token):
+        # Compare encoded bytes. hmac.compare_digest refuses a str holding any
+        # non-ASCII character with a TypeError, which surfaced as an HTTP 500
+        # instead of a 401 (audit M-8). Bytes compare in constant time for any
+        # input; "surrogateescape" keeps a header that is not valid UTF-8 from
+        # raising here too.
+        presented = token.encode("utf-8", "surrogateescape")
+        if not hmac.compare_digest(presented, self._token_bytes):
             return None
         # No real expiry on a static token, but the SDK expects an int — give
         # it a far-future timestamp so framework-level expiry checks pass.
@@ -83,7 +90,38 @@ def load_token() -> str:
             f"{TOKEN_ENV_VAR} is not set. Add it to .env (repo root) or export it "
             "before starting the MCP server."
         )
+    problem = token_weakness(token)
+    if problem:
+        if (os.getenv(ALLOW_WEAK_TOKEN_ENV) or "").strip().lower() in ("1", "true", "yes"):
+            log.warning(
+                "%s is weak (%s) and %s is set, so the server starts anyway. "
+                "Generate a strong one with `make init` or `pdb.ps1 init`.",
+                TOKEN_ENV_VAR, problem, ALLOW_WEAK_TOKEN_ENV,
+            )
+        else:
+            raise RuntimeError(
+                f"{TOKEN_ENV_VAR} is too weak: {problem}. It is the only thing between "
+                "the network and your ledger. `make init` (or `pdb.ps1 init`) generates a "
+                f"40-character random one; to start anyway, set {ALLOW_WEAK_TOKEN_ENV}=1."
+            )
     return token
+
+
+# The minimum a static bearer token must meet at startup (audit M-9). The
+# installers generate 40 random characters, comfortably above it.
+MIN_TOKEN_LENGTH = 32
+MIN_DISTINCT_CHARS = 10
+# The NAME of an environment variable, not a secret — scanners match the word.
+ALLOW_WEAK_TOKEN_ENV = "PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN"  # nosec B105  # nosemgrep
+
+
+def token_weakness(token: str) -> str | None:
+    """Why ``token`` is too weak to serve, or None when it is acceptable."""
+    if len(token) < MIN_TOKEN_LENGTH:
+        return f"{len(token)} characters, at least {MIN_TOKEN_LENGTH} required"
+    if len(set(token)) < MIN_DISTINCT_CHARS:
+        return f"only {len(set(token))} distinct characters, at least {MIN_DISTINCT_CHARS} required"
+    return None
 
 
 def _load_env_file_for_mcp() -> None:

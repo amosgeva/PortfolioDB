@@ -40,10 +40,46 @@ def parse_env_line(line: str) -> tuple[str, str] | None:
     if not stripped or stripped.startswith("#") or "=" not in stripped:
         return None
     key, _, value = stripped.partition("=")
-    key, value = key.strip(), value.strip()
+    key, value = key.strip(), _unquote(value.strip())
+    if key.startswith("export "):
+        key = key[len("export "):].strip()
     if not key or not value:
         return None
     return key, value
+
+
+def _unquote(value: str) -> str:
+    """A .env value the way docker compose reads it.
+
+    Compose strips a matching pair of surrounding quotes and, for an unquoted
+    value, drops an inline comment that starts at whitespace-then-``#``. This
+    parser used to keep both, so ``PORTFOLIODB_PASSWORD="x"`` authenticated
+    under compose and failed for host-run Python with the literal ``"x"``
+    (audit A-7). Inside double quotes, ``\\"`` and ``\\\\`` are unescaped as
+    compose does; single quotes are literal.
+    """
+    if len(value) >= 2 and value[0] in ("'", '"'):
+        quote = value[0]
+        out: list[str] = []
+        i = 1
+        while i < len(value):
+            ch = value[i]
+            if quote == '"' and ch == "\\" and i + 1 < len(value) and value[i + 1] in ('"', "\\"):
+                out.append(value[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                # Anything after the closing quote can only be a comment.
+                return "".join(out)
+            out.append(ch)
+            i += 1
+        # No closing quote: not a quoted value after all, keep it verbatim.
+        return value
+    for marker in (" #", "\t#"):
+        cut = value.find(marker)
+        if cut != -1:
+            value = value[:cut].rstrip()
+    return value
 
 
 def _load_env_file_if_needed() -> None:
@@ -135,14 +171,46 @@ def connect_for_tests(*, skip, fail):
         raise
 
 
+# How long a connection attempt may take before it fails. libpq's default is
+# to wait forever, so an unreachable host (a stopped VM, a dropped route) used
+# to hang every entry point — the dashboard, the collector, the settings reader
+# that runs inside them — with no error at all (audit A-6, E-4).
+CONNECT_TIMEOUT_ENV = "PORTFOLIODB_CONNECT_TIMEOUT"
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 10
+
+
+def connect_timeout() -> int:
+    """Seconds a connection attempt may take: PORTFOLIODB_CONNECT_TIMEOUT or 10.
+
+    libpq treats 0 as "wait forever" and anything below 2 as 2, so the value is
+    clamped to at least 2 — a typo cannot switch the deadline off.
+    """
+    raw = (os.getenv(CONNECT_TIMEOUT_ENV) or "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_CONNECT_TIMEOUT_SECONDS
+    except ValueError:
+        value = DEFAULT_CONNECT_TIMEOUT_SECONDS
+    return max(2, value)
+
+
+def connect_params(cfg: DbConfig) -> dict:
+    """Keyword arguments for psycopg2.connect / a psycopg2 pool.
+
+    One place, so a pool built elsewhere (the dashboard's) gets the same
+    deadline as a plain connect() instead of the libpq default of none.
+    """
+    return {
+        "host": cfg.host,
+        "port": cfg.port,
+        "dbname": cfg.dbname,
+        "user": cfg.user,
+        "password": cfg.password,
+        "connect_timeout": connect_timeout(),
+    }
+
+
 def connect(cfg: DbConfig):
-    return psycopg2.connect(
-        host=cfg.host,
-        port=cfg.port,
-        dbname=cfg.dbname,
-        user=cfg.user,
-        password=cfg.password,
-    )
+    return psycopg2.connect(**connect_params(cfg))
 
 
 @contextmanager

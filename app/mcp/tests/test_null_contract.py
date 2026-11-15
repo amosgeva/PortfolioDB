@@ -93,7 +93,8 @@ def test_positions_summary_empty_returns_null_ratios(env_token, fake_db, monkeyp
     assert out["market_value"] == 0.0
     assert out["unrealized_pct"] is None
     assert out["total_return_pct"] is None
-    assert out["null_reasons"]["total_return_pct"] == "no_cost_basis"
+    # Total return is over invested capital (methodology §12); none was.
+    assert out["null_reasons"]["total_return_pct"] == "no_invested_capital"
 
 
 def test_positions_summary_zero_cost_basis_returns_null_ratios(

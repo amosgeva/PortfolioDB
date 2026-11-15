@@ -51,6 +51,7 @@ SYNTHETIC_ENV = (
     "ANTHROPIC_API_KEY=synthetic-llm-key\n"
     "FINANCIAL_DATASETS_API_KEY=synthetic-fd-key\n"
     "PORTFOLIODB_TZ=Asia/Jerusalem\n"
+    "PORTFOLIODB_MCP_ALLOWED_HOSTS=nas.lan,192.168.1.20\n"
     "PGADMIN_EMAIL=nobody@example.invalid\n"
     "PGADMIN_PASSWORD=synthetic\n"
 )
@@ -422,3 +423,10 @@ def test_the_scheduler_keeps_the_keys_its_jobs_need(full_model):
 def test_the_mcp_server_gets_the_reporting_timezone(full_model):
     """Audit X-4: without it the MCP container bucketed days in UTC."""
     assert _env(full_model, "mcp").get("PORTFOLIODB_TZ") == "Asia/Jerusalem"
+
+
+def test_the_mcp_server_gets_its_allowed_hosts(full_model):
+    """Audit M-12: the Host guard refuses names it was not told about, so a
+    LAN name set in .env must reach the mcp container, which is not handed the
+    whole .env."""
+    assert _env(full_model, "mcp").get("PORTFOLIODB_MCP_ALLOWED_HOSTS") == "nas.lan,192.168.1.20"

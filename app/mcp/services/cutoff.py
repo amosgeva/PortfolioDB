@@ -34,31 +34,37 @@ from zoneinfo import ZoneInfo
 
 from app.mcp.deps import get_conn
 
-# Importing deps (above) puts app/ on sys.path, so the bare settings module
-# resolves here just like corporate_actions does in the sibling services.
-import settings as _settings
+# Importing deps (above) puts app/ on sys.path, so the bare modules resolve
+# here just like corporate_actions does in the sibling services.
+import reporting_tz as _reporting_tz
 import version
 
 # Reporting timezone for the whole application — the window the snapshot
-# collector runs in and the day boundary every daily series uses. Resolved
-# once at import through app/settings.py (Settings page → PORTFOLIODB_TZ env
-# → default), so a change from the Settings UI applies on server restart.
-# The default is UTC; app/reporting_tz.py::DEFAULT_TZ holds the same default
-# for the bare-module side — keep the two in sync.
-REPORTING_TZ = _settings.get("reporting_tz", env="PORTFOLIODB_TZ", default="UTC")
-try:
-    LOCAL_TZ = ZoneInfo(REPORTING_TZ)
-except Exception:  # typo'd setting — fall back rather than break every import
-    REPORTING_TZ = "UTC"
-    LOCAL_TZ = ZoneInfo(REPORTING_TZ)
+# collector runs in and the day boundary every daily series uses. The same
+# resolver the dashboard uses (app/reporting_tz.py: Settings page →
+# PORTFOLIODB_TZ → UTC), read through this process's read-only pool (see
+# app/mcp/__init__.py), on first use rather than at import. It used to be read
+# at import through the application's credentials, which the MCP container
+# does not have, so the shipped deployment always resolved UTC whatever the
+# Settings page said (audit X-4). Pinned once read from the table, so a change
+# applies on restart — the same rule as the dashboard.
+LOCAL_TZ = _reporting_tz.lazy_tzinfo()
+
+
+def tz_name() -> str:
+    """IANA name of the reporting timezone, e.g. 'Asia/Jerusalem'."""
+    return LOCAL_TZ.key
 
 # The ledger is single-currency and that currency is USD. Stated explicitly so
 # a response declares its currency rather than leaving it to be assumed, and so
 # the day a non-USD instrument appears there is something to check against.
 REPORTING_CURRENCY = "USD"
 
-# Tracks the `-- PortfolioDB schema vX.Y` header in sql/schema.sql.
-SCHEMA_VERSION = "0.5"
+# Tracks the `-- PortfolioDB schema vX.Y` header in sql/schema.sql. 0.6 is the
+# 1.8.0 schema: migrations 004 (symbol check), 005 (finite split ratio) and
+# 006 (price_alerts, lot_deletions). The header moves to v0.6 with 006; a test
+# arriving with it pins the two together.
+SCHEMA_VERSION = "0.6"
 
 # How long a snapshot run may be in flight before we stop deferring to it.
 #
@@ -96,7 +102,7 @@ class Cutoff:
     """
 
     ts: datetime
-    tz: str = REPORTING_TZ
+    tz: str = field(default_factory=tz_name)
     trade_date: date = field(default=None)  # type: ignore[assignment]
     price_ts_by_symbol: dict[str, datetime] = field(default_factory=dict)
     cash_ts_by_account: dict[str, datetime] = field(default_factory=dict)
@@ -182,7 +188,7 @@ def resolve(as_of: datetime | date | None = None) -> Cutoff:
                 """
                 SELECT DISTINCT ON (symbol) symbol, ts
                 FROM price_snapshots
-                WHERE ts <= %s
+                WHERE last_price > 0 AND ts <= %s
                 ORDER BY symbol, ts DESC
                 """,
                 (ts,),
@@ -200,7 +206,7 @@ def resolve(as_of: datetime | date | None = None) -> Cutoff:
             )
             cash_ts = {acct: t for acct, t in cur.fetchall()}
 
-            cur.execute("SELECT MIN(ts) FROM price_snapshots")
+            cur.execute("SELECT MIN(ts) FROM price_snapshots WHERE last_price > 0")
             row = cur.fetchone()
             first_ts = row[0] if row else None
 
@@ -208,7 +214,7 @@ def resolve(as_of: datetime | date | None = None) -> Cutoff:
 
     return Cutoff(
         ts=ts,
-        tz=REPORTING_TZ,
+        tz=tz_name(),
         trade_date=ts.astimezone(LOCAL_TZ).date(),
         price_ts_by_symbol=price_ts,
         cash_ts_by_account=cash_ts,
@@ -262,3 +268,13 @@ def app_version() -> str:
     (and tests, via .cache_clear()) already depend on that.
     """
     return version.build_stamp()
+
+
+def __getattr__(name: str) -> Any:
+    # `cutoff.REPORTING_TZ` was a module constant read at import. Kept as a
+    # lazily resolved attribute for readers of the old name; new code calls
+    # tz_name(). (A `from ... import REPORTING_TZ` would resolve at import
+    # again, which is exactly what this module no longer does.)
+    if name == "REPORTING_TZ":
+        return tz_name()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

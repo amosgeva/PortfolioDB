@@ -207,7 +207,7 @@ def test_correlation_perfect_correlation_pair(env_token, monkeypatch):
     import pandas as pd
     from app.mcp.services import analytics
 
-    monkeypatch.setattr(analytics, "_window_since", lambda w: None)
+    monkeypatch.setattr(analytics, "_window_since", lambda w, **kw: None)
 
     days = [date(2026, 5, d) for d in range(1, 21)]
     df_rows = []

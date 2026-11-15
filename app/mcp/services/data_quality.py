@@ -33,12 +33,19 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from decimal import Decimal
+
 from app.mcp.deps import get_conn
+from app.mcp.services import cash as cash_service
+from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
-from app.mcp.services.cutoff import Cutoff, REPORTING_TZ
+from app.mcp.services.cutoff import Cutoff, tz_name
 
 import corporate_actions
+import ledger_inputs
+from fifo import Lot as FifoLot, run_fifo
+from ledger_core import lot_order_key, processing_key
 
 # Worst-wins ordering. `inconsistent` outranks `unavailable` because
 # contradictory data yields a confidently wrong number, while missing data at
@@ -59,6 +66,11 @@ CORRECTNESS_CODES = frozenset({
     # A position in another currency is summed at face value: every total
     # that includes it is wrong at any position size.
     "foreign_currency",
+    "foreign_currency_income",
+    "foreign_currency_cash",
+    # A recorded split awaiting review adjusts nothing yet, so every return
+    # and drawdown across its date reads the split as a price move.
+    "split_pending_review",
 })
 
 # A position at or above this share of market value is material.
@@ -109,6 +121,7 @@ def portfolio_data_quality(
     impossible = _impossible_values(cutoff)
     first_trade = _first_trade_dates(cutoff)
     splits = _suspected_splits(cutoff)
+    pending = _pending_splits(cutoff)
     foreign = _foreign_currency(cutoff)
 
     issues_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -201,6 +214,16 @@ def portfolio_data_quality(
             **detail,
         ))
 
+    for sym, detail in pending.items():
+        issues_by_symbol[sym].append(_issue(
+            "split_pending_review", "inconsistent",
+            f"A {detail['ratio']:g}:1 {detail['kind'].lower().replace('_', ' ')} on "
+            f"{detail['ex_date']} is recorded but awaiting review, so it adjusts "
+            "nothing yet: returns and drawdown across that date read it as a price "
+            "move. Confirm it and mark it reviewed (app/check_splits.py).",
+            **detail,
+        ))
+
     for sym, detail in foreign.items():
         detail = dict(detail)
         issues_by_symbol[sym].append(_issue(
@@ -210,6 +233,11 @@ def portfolio_data_quality(
     symbols_out, material, minor = _assemble(
         issues_by_symbol, positions, targeted, materiality_pct
     )
+    # Money recorded in another currency is left out of the USD income and
+    # cash totals (docs/methodology.md §14); say so wherever a reader checks
+    # whether to trust a total. Material at any size: a total is short by it.
+    money = _foreign_money(cutoff)
+    material = money + material
     collector = _collector_status(cutoff, last_run, cash_max_age_days)
 
     candidates = [i["severity"] for i in material]
@@ -383,10 +411,14 @@ def _collector_status(
                 hours_since_last_run=round(gap_h, 2),
             ))
         if last_run["status"] == "partial":
+            # The collector's error text is written verbatim from yfinance and
+            # its exceptions: free text, carried separately and marked as such
+            # rather than spliced into this message (audit M-6).
             issues.append(_issue(
                 "last_run_partial", "partial",
                 f"Most recent run reported {last_run['symbols_failed']} "
-                f"problem symbol(s): {last_run.get('error') or 'no detail'}",
+                f"problem symbol(s); the collector's own text is in error_text.",
+                error_text=common.untrusted(last_run.get("error")),
             ))
             status = worst([status, "partial"])
 
@@ -479,7 +511,7 @@ def _symbols_priced_at(run_ts: datetime) -> set[str]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT symbol FROM price_snapshots WHERE ts = %s", (run_ts,)
+                "SELECT symbol FROM price_snapshots WHERE ts = %s AND last_price > 0", (run_ts,)
             )
             return {r[0] for r in cur.fetchall()}
 
@@ -518,42 +550,67 @@ def _classification_gaps(symbols: list[str]) -> dict[str, list[str]]:
 
 
 def _orphan_sells(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
-    """First point per symbol where cumulative SELL exceeds cumulative BUY.
+    """First SELL per symbol that the FIFO engine could not fully match.
 
-    Scoped to (symbol, account) because that is how the engines match. The
-    running total is the same walk run_fifo performs, so a hit here is exactly
-    the case where it logs a warning and truncates.
+    Asked of the engine itself, on the prepared ledger: lots restated by the
+    corporate actions that had happened by the cutoff (ledger_inputs.load,
+    the parity contract), then replayed per (symbol, account) exactly as
+    run_fifo does — its own ordering included. A sell whose matched quantity
+    falls short of its quantity is the case run_fifo logs and truncates.
+
+    This used to sum raw quantities in SQL. A buy of 10 before a 2:1 split and
+    a sale of 20 after it is matched in full by the engines, but read as a
+    permanent oversell of 10; a reverse split hid a real oversell the same way
+    (audit X-5). Reading the engine's own matches also keeps this check right
+    if the engine's within-day ordering changes.
     """
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                WITH ordered AS (
-                  SELECT symbol, account, trade_date, id, side, quantity,
-                         SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END)
-                           OVER (PARTITION BY symbol, COALESCE(account,'')
-                                 ORDER BY trade_date, (side = 'SELL'), id) AS running
-                  FROM lots
-                  WHERE trade_date <= %s
-                )
-                SELECT DISTINCT ON (symbol)
-                       symbol, account, trade_date, id, quantity, running
-                FROM ordered
-                WHERE running < -0.00000001
-                ORDER BY symbol, trade_date, (side = 'SELL'), id
-                """,
-                (cutoff.trade_date,),
-            )
-            return {
-                r[0]: {
-                    "account": r[1],
-                    "trade_date": r[2],
-                    "lot_id": int(r[3]),
-                    "sell_quantity": float(r[4]),
-                    "shortfall": float(r[5]),
+        prepared = ledger_inputs.load(conn, as_of=cutoff.trade_date)
+
+    streams: dict[tuple[str, str | None], list[FifoLot]] = defaultdict(list)
+    for r in prepared.lots:
+        streams[(r["symbol"], r["account"])].append(FifoLot(
+            id=int(r["id"]),
+            symbol=r["symbol"],
+            account=r["account"],
+            side=r["side"],
+            trade_date=r["trade_date"],
+            quantity=Decimal(str(r["quantity"])),
+            price=Decimal(str(r["price"])),
+            fees=Decimal(str(r["fees"] or 0)),
+        ))
+
+    found: dict[str, dict[str, Any]] = {}
+    tolerance = Decimal("0.00000001")
+    for (sym, acct), stream in sorted(
+        streams.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
+    ):
+        result = run_fifo(stream)
+        matched: dict[int, Decimal] = defaultdict(Decimal)
+        for m in result.matches:
+            matched[m.sell_lot_id] += m.qty
+        # The engines' own processing order (ledger_core.lot_order_key: by
+        # date, BUY before SELL within a day, then id), so "first" means the
+        # first sell the engine itself could not match.
+        for lot in sorted(stream, key=lot_order_key):
+            if lot.side.upper() != "SELL":
+                continue
+            shortfall = lot.quantity - matched.get(lot.id, Decimal("0"))
+            if shortfall <= tolerance:
+                continue
+            prior = found.get(sym)
+            if prior is None or lot_order_key(lot) < processing_key(
+                prior["trade_date"], "SELL", prior["lot_id"]
+            ):
+                found[sym] = {
+                    "account": acct,
+                    "trade_date": lot.trade_date,
+                    "lot_id": lot.id,
+                    "sell_quantity": float(lot.quantity),
+                    "shortfall": -float(shortfall),
                 }
-                for r in cur.fetchall()
-            }
+            break
+    return found
 
 
 def _suspect_duplicate_lots(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
@@ -693,6 +750,68 @@ def _foreign_currency(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
             }
 
 
+def _recorded_actions(conn) -> list:
+    """Every recorded corporate action, pending review or not.
+
+    corporate_actions.fetch_actions returns only the actions in effect; a
+    collector-recorded split adjusts nothing until a person reviews it, so the
+    full register comes from fetch_recorded_actions.
+    """
+    return list(corporate_actions.fetch_recorded_actions(conn))
+
+
+def _pending_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
+    """Recorded splits awaiting review, dated on or before the cutoff."""
+    with get_conn() as conn:
+        recorded = _recorded_actions(conn)
+    out: dict[str, dict[str, Any]] = {}
+    for a in recorded:
+        if not getattr(a, "pending_review", False) or a.ex_date > cutoff.trade_date:
+            continue
+        out[a.symbol.upper()] = {
+            "ex_date": a.ex_date.isoformat(),
+            "kind": a.kind,
+            "ratio": float(a.ratio),
+        }
+    return out
+
+
+def _foreign_money(cutoff: Cutoff) -> list[dict[str, Any]]:
+    """Income and cash recorded in a currency other than USD, at the cutoff.
+
+    Both are excluded from the dollar totals (income, total return with income,
+    cash, AUM) rather than added at face value; these issues are what tells the
+    reader the totals are short by them. Warnings come from
+    portfolio_kpis.currency_warnings, the dashboard's own wording.
+    """
+    import portfolio_kpis
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT symbol, account, amount, currency FROM income "
+                "WHERE pay_date <= %s AND currency IS NOT NULL AND upper(currency) <> %s",
+                (cutoff.trade_date, portfolio_kpis.BASE_CURRENCY),
+            )
+            cols = [d[0] for d in cur.description]
+            income = [dict(zip(cols, r)) for r in cur.fetchall()]
+    cash = [
+        {"account": r["account"], "currency": r["currency"], "cash": r["cash"]}
+        for r in cash_service.latest_cash(cutoff.ts)["by_account"]
+        if not r["included"]
+    ]
+    out: list[dict[str, Any]] = []
+    for w in portfolio_kpis.currency_warnings(income=income, cash=cash):
+        kind = w["kind"]
+        label = ",".join(w.get("symbols") or []) if kind == "income" else f"(cash:{w.get('account')})"
+        detail = {k: v for k, v in w.items() if k not in ("message", "kind")}
+        out.append(dict(
+            _issue(f"foreign_currency_{kind}", "partial", w["message"], **detail),
+            symbol=label or "(income)", weight_pct=0.0,
+        ))
+    return out
+
+
 def _first_trade_dates(cutoff: Cutoff) -> dict[str, date]:
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -713,7 +832,7 @@ def _suspected_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
     investigation, not to enumerate every day of a corrupted series.
     """
     with get_conn() as conn:
-        known = corporate_actions.fetch_actions(conn)
+        known = _recorded_actions(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -727,13 +846,16 @@ def _suspected_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                          date_trunc('day', ts AT TIME ZONE %s),
                          ts DESC
                 """,
-                (REPORTING_TZ, REPORTING_TZ, cutoff.ts, REPORTING_TZ),
+                (tz_name(), tz_name(), cutoff.ts, tz_name()),
             )
             series: dict[str, list[tuple[date, float]]] = defaultdict(list)
             for sym, day, price in cur.fetchall():
                 series[sym].append((day, float(price)))
 
     out: dict[str, dict[str, Any]] = {}
+    # Every RECORDED action counts as known, pending ones included: a split
+    # recorded and awaiting review is not "unrecorded" — it is reported as
+    # pending by _pending_splits instead.
     for hit in corporate_actions.detect_suspected_splits(series, known=known):
         out[hit["symbol"]] = {
             "day": hit["day"].isoformat(),

@@ -10,7 +10,9 @@ by *privilege* — a bug or a prompt injection cannot write through a role that
 holds no write grants.
 
 Prints the two .env lines to add. Idempotent: re-running updates the password of
-an existing role rather than failing.
+an existing role rather than failing, and resets its grants to exactly the
+tables the MCP reads — so re-run it after an upgrade that changes that list
+(1.8.0 narrowed it: chat_log is no longer readable, settings is).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from pathlib import Path
 
 import psycopg2
 
-from db import load_config
+from db import connect_params, load_config
 
 SQL_PATH = Path(__file__).resolve().parent.parent / "sql" / "create_ro_role.sql"
 PLACEHOLDER = "CHANGE_ME"
@@ -45,10 +47,7 @@ def main() -> int:
         return 1
 
     cfg = load_config()
-    conn = psycopg2.connect(
-        host=cfg.host, port=cfg.port, dbname=cfg.dbname,
-        user=cfg.user, password=cfg.password,
-    )
+    conn = psycopg2.connect(**connect_params(cfg))
     conn.autocommit = True          # the script carries its own DO block
     try:
         with conn.cursor() as cur:

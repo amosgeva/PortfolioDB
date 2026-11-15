@@ -7,7 +7,9 @@ used to take, each of which independently read "now" and "the latest price".
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from fastmcp import FastMCP
 
@@ -25,7 +27,7 @@ def register(mcp: FastMCP) -> None:
         benchmark_period: str = "YTD",
         detail_level: str = "standard",
         correlation_window: str = "3m",
-        top_n: int = 10,
+        top_n: Annotated[int, Field(ge=1, le=100)] = 10,
         reporting_currency: str = "USD",
     ) -> dict[str, Any]:
         """Complete portfolio review from a single consistent cutoff.
@@ -43,7 +45,10 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             method: 'fifo' or 'avg' cost basis.
-            account: restrict to one broker account. None = all merged.
+            account: restrict to one broker account ('(none)' = lots recorded
+                without one). None = all merged. Every section is then that
+                account's, except data_quality, which is portfolio-wide; each
+                section carries `scope` saying which.
             as_of: pin the whole review to this instant. None = now.
             benchmark: comparison symbol. None = PORTFOLIODB_BENCHMARK_SYMBOL
                 or SPY.

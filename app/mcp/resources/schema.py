@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from app.mcp.tools.meta_tools import _SCHEMA_DICT
+from app.mcp.tools.meta_tools import schema_document
 
 
 def _render_markdown(d: dict) -> str:
@@ -25,6 +25,8 @@ def _render_markdown(d: dict) -> str:
             lines.append(f"- Primary key: `{meta['primary_key']}`")
         if "unique_index" in meta:
             lines.append(f"- Unique index: `{meta['unique_index']}`")
+        for definition in meta.get("unique_indexes", []):
+            lines.append(f"- Unique index: `{definition}`")
         lines.append("")
         lines.append("| column | description |")
         lines.append("|---|---|")
@@ -57,4 +59,5 @@ def register(mcp: FastMCP) -> None:
         mime_type="text/markdown",
     )
     def schema_resource() -> str:
-        return _render_markdown(_SCHEMA_DICT)
+        # The same document get_schema returns: live structure, curated prose.
+        return _render_markdown(schema_document())

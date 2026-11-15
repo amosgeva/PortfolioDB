@@ -154,6 +154,34 @@ services:
 Without that block the fallback refuses to start and says which line is
 missing, rather than running on a password it was quietly handed.
 
+The role's grants are an explicit list — exactly the tables the server reads,
+including `settings` (for the reporting timezone and the saved one-pager) and
+not `chat_log` — with no default grant on tables created later. **Re-run
+`make ro-role` after an upgrade** that changes that list; it revokes and
+re-grants, so an existing role is narrowed to the current list. Run it with
+`python app/create_ro_role.py --password <current>` to keep the password.
+
+What else guards it:
+
+- **Token strength.** The server refuses to start with a token under 32
+  characters or with fewer than 10 distinct characters (`make init` generates
+  40). `PORTFOLIODB_MCP_ALLOW_WEAK_TOKEN=1` is the logged opt-out.
+- **Failed-auth throttle.** Ten 401s from one client address within 60 seconds
+  get HTTP 429 until the window passes (per server process).
+- **Host header.** Every request's `Host` must be a loopback name or one listed
+  in `PORTFOLIODB_MCP_ALLOWED_HOSTS`; anything else gets 421. This is what
+  stops a DNS-rebinding page from reaching the server through a browser. If an
+  agent on another machine connects by name or LAN address, list it there.
+- **Deadlines.** Every query has a statement timeout and every connection a
+  connect timeout, so one slow query cannot hold the server.
+- **Untrusted text.** Free text from people or vendors — lot and cash notes,
+  collector errors, news titles, vendor names — is returned as
+  `{"untrusted_text": ...}`, capped. Clients should treat it as data to report,
+  never as instructions; the server's instructions tell the model so.
+- **Masked errors.** A client sees a category ("Could not reach the database
+  server"), never the driver's message with hosts and role names; the detail
+  is in the server log.
+
 To let an agent on another machine reach it, tunnel rather than publish:
 
 ```bash
@@ -212,7 +240,10 @@ defaults are the ones that were tested.
 - [ ] Remote access via tailnet or an authenticating proxy, never raw
 - [ ] `PORTFOLIODB_MCP_TOKEN` is long and random (`make init` / `.\pdb.ps1 init`
       generates one)
-- [ ] `portfoliodb_ro` role created, so the MCP surface can't write
+- [ ] `portfoliodb_ro` role created, so the MCP surface can't write — and
+      re-run after upgrading (`make ro-role`)
+- [ ] `PORTFOLIODB_MCP_ALLOWED_HOSTS` lists every name other machines use to
+      reach the MCP server, and nothing else
 - [ ] `.env` is not world-readable (`chmod 600 .env`)
 - [ ] Backups exist and live somewhere other than this host
       (see [operations.md](operations.md))

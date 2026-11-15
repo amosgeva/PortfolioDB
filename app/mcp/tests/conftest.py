@@ -55,7 +55,7 @@ _settings._cache = {}
 _settings._cache_at = time.monotonic()
 _settings._db_ok = False
 
-TEST_TOKEN = "test-bearer-token-abcdef"
+TEST_TOKEN = "test-bearer-token-0123456789-abcdefghijklm"
 
 
 @pytest.fixture
@@ -66,13 +66,52 @@ def env_token(monkeypatch):
     return TEST_TOKEN
 
 
-class FakeCursor:
-    """Minimal psycopg2-cursor shim for tests."""
+def render_sql(query) -> str:
+    """The text of a str or psycopg2.sql composition, without a connection.
 
-    def __init__(self, rows: list[tuple], columns: list[str]):
+    psycopg2's own as_string() needs a live connection to quote identifiers;
+    the fake has none, so the composition is walked here.
+    """
+    from psycopg2 import sql as pgsql
+
+    if isinstance(query, str):
+        return query
+    if isinstance(query, pgsql.Composed):
+        return "".join(render_sql(part) for part in query.seq)
+    if isinstance(query, pgsql.SQL):
+        return query.string
+    if isinstance(query, pgsql.Identifier):
+        return ".".join('"' + s.replace('"', '""') + '"' for s in query.strings)
+    if isinstance(query, pgsql.Placeholder):
+        return "%s" if query.name is None else f"%({query.name})s"
+    return str(query)
+
+
+def _placeholder_count(text: str) -> int:
+    """Positional %s placeholders, ignoring the %% escape."""
+    return text.replace("%%", "").count("%s")
+
+
+class FakeCursor:
+    """Minimal psycopg2-cursor shim for tests.
+
+    It used to discard the statement and replay rows by position, so a test
+    could not tell a right query from a wrong one (audit T-3). It now:
+
+    * records every statement and its parameters in ``state["executed"]``;
+    * checks that the number of ``%s`` placeholders matches the parameters
+      passed, which is how a dropped or extra filter usually shows up;
+    * when a queued response carries a third element — a substring, or a
+      tuple of substrings — asserts the statement it answers contains them.
+    """
+
+    def __init__(self, rows: list[tuple], columns: list[str], state: dict | None = None,
+                 expect=None):
         self._rows = rows
         self._columns = columns
         self._iter = None
+        self._state = state
+        self._expect = expect
 
     def __enter__(self):
         return self
@@ -80,7 +119,18 @@ class FakeCursor:
     def __exit__(self, *_):
         return False
 
-    def execute(self, sql: str, params=None):
+    def execute(self, sql, params=None):
+        text = render_sql(sql)
+        if self._state is not None:
+            self._state.setdefault("executed", []).append((text, params))
+        if params is not None and not isinstance(params, dict):
+            assert _placeholder_count(text) == len(params), (
+                f"{_placeholder_count(text)} placeholders but {len(params)} parameters in:\n{text}"
+            )
+        if self._expect:
+            wanted = (self._expect,) if isinstance(self._expect, str) else self._expect
+            for fragment in wanted:
+                assert fragment in text, f"expected {fragment!r} in:\n{text}"
         self._iter = iter(self._rows)
 
     def fetchone(self):
@@ -113,11 +163,17 @@ class FakeConn:
         responses = self._state["responses"]
         idx = self._state["idx"]
         if idx >= len(responses):
-            cols, rows = responses[-1] if self._state["cycle"] and responses else ([], [])
+            entry = responses[-1] if self._state["cycle"] and responses else ([], [])
         else:
-            cols, rows = responses[idx]
+            entry = responses[idx]
             self._state["idx"] = idx + 1
-        return FakeCursor(rows, cols)
+        cols, rows = entry[0], entry[1]
+        expect = entry[2] if len(entry) > 2 else None
+        factory = __.get("cursor_factory") or (_[0] if _ else None)
+        if factory is not None and getattr(factory, "__name__", "") == "RealDictCursor":
+            # db.fetch_all asks for dict rows; give it what psycopg2 would.
+            rows = [dict(zip(cols, r)) for r in rows]
+        return FakeCursor(rows, cols, self._state, expect)
 
     def commit(self):
         pass
@@ -160,6 +216,7 @@ def fake_db(monkeypatch):
     from app.mcp.resources import reports as reports_resource
     from app.mcp.services import (
         activity as activity_service,
+        cash as cash_service,
         analytics as analytics_service,
         cutoff as cutoff_service,
         data_quality as data_quality_service,
@@ -179,13 +236,22 @@ def fake_db(monkeypatch):
     # Every module that holds its own `get_conn` reference — keep in sync with
     # `grep -rl 'import get_conn' app/mcp`, which the hygiene test enforces.
     for mod in (
-        deps, health_service, activity_service, analytics_service,
+        deps, health_service, activity_service, cash_service, analytics_service,
         cutoff_service, data_quality_service, fees_service,
         fundamentals_service, income_service, kpis_service, pnl_service,
         positions_service, prices_service, returns_service, review_service,
         reports_resource, meta_tools,
     ):
         monkeypatch.setattr(mod, "get_conn", fake_get_conn)
+
+    # The review reads inside deps.snapshot(), which borrows a real pooled
+    # connection. Under the fake it pins nothing: every get_conn() already
+    # answers from the same queue.
+    @contextmanager
+    def fake_snapshot():
+        yield FakeConn(state)
+
+    monkeypatch.setattr(deps, "snapshot", fake_snapshot)
     # No corporate actions unless a test says otherwise. Every reader now asks
     # for them on the connection it holds, and with a cycling fake response the
     # actions query would be answered with whatever rows the test queued for
@@ -204,7 +270,10 @@ def fake_db(monkeypatch):
         state["responses"] = responses
         state["cycle"] = cycle
         state["idx"] = 0
+        state["executed"] = []
 
+    # The statements run so far, for tests that assert on the SQL itself.
+    setter.executed = lambda: list(state.get("executed", []))
     return setter
 
 
@@ -227,6 +296,36 @@ def mcp_server(env_token, fake_db):
     schema_resource.register(mcp)
     conventions_resource.register(mcp)
     return mcp
+
+
+@pytest.fixture(autouse=True)
+def _snapshot_is_a_no_op_outside_live_tests(request, monkeypatch):
+    """Services that read in several steps run inside deps.snapshot(), which
+    borrows a real pooled connection. Unit tests have no database and stub the
+    reads underneath, so there the snapshot pins nothing. Live (slow) tests
+    keep the real one — they are what proves the isolation."""
+    if request.node.get_closest_marker("slow") is not None:
+        yield
+        return
+    from app.mcp import deps
+
+    @contextmanager
+    def no_op_snapshot():
+        yield None
+
+    monkeypatch.setattr(deps, "snapshot", no_op_snapshot)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_healthz_cache():
+    """/healthz caches its probe for a couple of seconds; tests that stub the
+    probe differently must not see each other's answer."""
+    from app.mcp import healthz
+
+    healthz.reset_cache()
+    yield
+    healthz.reset_cache()
 
 
 @pytest.fixture(autouse=True)
