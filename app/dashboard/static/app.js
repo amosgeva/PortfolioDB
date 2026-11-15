@@ -831,7 +831,175 @@
     } });
   }
 
+  // app/dashboard/static/nav.json
+  var nav_default = {
+    _about: "The dashboard's navigation and its glyphs, for both renderers: the custom front end (src/ui/nav.js, bundled into app.js by build.mjs) draws its rail and phone tab bar from this file, and the native pages (app/dashboard/nav.py, used by modern2_native.py and streamlit_app.py) draw theirs from it too. Edit here, run `npm run build`, and both halves change together. app/tests/test_nav_contract.py and tests/nav.test.mjs fail if either half stops following it.",
+    groups: [
+      { id: "workspace", label: "Workspace", renderer: "frame" },
+      { id: "account", label: "Account", renderer: "native" }
+    ],
+    views: [
+      {
+        id: "portfolio",
+        group: "workspace",
+        label: "Portfolio",
+        short: "Portfolio",
+        icon: "grid",
+        subtitle: "Real-time overview of your holdings"
+      },
+      {
+        id: "movers",
+        group: "workspace",
+        label: "Market Movers",
+        short: "Movers",
+        icon: "trend",
+        subtitle: "Biggest moves across your tracked symbols"
+      },
+      {
+        id: "stats",
+        group: "workspace",
+        label: "Statistics",
+        short: "Stats",
+        icon: "stats",
+        subtitle: "Best and worst periods, consistency and streaks"
+      },
+      {
+        id: "alerts",
+        group: "workspace",
+        label: "Alerts & News",
+        short: "Alerts",
+        icon: "bell",
+        badge: true,
+        subtitle: "Price alerts and market headlines"
+      },
+      {
+        id: "fundamentals",
+        group: "workspace",
+        label: "Fundamentals",
+        short: "Fund.",
+        icon: "book",
+        subtitle: "Company profile, financials, filings and ownership"
+      },
+      {
+        id: "history",
+        group: "workspace",
+        label: "History",
+        short: "History",
+        icon: "history",
+        subtitle: "Every recorded lot and snapshot run"
+      },
+      {
+        id: "manage",
+        group: "account",
+        label: "Manage",
+        short: "Manage",
+        icon: "sliders",
+        subtitle: "Record trades, cash, alerts and settings — writes straight to the ledger"
+      },
+      {
+        id: "advisor",
+        group: "account",
+        label: "Advisor",
+        short: "Advisor",
+        icon: "spark",
+        subtitle: "Your model, reading your own rules against your live ledger"
+      },
+      {
+        id: "health",
+        group: "account",
+        label: "Data Health",
+        short: "Health",
+        icon: "pulse",
+        subtitle: "Which numbers you can trust, and exactly why not when you cannot"
+      }
+    ],
+    tabbar: {
+      frame: ["portfolio", "movers", "alerts", "fundamentals", "history"],
+      native: ["portfolio", "movers", "manage", "advisor", "health"]
+    },
+    icons: {
+      logo: { stroke: "#fff", width: "2.4", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M3 17l5-6 4 3 5-7" },
+        { el: "path", d: "M17 7h3v3" }
+      ] },
+      grid: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "rect", x: "3", y: "3", width: "7", height: "9", rx: "1" },
+        { el: "rect", x: "14", y: "3", width: "7", height: "5", rx: "1" },
+        { el: "rect", x: "14", y: "12", width: "7", height: "9", rx: "1" },
+        { el: "rect", x: "3", y: "16", width: "7", height: "5", rx: "1" }
+      ] },
+      trend: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M3 17l6-6 4 4 8-8" },
+        { el: "path", d: "M17 7h4v4" }
+      ] },
+      stats: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M3 3v18h18" },
+        { el: "rect", x: "7", y: "12", width: "3", height: "6", rx: "1" },
+        { el: "rect", x: "12", y: "8", width: "3", height: "10", rx: "1" },
+        { el: "rect", x: "17", y: "4", width: "3", height: "14", rx: "1" }
+      ] },
+      bell: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" },
+        { el: "path", d: "M13.7 21a2 2 0 0 1-3.4 0" }
+      ] },
+      book: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20" },
+        { el: "path", d: "M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" }
+      ] },
+      history: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M3 3v5h5" },
+        { el: "path", d: "M3.05 13A9 9 0 1 0 6 5.3L3 8" },
+        { el: "path", d: "M12 7v5l4 2" }
+      ] },
+      sliders: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "line", x1: "4", y1: "21", x2: "4", y2: "14" },
+        { el: "line", x1: "4", y1: "10", x2: "4", y2: "3" },
+        { el: "line", x1: "12", y1: "21", x2: "12", y2: "12" },
+        { el: "line", x1: "12", y1: "8", x2: "12", y2: "3" },
+        { el: "line", x1: "20", y1: "21", x2: "20", y2: "16" },
+        { el: "line", x1: "20", y1: "12", x2: "20", y2: "3" },
+        { el: "line", x1: "1", y1: "14", x2: "7", y2: "14" },
+        { el: "line", x1: "9", y1: "8", x2: "15", y2: "8" },
+        { el: "line", x1: "17", y1: "16", x2: "23", y2: "16" }
+      ] },
+      spark: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15l-1.9-4.1L5.5 9l4.6-1.4z" },
+        { el: "path", d: "M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z" }
+      ] },
+      pulse: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M22 12h-4l-3 9L9 3l-3 9H2" }
+      ] },
+      menu: { stroke: "currentColor", width: "2", cap: "round", join: "miter", shapes: [
+        { el: "path", d: "M3 6h18M3 12h18M3 18h18" }
+      ] },
+      search: { stroke: "currentColor", width: "2", cap: "butt", join: "miter", shapes: [
+        { el: "circle", cx: "11", cy: "11", r: "7" },
+        { el: "path", d: "m21 21-4.3-4.3" }
+      ] },
+      refresh: { stroke: "currentColor", width: "2", cap: "round", join: "round", shapes: [
+        { el: "path", d: "M21 12a9 9 0 1 1-3-6.7L21 8" },
+        { el: "path", d: "M21 3v5h-5" }
+      ] }
+    }
+  };
+
   // app/dashboard/static/src/ui/icons.js
+  var SHAPES = {
+    path: (s) => html`<path d="${s.d}"/>`,
+    rect: (s) => html`<rect x="${s.x}" y="${s.y}" width="${s.width}" height="${s.height}" rx="${s.rx}"/>`,
+    circle: (s) => html`<circle cx="${s.cx}" cy="${s.cy}" r="${s.r}"/>`,
+    line: (s) => html`<line x1="${s.x1}" y1="${s.y1}" x2="${s.x2}" y2="${s.y2}"/>`
+  };
+  function icon(name) {
+    const i = item(nav_default.icons, name);
+    if (!i || typeof i !== "object") throw new Error("nav.json has no icon " + name);
+    const shapes = i.shapes.map((s) => {
+      const draw = item(SHAPES, s.el);
+      if (typeof draw !== "function") throw new Error("nav.json icon " + name + ": unknown shape " + s.el);
+      return draw(s);
+    });
+    return html`<svg viewBox="0 0 24 24" fill="none" stroke="${i.stroke}" stroke-width="${i.width}" stroke-linecap="${i.cap}" stroke-linejoin="${i.join}" aria-hidden="true">${shapes}</svg>`;
+  }
   var ARROW_UP = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M7 14l5-5 5 5"/></svg>`;
   var ARROW_DN = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
   var CLOCK = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;vertical-align:-1px;opacity:.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
@@ -843,7 +1011,8 @@
   var FEED = {
     up: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>`,
     down: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l6 6 4-4 8 8"/><path d="M17 17h4v-4"/></svg>`,
-    bell: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`,
+    // The rail's Alerts glyph: the same bell in both places.
+    bell: icon("bell"),
     news: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13v14H6a2 2 0 0 1-2-2zM17 8h3v9a2 2 0 0 1-2 2"/><path d="M8 9h6M8 13h6"/></svg>`
   };
 
@@ -1296,24 +1465,41 @@
   }
 
   // app/dashboard/static/src/ui/nav.js
-  var TITLES = {
-    portfolio: ["Portfolio", "Real-time overview of your holdings"],
-    movers: ["Market Movers", "Biggest moves across your tracked symbols"],
-    stats: ["Statistics", "Best and worst periods, consistency and streaks"],
-    alerts: ["Alerts & News", "Price alerts and market headlines"],
-    fundamentals: ["Fundamentals", "Company profile, financials, filings and ownership"],
-    history: ["History", "Every recorded lot and snapshot run"]
-  };
+  var RENDERER = new Map(nav_default.groups.map((g) => [g.id, g.renderer]));
+  var VIEWS = nav_default.views.map((v) => ({ ...v, native: RENDERER.get(v.group) === "native" }));
+  var TITLES = Object.fromEntries(VIEWS.filter((v) => !v.native).map((v) => [v.id, [v.label, v.subtitle]]));
+  var FIRST = VIEWS.find((v) => !v.native).id;
+  var BADGE = html` <span class="badge">0</span>`;
+  function railEntry(v) {
+    if (v.native) return html`<a data-nav="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}</a>`;
+    return html`<a data-view="${v.id}" role="link" tabindex="0">${icon(v.icon)} ${v.label}${v.badge ? BADGE : ""}</a>`;
+  }
+  function railGroup(g) {
+    const entries = VIEWS.filter((v) => v.group === g.id).map(railEntry);
+    return html`<div class="rail__sect" data-rail-group="${g.id}"><div class="rail__label">${g.label}</div><nav class="nav" aria-label="${g.label}">${entries}</nav></div>`;
+  }
+  function tab(v) {
+    return html`<button type="button" data-tab="${v.id}">${icon(v.icon)}<span>${v.short}</span></button>`;
+  }
+  function renderNav() {
+    const rail2 = $("[data-rail-nav]");
+    if (rail2) setHTML(rail2, html`${nav_default.groups.map(railGroup)}`);
+    const bar = $("[data-tabbar]");
+    if (bar) {
+      const byId = new Map(VIEWS.map((v) => [v.id, v]));
+      setHTML(bar, html`${nav_default.tabbar.frame.map((id) => tab(byId.get(id)))}`);
+    }
+  }
   var firstShow = /* @__PURE__ */ new Map();
   function onFirstShow(view, fn) {
     firstShow.set(view, fn);
   }
   function currentView() {
     const p = $(".view.is-active");
-    return p ? p.dataset.viewPane : "portfolio";
+    return p ? p.dataset.viewPane : FIRST;
   }
   function switchView(name, skipHistory) {
-    const view = item(TITLES, name) ? name : "portfolio";
+    const view = item(TITLES, name) ? name : FIRST;
     $all(".nav a[data-view]").forEach((a) => {
       const on = a.dataset.view === view;
       a.classList.toggle("is-active", on);
@@ -1345,16 +1531,23 @@
   function goNative(view) {
     nativeNav(view);
   }
+  function goTo(id) {
+    const v = VIEWS.find((x) => x.id === id);
+    if (v?.native) goNative(id);
+    else switchView(id);
+  }
   function initNav() {
+    renderNav();
+    switchView(FIRST, true);
     $all(".nav a[data-view]").forEach((a) => clickable(a, () => switchView(a.dataset.view)));
     $all(".nav a[data-nav]").forEach((a) => clickable(a, () => goNative(a.dataset.nav)));
     $all(".tabbar [data-tab]").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.tab)));
   }
   function restoreView() {
     const initial = session.take("pdb_refresh_view") || app.D.initialView;
-    if (initial && initial !== "portfolio" && item(TITLES, initial)) switchView(initial, true);
+    if (initial && initial !== FIRST && item(TITLES, initial)) switchView(initial, true);
     onParent("popstate", (ev) => {
-      const v = ev.state && ev.state.pdbView || parentQueryView() || "portfolio";
+      const v = ev.state?.pdbView || parentQueryView() || FIRST;
       if (item(TITLES, v)) switchView(v, true);
     });
   }
@@ -3244,16 +3437,9 @@
     }
   }
   function staticCommands(refreshBtn) {
-    const v = (label, view) => ({ sect: "Views", label, run: () => switchView(view) });
     return [
-      v("Portfolio", "portfolio"),
-      v("Market Movers", "movers"),
-      v("Statistics", "stats"),
-      v("Alerts & News", "alerts"),
-      v("Fundamentals", "fundamentals"),
-      v("History", "history"),
-      { sect: "Views", label: "Manage", run: () => goNative("manage") },
-      { sect: "Views", label: "Advisor", run: () => goNative("advisor") },
+      // Every rail entry, both halves, in rail order (nav.json).
+      ...VIEWS.map((v) => ({ sect: "Views", label: v.label, run: () => goTo(v.id) })),
       { sect: "Actions", label: "Refresh data", run: () => {
         if (refreshBtn) refreshBtn.click();
       } },

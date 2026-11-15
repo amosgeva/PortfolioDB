@@ -151,7 +151,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   # Gate: the front end's build reproduction, ESLint (whose rules make an
-  # unescaped innerHTML a failure) and jsdom tests (audit NEW-2). Before, the
+  # unescaped innerHTML a failure) and jsdom tests, and the browser integration
+  # against a real Streamlit and Postgres (audit NEW-2, U-9) — every job in
+  # frontend.yml, since `needs` waits for the whole called workflow. Before, the
   # bundle the image serves was checked on pull requests only, and nothing here
   # waited on it. Called, not copied, for the same reason as `test`; it inherits
   # this workflow's read-only token.

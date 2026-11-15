@@ -19,6 +19,9 @@ export function eslintrc() {
       { files: ['app/dashboard/static/src/core/dict.js'], rules: { 'no-restricted-syntax': ['error', ...DICT_JS_RULES] } },
       { files: ['app/dashboard/static/build.mjs', 'app/dashboard/static/tools/**/*.mjs', 'app/dashboard/static/tests/**/*.mjs', 'eslint.config.mjs'],
         env: { browser: false, node: true }, rules: { 'no-restricted-syntax': 'off' } },
+      // Playwright specs run in Node and hand callbacks to the browser.
+      { files: ['app/dashboard/static/e2e/**/*.mjs', 'playwright.config.mjs'],
+        env: { browser: true, node: true }, rules: { 'no-restricted-syntax': 'off' } },
     ],
   };
   return JSON.stringify(cfg, null, 2) + '\n';

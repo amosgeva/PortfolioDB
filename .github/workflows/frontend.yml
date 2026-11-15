@@ -4,15 +4,19 @@ name: Front end
 # must be the one its sources build, ESLint must pass with zero warnings (its
 # no-restricted-syntax rules are what make an unescaped innerHTML a build
 # failure), and the JavaScript must run - mount, every view, refresh, theme,
-# CSV export and a hostile-payload XSS walk - in jsdom.
-
+# CSV export and a hostile-payload XSS walk - in jsdom. A second job runs it in
+# Chromium, embedded by a real Streamlit server on a real Postgres.
 #
 # Also a gate (audit NEW-2): publish.yml calls this workflow and its publish job
-# needs it, so an image is never built for the registry from a tree whose front
-# end is red. On pull requests the check is reported under the job name below,
-# "Build check, lint, tests", which is a required status check on main; keep
-# that name exactly, or every PR waits on a check that never reports.
-# tools/tests/test_ci_workflows.py pins the name, the call and the dependency.
+# needs the call, which waits for EVERY job below - the jsdom checks and the
+# browser integration alike - so an image is never built for the registry from
+# a tree whose front end is red in either. Both jobs run unchanged when called
+# (a reusable workflow keeps its `services:`; neither job has an `if:`).
+# On pull requests the checks are reported under the two job names,
+# "Build check, lint, tests" and "Browser integration (Streamlit + Postgres)",
+# both required status checks on main; keep those names exactly, or every PR
+# waits on a check that never reports. tools/tests/test_ci_workflows.py pins
+# the names, the call and the dependency.
 
 on:
   push:
@@ -63,3 +67,97 @@ jobs:
 
       - name: Tests (jsdom)
         run: npm test
+
+  # The same front end in a real browser, embedded by a real Streamlit server
+  # on a real (demo-seeded) Postgres (audit U-9): iframe mount and remount,
+  # soft refresh, sizing and scroll, theme, rail/tab-bar navigation into the
+  # native pages and back inside one session, a draft and the unlock surviving
+  # the trip, and the write gate - at 360, 768 and 1440 px. It names any
+  # private Streamlit selector core/host.js depends on that has stopped
+  # matching, so a Streamlit upgrade that moves one fails here, not in use.
+  # app/dashboard/static/e2e/ and playwright.config.mjs.
+  browser:
+    name: Browser integration (Streamlit + Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        # The image docker-compose.yml runs (tools/tests/test_ci_workflows.py).
+        image: postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
+        env:
+          POSTGRES_DB: portfoliodb
+          POSTGRES_USER: portfoliouser
+          POSTGRES_PASSWORD: ci-not-a-secret
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U portfoliouser -d portfoliodb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PORTFOLIODB_HOST: 127.0.0.1
+      PORTFOLIODB_PORT: '5432'
+      PORTFOLIODB_DB: portfoliodb
+      PORTFOLIODB_USER: portfoliouser
+      PORTFOLIODB_PASSWORD: ci-not-a-secret
+      PORTFOLIODB_TZ: UTC
+      # playwright.config.mjs starts `$PDB_E2E_PYTHON -m streamlit run …` itself.
+      PDB_E2E_PYTHON: python
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # The image's Python and the locked set, as the test jobs in ci.yml.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: app/constraints.txt
+
+      - name: Install the locked dependency set
+        run: |
+          python -m pip install --only-binary :all: -c app/constraints.txt --upgrade pip
+          pip install --only-binary :all: -c app/constraints.txt -r app/requirements.txt
+
+      - name: Apply schema and migrations
+        run: python app/apply_schema.py
+
+      - name: Seed the fictional demo ledger
+        run: python app/demo_seed.py --yes
+
+      # Data Health reads through the MCP services, which use the read-only role.
+      - name: Create the read-only MCP role
+        run: |
+          python app/create_ro_role.py --generate > ro-role.out
+          grep -E '^PORTFOLIODB_MCP_RO_(USER|PASSWORD)=' ro-role.out >> "$GITHUB_ENV"
+          rm ro-role.out
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install (exact versions from package-lock.json)
+        run: npm ci --ignore-scripts
+
+      # The browser build that matches the locked @playwright/test, plus the
+      # system libraries it needs. The locked CLI from node_modules, not npx,
+      # which could fetch an unpinned package.
+      - name: Install Chromium for Playwright
+        run: ./node_modules/.bin/playwright install --with-deps chromium
+
+      - name: Browser integration tests (360, 768, 1440 px)
+        run: npm run e2e
+
+      - name: Keep the report and traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

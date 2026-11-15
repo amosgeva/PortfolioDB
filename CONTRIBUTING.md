@@ -133,6 +133,17 @@ the lint and the tests. Markup goes through the escaping `html` template in
 source patterns that contract lists; its exact rules and known limits are at the
 top of `core/html.js`.
 
+The rail, the phone tab bars, the page headings and the rail glyphs live in
+`app/dashboard/static/nav.json`, which both the front end and the native pages
+draw from; change them there, run `npm run build`, and both halves follow.
+
+`npm run e2e` drives the real thing in Chromium at three widths: it starts the
+Streamlit app on 127.0.0.1:18521 against the database in your `PORTFOLIODB_*`
+variables — the same throwaway one as above, demo-seeded, with the read-only
+role exported. Run `npx playwright install chromium` once first, and set
+`PDB_E2E_PYTHON` if the Python with the app's requirements is not `python`. CI
+runs it as *Browser integration (Streamlit + Postgres)*.
+
 ## What the code expects of you
 
 - **Money is `Decimal`** end to end inside the engines. Convert to `float` only
@@ -222,11 +233,14 @@ one concern per PR where you can. CI runs both suites on Linux; a green run and
 a description of how you verified the change by hand is plenty.
 
 `main` is protected. A pull request merges only when it is up to date with
-`main` and these seven checks pass: `Test suites (no database)`, `Lint (ruff)`,
+`main` and these eight checks pass: `Test suites (no database)`, `Lint (ruff)`,
 `Test suites (live database)`, `Application image (build and self-test)`,
 `Windows runner (init, both PowerShell hosts)`, `Windows runner
-(backup/restore round trip)` and the front end's `Build check, lint, tests`. When `main` moves under your branch, merge it in
-rather than force-pushing.
+(backup/restore round trip)`, and the front end's `Build check, lint, tests`
+and `Browser integration (Streamlit + Postgres)`. The publish workflow calls
+the same CI and front-end workflows and waits for all of their jobs before it
+builds an image. When `main` moves under your branch, merge it in rather than
+force-pushing.
 
 ### Merging without publishing: `[skip publish]`
 

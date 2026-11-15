@@ -98,6 +98,35 @@ def test_ci_postgres_is_the_image_compose_runs():
     )
 
 
+# ── U-9: the dashboard is tested in a real browser against the real stack ────
+
+
+def test_browser_job_runs_the_embedding_against_a_real_server_and_database():
+    job = _workflows()["frontend.yml"]["jobs"]["browser"]
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    assert job["services"]["postgres"]["image"] == compose["services"]["postgres"]["image"], (
+        "the browser job tests a different Postgres than docker-compose.yml runs"
+    )
+    pythons = [s["with"]["python-version"] for s in _steps(job) if "setup-python" in str(s.get("uses", ""))]
+    assert pythons == [_image_python()], f"browser job runs Python {pythons}, the image runs {_image_python()}"
+    run = _run_text(job)
+    installs = [line for line in run.splitlines() if "pip install" in line and "requirements.txt" in line]
+    assert installs, "browser job installs no requirements"
+    for line in installs:
+        assert "-c app/constraints.txt" in line, f"browser job installs without the lock: {line.strip()}"
+        assert "--only-binary :all:" in line, f"browser job allows sdists: {line.strip()}"
+    order = ["app/apply_schema.py", "app/demo_seed.py --yes", "npm ci", "playwright install --with-deps chromium", "npm run e2e"]
+    positions = [run.find(s) for s in order]
+    assert -1 not in positions, f"browser job is missing a step: {dict(zip(order, positions))}"
+    assert positions == sorted(positions), f"browser job steps out of order: {order}"
+    assert "npx " not in run, "use the locked node_modules/.bin CLI; npx can fetch an unpinned package"
+    assert job.get("permissions") is None, "the browser job needs no permissions beyond the workflow's contents: read"
+    config = (ROOT / "playwright.config.mjs").read_text(encoding="utf-8")
+    for width in ("360", "768", "1440"):
+        assert f"width: {width}" in config, f"playwright.config.mjs no longer tests {width}px"
+    assert "retries: 0" in config, "a flaky embedding must fail, not be retried into green"
+
+
 def test_lint_job_runs_the_in_repo_ruff_config():
     job = _workflows()["ci.yml"]["jobs"]["lint"]
     assert "ruff check --config tools/ruff.toml" in _run_text(job)
@@ -254,18 +283,21 @@ def test_dependabot_proposes_weekly_frontend_toolchain_updates_grouped():
 
 # ── NEW-2: the front-end gate is required on PRs and gates publication ───────
 
-# Required on main as a status check: renaming the job silently leaves every PR
-# waiting for a check that never reports.
+# Both are required on main as status checks: renaming a job silently leaves
+# every PR waiting for a check that never reports.
 FRONTEND_CHECK = "Build check, lint, tests"
+BROWSER_CHECK = "Browser integration (Streamlit + Postgres)"
 FRONTEND_WORKFLOW = "./.github/workflows/frontend.yml"
 CI_WORKFLOW = "./.github/workflows/ci.yml"
 
 
-def test_frontend_check_keeps_its_required_name_on_pull_requests():
+def test_frontend_checks_keep_their_required_names_on_pull_requests():
     doc = _workflows()["frontend.yml"]
-    assert "pull_request" in doc["on"], "the front-end check must report on every pull request"
-    names = [job.get("name") for job in doc["jobs"].values()]
-    assert names == [FRONTEND_CHECK], f"frontend.yml jobs are named {names}; branch protection requires {FRONTEND_CHECK!r}"
+    assert "pull_request" in doc["on"], "the front-end checks must report on every pull request"
+    names = {job_id: job.get("name") for job_id, job in doc["jobs"].items()}
+    assert names == {"frontend": FRONTEND_CHECK, "browser": BROWSER_CHECK}, (
+        f"frontend.yml jobs are named {names}; branch protection requires {FRONTEND_CHECK!r} and {BROWSER_CHECK!r}"
+    )
 
 
 def test_frontend_workflow_is_reusable_and_read_only():
@@ -275,9 +307,22 @@ def test_frontend_workflow_is_reusable_and_read_only():
     for job_id, job in doc["jobs"].items():
         assert not job.get("permissions"), f"frontend.yml:{job_id} widens the token"
         assert not job.get("continue-on-error"), f"frontend.yml:{job_id} cannot fail"
-    run = _run_text(next(iter(doc["jobs"].values())))
+    run = _run_text(doc["jobs"]["frontend"])
     for step in ("npm ci", "npm run build:check", "npm run lint", "npm test"):
         assert step in run, f"the front-end gate no longer runs `{step}`"
+
+
+def test_publishing_waits_for_the_browser_integration_too():
+    """publish.yml's `needs: frontend` waits for the whole called workflow, so
+    every job in frontend.yml is part of the publish gate - as long as none is
+    skipped when called. A job with an `if:` (on github.event_name, say) would
+    report "skipped", which `needs` treats as passed."""
+    jobs = _workflows()["frontend.yml"]["jobs"]
+    assert {"frontend", "browser"} <= set(jobs)
+    for job_id, job in jobs.items():
+        assert "if" not in job, f"frontend.yml:{job_id} could be skipped when publish.yml calls it"
+    assert "run: npm run e2e" in "\n".join(f"run: {s.get('run', '')}" for s in jobs["browser"]["steps"])
+    assert jobs["browser"].get("services", {}).get("postgres"), "the browser gate needs its Postgres when called"
 
 
 @pytest.mark.parametrize("name", ["ci.yml", "frontend.yml"])
@@ -421,10 +466,11 @@ def test_the_image_carries_the_built_front_end_not_its_sources():
     """streamlit_app.py and modern2_native.py read only the committed outputs."""
     lines = {l.strip() for l in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()}
     for excluded in ("node_modules/", "app/dashboard/static/src/", "app/dashboard/static/tests/",
-                     "app/dashboard/static/tools/", "app/dashboard/static/build.mjs"):
+                     "app/dashboard/static/e2e/", "app/dashboard/static/tools/",
+                     "app/dashboard/static/build.mjs"):
         assert excluded in lines, f".dockerignore no longer excludes {excluded}"
     served = ROOT / "app" / "dashboard" / "static"
-    for needed in ("app.js", "app.css", "shell.html", "skeleton.html", "tokens.css", "fonts"):
+    for needed in ("app.js", "app.css", "shell.html", "skeleton.html", "tokens.css", "nav.json", "fonts"):
         assert (served / needed).exists()
         assert not any(l.rstrip("/") in (f"app/dashboard/static/{needed}", "app/dashboard/static") for l in lines), (
             f".dockerignore drops {needed}, which the dashboard serves"

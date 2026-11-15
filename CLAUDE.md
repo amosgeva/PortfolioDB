@@ -101,7 +101,7 @@ is installed (`tools/ruff.toml`, the rule set CI's `Lint (ruff)` job runs:
 `ruff check --config tools/ruff.toml .`), and both test suites.
 `git commit --no-verify` bypasses it for work in progress.
 
-`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the seven required checks: both test-suite jobs, `Lint (ruff)`, the image build, both Windows runner jobs and the front end's `Build check, lint, tests`. When `main` moves, merge it in rather than force-pushing.
+`main` is branch-protected. A pull request merges once it is up to date with `main` and passes the eight required checks: `Test suites (no database)`, `Test suites (live database)`, `Lint (ruff)`, `Application image (build and self-test)`, `Windows runner (init, both PowerShell hosts)`, `Windows runner (backup/restore round trip)`, and the front end's `Build check, lint, tests` and `Browser integration (Streamlit + Postgres)`. Publishing waits on the same CI and front-end workflows. When `main` moves, merge it in rather than force-pushing.
 
 Every push to `main` publishes the image as `latest`. **Exception:** `[skip publish]` in the merge commit's message skips publishing that push; a version tag publishes regardless.
 
