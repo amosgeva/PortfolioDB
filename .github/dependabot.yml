@@ -1,14 +1,23 @@
-# The Dockerfile pins its base image by digest and every third-party action is
-# pinned to a commit SHA, so nothing moves on its own. That is the point, and
-# it has a cost: nothing moves on its own. Dependabot is what proposes the
-# moves — a pull request per bump, run through the same CI as any change, so a
-# base-image update is a reviewed diff rather than a silent rebuild.
+# The Dockerfile pins its base image by digest, docker-compose.yml pins Postgres
+# and pgAdmin by digest, and every third-party action is pinned to a commit SHA,
+# so nothing moves on its own. That is the point, and it has a cost: nothing
+# moves on its own. Dependabot is what proposes the moves — a pull request per
+# bump, run through the same CI as any change, so an image update is a reviewed
+# diff rather than a silent rebuild.
 #
-# Python packages are deliberately NOT here. The resolution lives in
-# app/constraints.txt, generated inside the image (`make lock`); a bot editing
-# pins from a different interpreter and platform would produce a lock the image
-# does not agree with, and CI would reject it. The weekly scan
-# (security-scan.yml) is what says when the lock needs refreshing.
+# Python packages are deliberately NOT a version-update ecosystem here. The
+# resolution lives in app/constraints.txt (and its hashed twin,
+# app/requirements.lock), generated inside the image (`make lock`); a bot
+# editing pins from a different interpreter and platform would produce a lock
+# the image does not agree with, and CI would reject it. What watches them
+# instead:
+#   * security-scan.yml runs pip-audit against the exact lock every Monday and
+#     on every pull request that touches it, and a scheduled failure opens a
+#     tracking issue;
+#   * Dependabot *alerts* (repository Settings → Security, enabled by the
+#     owner) read the same files through GitHub's dependency graph and raise
+#     an alert on a new advisory without opening a pull request. An alert is
+#     acted on with `make lock`, never by merging a bot's edit to the lock.
 version: 2
 updates:
   - package-ecosystem: docker
@@ -17,6 +26,31 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(image)"
+    # Digest refreshes and patch releases only. A new Python minor (3.14 →
+    # 3.15) is a migration — every pin needs a wheel for it, and PyYAML had
+    # none when Dependabot proposed 3.15 in #116 — so it is done by hand, in a
+    # release that says so, never as a weekly bump that cannot build.
+    ignore:
+      - dependency-name: python
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+
+  # postgres and pgAdmin in docker-compose.yml, tag@digest.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(compose)"
+    ignore:
+      # A new Postgres major cannot be pulled over an old data directory; it
+      # needs pg_upgrade or a dump and restore, which is a release note and a
+      # procedure, not a bump. 16.x minors and digest refreshes still come.
+      - dependency-name: postgres
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

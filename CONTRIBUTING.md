@@ -9,15 +9,23 @@ broker sync, manual cash entry).
 ## Getting a dev environment
 
 ```bash
-cp .env.template .env          # fill in a Postgres password
+make init                      # .env with generated secrets
 make up                        # postgres + dashboard + scheduler
 make schema
 make demo-seed                 # fictional data — never use your real ledger to develop
-make test
+make test                      # builds the image from your working tree, runs the fast suites in it
 ```
 
 `make` on its own lists every target. `make shell` drops you into the app
-container.
+container. `make up` runs the *published* image; to run the stack from your
+checkout instead, `make build` then `make dev-up` (the `docker-compose.dev.yml`
+overlay).
+
+`make test` tests what is in your working tree: it builds the image from it
+first (cached, so only changed layers rebuild) and runs the suites in that
+build. It runs them with a blank database password, so it never touches the
+stack's database even when one is running — the database-backed tests run in
+CI, and below.
 
 **On Windows:** the Makefile assumes a POSIX shell — its recipes use `sed`,
 `base64`, `gzip` and `/dev/urandom` — so a `make.exe` alone will not run it.
@@ -34,8 +42,17 @@ Enable the pre-commit hook once per clone (hooks aren't cloned):
 git config core.hooksPath .githooks
 ```
 
-It rejects unused imports in staged Python files and runs both suites.
-`git commit --no-verify` bypasses it for work in progress.
+It rejects unused imports in staged Python files, runs ruff on them when ruff is
+installed, and runs the suites. `git commit --no-verify` bypasses it for work in
+progress.
+
+For a host-Python setup that matches CI, install the image's exact package set
+plus the pinned test tools, on Python 3.14 (the image's):
+
+```bash
+pip install --only-binary :all: -c app/constraints.txt -r app/requirements.txt -r tools/requirements-ci.txt
+ruff check --config tools/ruff.toml .     # the same lint CI's `Lint (ruff)` job runs
+```
 
 ## Tests
 
@@ -58,15 +75,33 @@ database (~30s). Run them separately, not in the same process as the fast suite:
 pytest app/mcp/tests/ -m slow
 ```
 
-Three more modules talk SQL to a real database without a marker:
-`app/tests/test_dedupe_guards.py`, `app/tests/test_fd_store.py` and
-`app/mcp/tests/test_data_quality_sql.py`. Locally they skip when no database is
-configured. CI runs them against its disposable PostgreSQL with
-`PORTFOLIODB_TESTS_REQUIRE_DB=1`, which turns that skip into a failure — the
-same working-directory rule as the suites they live in applies. Their payloads
-are the committed fixtures under `app/tests/fixtures/fd/`.
+Other tests talk SQL to a real database without a marker — the SQL integration
+modules, the Streamlit AppTest — and skip when no database is configured. CI's
+`Test suites (live database)` job runs the **whole** app suite and the whole MCP
+fast suite against a disposable PostgreSQL with `PORTFOLIODB_TESTS_REQUIRE_DB=1`,
+which turns any such skip into a failure, so a database-backed test you add
+anywhere runs there without being listed. It also measures coverage and prints
+the report (shown, not gated).
 
-Or just `make test`, which runs the fast suites inside the container.
+To do the same locally, against a throwaway database — never your real one;
+these tests write and delete sentinel rows:
+
+```bash
+docker run -d --rm --name pdb-test -e POSTGRES_DB=portfoliodb -e POSTGRES_USER=portfoliouser \
+  -e POSTGRES_PASSWORD=test -p 55432:5432 postgres:16
+export PORTFOLIODB_HOST=127.0.0.1 PORTFOLIODB_PORT=55432 PORTFOLIODB_PASSWORD=test PORTFOLIODB_TZ=UTC
+for f in sql/schema.sql sql/schema_fd.sql sql/migrations/*.sql; do
+  docker exec -i pdb-test psql -q -U portfoliouser -d portfoliodb < "$f"; done
+python app/demo_seed.py --yes
+python app/create_ro_role.py --generate     # export the two lines it prints
+pytest app/mcp/tests/ -m slow
+(cd app && PORTFOLIODB_TESTS_REQUIRE_DB=1 pytest tests/)
+PORTFOLIODB_TESTS_REQUIRE_DB=1 pytest app/mcp/tests/ -m "not slow"
+docker stop pdb-test
+```
+
+Or just `make test`, which runs the fast suites in an image built from your
+working tree.
 
 ## What the code expects of you
 
@@ -134,6 +169,30 @@ because they could be.
 Explain *why* in the message, not just what — the diff already says what. Keep
 one concern per PR where you can. CI runs both suites on Linux; a green run and
 a description of how you verified the change by hand is plenty.
+
+### Merging without publishing: `[skip publish]`
+
+Every push to `main` publishes the image as `latest` (`publish.yml`). When a
+release is assembled from several pull requests and `latest` should not move
+until the last one lands, put **`[skip publish]`** anywhere in the merge
+commit's message — for a squash merge, in the title or the body you merge with.
+That push then runs CI as usual and publishes nothing.
+
+A version tag always publishes, whatever its commit message says, so the
+release that ends such a series ships even if its last merge carried the
+marker. The weekly rebuild is not affected either: it rebuilds the commit
+`latest` already points at, not `main`'s head, so it never ships a skipped
+merge.
+
+### Dependency and image changes
+
+- A Python dependency changes in `app/requirements.txt`, then `make lock`
+  regenerates `app/constraints.txt` and the hashed `app/requirements.lock`
+  together, and proves the image installs from them. Commit all three.
+- The base image, Postgres and pgAdmin move by Dependabot pull request. When one
+  bumps Postgres in `docker-compose.yml`, update the `postgres` service image in
+  `.github/workflows/ci.yml` in the same pull request — a test fails until the
+  two match, so CI tests the database an install gets.
 
 ### One note on this repository's history
 
