@@ -24,10 +24,6 @@ import holdings as holdings_module
 # Windows accepted by get_price_change / get_top_movers.
 VALID_WINDOWS = ("1d", "1w", "1m", "3m", "6m", "ytd", "1y", "all")
 
-# The parity contract's lot query in its processing order: two constant
-# psycopg2.sql fragments, no caller input.
-_VALUE_LOTS_SQL = ledger_inputs.LOTS_SQL + ledger_inputs.LOTS_ORDER
-
 # How historical series value the portfolio.
 HOLDINGS_BASES = ("historical", "current_constant")
 
@@ -531,16 +527,17 @@ def _value_lots(
 ) -> list[dict[str, Any]]:
     """Lot rows for holdings reconstruction, restated into post-split units.
 
-    The parity contract's own query (ledger_inputs.LOTS_SQL), so each row
-    carries ``id`` and ``account``: the holdings walk matches per (symbol,
+    Read through the parity contract itself (``ledger_inputs.load``), so each
+    row carries ``id`` and ``account``: the holdings walk matches per (symbol,
     account) and truncates an oversell within its own account, as the engines
     do, instead of netting one account's sale against another's purchase.
+
+    ``load`` restates with every action in effect — the same set the callers
+    fetched as ``actions`` to restate their prices with — so the two stay in
+    one set of units. ``actions`` is kept for the callers' signature.
     """
-    with conn.cursor() as cur:
-        cur.execute(_VALUE_LOTS_SQL)
-        cols = [d[0] for d in cur.description]
-        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-    adjusted = ledger_inputs.prepare(rows, actions).lots
+    del actions  # load() fetches the identical set on this connection
+    adjusted = ledger_inputs.load(conn).lots
     for r in adjusted:
         r["quantity"] = float(r["quantity"])
     return adjusted
