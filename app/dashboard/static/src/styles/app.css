@@ -466,7 +466,7 @@ td.flash-down{animation:flashDown 1.2s ease-out}
   .foldable:not(.is-open) > *:not(.card__hd){display:none}
   /* The chip rows carry inline display:flex, which outranks a class selector,
      so hiding them is the second and last place !important is earned here. */
-  .foldable:not(.is-open) .card__hd > *:not(h2):not(.fold-btn){display:none !important}
+  .foldable:not(.is-open) .card__hd > *:not(h2, .fold-btn){display:none !important}
   .foldable .card__hd{cursor:pointer}
 }
 .fold-btn{margin-left:auto;flex:0 0 auto;width:34px;height:34px;display:none;place-items:center;
