@@ -159,10 +159,21 @@ class TestPrepare:
 
 
 class TestFetchActionsFailureModes:
+    """The SELECT fails; what happens to the caller's transaction.
+
+    Until 1.8.0 both paths called ``conn.rollback()``, which discarded
+    everything the caller had written in the same transaction — inside an
+    atomic CSV import, the rows already inserted — and the import then reported
+    success (audit E-3). Now only a savepoint around the query is undone.
+    """
+
     class _Conn:
+        autocommit = False
+
         def __init__(self, exc):
             self.exc = exc
             self.rolled_back = False
+            self.executed: list[str] = []
 
         def cursor(self):
             conn = self
@@ -174,8 +185,10 @@ class TestFetchActionsFailureModes:
                 def __exit__(s, *a):
                     return False
 
-                def execute(s, *a, **k):
-                    raise conn.exc
+                def execute(s, sql, *a, **k):
+                    conn.executed.append(" ".join(sql.split()))
+                    if sql.lstrip().upper().startswith("SELECT"):
+                        raise conn.exc
 
             return Cur()
 
@@ -186,14 +199,24 @@ class TestFetchActionsFailureModes:
         from psycopg2 import errors
         conn = self._Conn(errors.UndefinedTable("relation does not exist"))
         assert corporate_actions.fetch_actions(conn) == []
-        assert conn.rolled_back
+        assert not conn.rolled_back, "the caller's transaction must survive"
+        assert conn.executed[0] == "SAVEPOINT pdb_fetch_actions"
+        assert conn.executed[-1] == "ROLLBACK TO SAVEPOINT pdb_fetch_actions"
 
     def test_any_other_failure_propagates(self):
         from psycopg2 import errors
         conn = self._Conn(errors.QueryCanceled("canceling statement due to lock timeout"))
         with pytest.raises(errors.QueryCanceled):
             corporate_actions.fetch_actions(conn)
-        assert conn.rolled_back
+        assert not conn.rolled_back
+        assert conn.executed[-1] == "ROLLBACK TO SAVEPOINT pdb_fetch_actions"
+
+    def test_autocommit_connection_needs_no_savepoint(self):
+        from psycopg2 import errors
+        conn = self._Conn(errors.UndefinedTable("relation does not exist"))
+        conn.autocommit = True
+        assert corporate_actions.fetch_actions(conn) == []
+        assert not any("SAVEPOINT" in q for q in conn.executed)
 
 
 # ── the surfaces ──────────────────────────────────────────────────
@@ -582,13 +605,13 @@ def test_no_reader_queries_lots_behind_the_loaders_back():
         "mcp/services/cutoff.py", "mcp/services/review.py", "mcp/services/kpis.py",
         "mcp/services/analytics.py", "mcp/services/prices.py", "mcp/services/income.py",
         "mcp/resources/summary.py", "mcp/resources/reports.py",
-        "add_lot.py", "sell_lot.py", "import_csv_history.py", "demo_seed.py",   # writers / dedupe checks
-        "snapshot_prices.py",            # which symbols to collect, not a valuation
-        "check_splits.py", "apply_schema.py", "modern2_native.py", "streamlit_app.py",
-        "data_quality.py", "market_overview.py", "fd_weekly_enrichment.py",
-        # Symbol universes (is the net quantity positive?), not valuations — a
-        # split never changes the sign of a position.
-        "enrich_instruments.py", "fetch_ticker_logos.py",
+        "demo_seed.py",                  # writer
+        "snapshot_prices.py",            # MIN(trade_date): the earliest date a split can matter
+        "modern2_native.py", "streamlit_app.py",
+        "data_quality.py", "market_overview.py",
+        # Symbol universes now come from lot_open_quantities() or
+        # ledger_inputs.open_symbols() (audit R-1); what is left in these is
+        # not a net quantity.
         "mcp/services/fundamentals.py", "mcp/tools/meta_tools.py",
         # Uses the loader for its positions and FIFO replay; the raw query left
         # is trades_between, a listing of what was entered in the week.

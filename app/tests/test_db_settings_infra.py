@@ -322,30 +322,8 @@ def test_a6_schema_applier_connects_with_a_timeout(monkeypatch):
     import apply_schema
 
     seen = {}
-
-    class _Cur:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *e):
-            return False
-
-        def execute(self, sql):
-            pass
-
-    class _Conn:
-        autocommit = False
-
-        def cursor(self):
-            return _Cur()
-
-        def close(self):
-            pass
-
-    one = apply_schema.SQL_DIR / "schema.sql"
     monkeypatch.setattr(apply_schema, "load_config", lambda: db.DbConfig("h", 1, "d", "u", "p"))
-    monkeypatch.setattr(apply_schema, "sql_files", lambda: [one])
-    monkeypatch.setattr(apply_schema.psycopg2, "connect", lambda **kw: seen.update(kw) or _Conn())
-    monkeypatch.setattr(sys, "argv", ["apply_schema.py"])
-    assert apply_schema.main() == 0
+    monkeypatch.setattr(apply_schema.psycopg2, "connect", lambda **kw: seen.update(kw) or object())
+    apply_schema._connect()
     assert seen["connect_timeout"] >= 2
+    assert seen["host"] == "h" and seen["dbname"] == "d"

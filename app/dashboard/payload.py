@@ -732,7 +732,10 @@ def _returns_and_stats(lot_rows, income_rows, price_by_day, today_jer,
     twr_lots = [
         {"symbol": r["symbol"], "side": r["side"], "trade_date": r["trade_date"],
          "quantity": float(r["quantity"]), "price": float(r["price"]),
-         "fees": float(r["fees"] or 0)}
+         "fees": float(r["fees"] or 0),
+         # The holdings walk matches per (symbol, account) in processing
+         # order, as the engines do (audit R-1, F-1).
+         "id": r.get("id"), "account": r.get("account")}
         for r in lot_rows
     ]
     twr_divs = [

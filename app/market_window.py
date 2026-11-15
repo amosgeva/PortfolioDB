@@ -99,16 +99,21 @@ def is_open(now: datetime | None = None) -> bool:
         now = now.astimezone(tz)
 
     start, end, week = window()
-    if now.weekday() not in week:
-        return False
-
     minutes = now.hour * 60 + now.minute
     lo = start.hour * 60 + start.minute
     hi = end.hour * 60 + end.minute
     if lo <= hi:
-        return lo <= minutes <= hi
-    # Wrapped window (e.g. 22:00–04:00): open at either end of midnight.
-    return minutes >= lo or minutes <= hi
+        return now.weekday() in week and lo <= minutes <= hi
+    # Wrapped window (e.g. 22:30–05:00): a session belongs to the day it
+    # STARTS on. The after-midnight tail of Friday's session is Saturday
+    # 00:00–05:00 and must be collected; Monday 00:00–05:00 is Sunday's
+    # session and must not. Checking the weekday of the clock before the wrap
+    # logic got both wrong (audit F-10).
+    if minutes >= lo:
+        return now.weekday() in week
+    if minutes <= hi:
+        return (now - timedelta(days=1)).weekday() in week
+    return False
 
 
 # A missed tick or two is jitter, not an outage: the collector ticks every five
@@ -142,22 +147,25 @@ def open_minutes_between(start: datetime, end: datetime) -> int:
     start_t, end_t, week = window()
     lo = start_t.hour * 60 + start_t.minute
     hi = end_t.hour * 60 + end_t.minute
-    # A window that wraps past midnight is two spans on each calendar day.
-    spans = [(lo, hi)] if lo <= hi else [(0, hi), (lo, 24 * 60)]
+    # One session per weekday in the week, starting that day at `lo`. A window
+    # that wraps past midnight ends the NEXT calendar day at `hi`, so Friday's
+    # session owns Saturday's early hours and Sunday's owns Monday's — the same
+    # rule is_open() applies (audit F-10).
+    length = (hi - lo) if lo <= hi else (24 * 60 - lo + hi)
 
     total = 0.0
-    day = a.date()
+    # Start a day early: yesterday's wrapped session can reach into `a`'s day.
+    day = a.date() - timedelta(days=1)
     last = b.date()
     while day <= last:
         if day.weekday() in week:
             midnight = datetime.combine(day, time(0, 0)).replace(tzinfo=tz)
-            for lo_m, hi_m in spans:
-                s_dt = midnight + timedelta(minutes=lo_m)
-                e_dt = midnight + timedelta(minutes=hi_m)
-                overlap_lo = max(s_dt, a)
-                overlap_hi = min(e_dt, b)
-                if overlap_hi > overlap_lo:
-                    total += (overlap_hi - overlap_lo).total_seconds() / 60.0
+            s_dt = midnight + timedelta(minutes=lo)
+            e_dt = s_dt + timedelta(minutes=length)
+            overlap_lo = max(s_dt, a)
+            overlap_hi = min(e_dt, b)
+            if overlap_hi > overlap_lo:
+                total += (overlap_hi - overlap_lo).total_seconds() / 60.0
         day += timedelta(days=1)
     return int(round(total))
 

@@ -45,6 +45,7 @@ from app.mcp.services.cutoff import Cutoff, tz_name
 import corporate_actions
 import ledger_inputs
 from fifo import Lot as FifoLot, run_fifo
+from ledger_core import lot_order_key, processing_key
 
 # Worst-wins ordering. `inconsistent` outranks `unavailable` because
 # contradictory data yields a confidently wrong number, while missing data at
@@ -461,11 +462,11 @@ def _targeted_symbols(cutoff: Cutoff) -> set[str]:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                -- lot_open_quantities(as_of): the engines' net quantity in
+                -- SQL (sql/schema.sql; audit R-1).
                 WITH pos AS (
-                  SELECT symbol,
-                         SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) AS qty
-                  FROM lots
-                  WHERE trade_date <= %s
+                  SELECT symbol, SUM(quantity) AS qty
+                  FROM lot_open_quantities(%s)
                   GROUP BY symbol
                 )
                 SELECT i.symbol
@@ -588,14 +589,19 @@ def _orphan_sells(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
         matched: dict[int, Decimal] = defaultdict(Decimal)
         for m in result.matches:
             matched[m.sell_lot_id] += m.qty
-        for lot in sorted(stream, key=lambda l: (l.trade_date, l.id)):
+        # The engines' own processing order (ledger_core.lot_order_key: by
+        # date, BUY before SELL within a day, then id), so "first" means the
+        # first sell the engine itself could not match.
+        for lot in sorted(stream, key=lot_order_key):
             if lot.side.upper() != "SELL":
                 continue
             shortfall = lot.quantity - matched.get(lot.id, Decimal("0"))
             if shortfall <= tolerance:
                 continue
             prior = found.get(sym)
-            if prior is None or (lot.trade_date, lot.id) < (prior["trade_date"], prior["lot_id"]):
+            if prior is None or lot_order_key(lot) < processing_key(
+                prior["trade_date"], "SELL", prior["lot_id"]
+            ):
                 found[sym] = {
                     "account": acct,
                     "trade_date": lot.trade_date,
@@ -747,14 +753,11 @@ def _foreign_currency(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
 def _recorded_actions(conn) -> list:
     """Every recorded corporate action, pending review or not.
 
-    corporate_actions.fetch_actions returns only the actions in effect; from
-    1.8.0 a collector-recorded split adjusts nothing until a person reviews it,
-    so the full register comes from fetch_recorded_actions. On a build without
-    that split (pre-1.8.0 ledger core) every recorded action is in effect, and
-    fetch_actions is the register.
+    corporate_actions.fetch_actions returns only the actions in effect; a
+    collector-recorded split adjusts nothing until a person reviews it, so the
+    full register comes from fetch_recorded_actions.
     """
-    fetch = getattr(corporate_actions, "fetch_recorded_actions", None) or corporate_actions.fetch_actions
-    return list(fetch(conn))
+    return list(corporate_actions.fetch_recorded_actions(conn))
 
 
 def _pending_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:

@@ -95,6 +95,31 @@ class TestIsOpen:
         assert market_window.is_open(datetime(2026, 8, 12, 2, 0, tzinfo=JER)) is True
         assert market_window.is_open(datetime(2026, 8, 12, 12, 0, tzinfo=JER)) is False
 
+    def test_a_wrapped_session_belongs_to_the_day_it_starts(self, configure):
+        """Audit F-10. A 22:30–05:00 Mon–Fri window (a Tokyo operator watching
+        US hours): Saturday 00:00–05:00 is the tail of FRIDAY's session and
+        must be collected; Monday 00:00–05:00 is Sunday's and must not. The
+        weekday used to be tested on the clock before the wrap, so both were
+        backwards (QA: Saturday 01:00 False, Monday 01:00 True)."""
+        configure(market_window_start="22:30", market_window_end="05:00", market_week="1-5")
+        assert market_window.is_open(datetime(2026, 11, 14, 1, 0, tzinfo=JER)) is True    # Sat
+        assert market_window.is_open(datetime(2026, 11, 16, 1, 0, tzinfo=JER)) is False   # Mon
+        assert market_window.is_open(datetime(2026, 11, 16, 23, 0, tzinfo=JER)) is True   # Mon evening
+        assert market_window.is_open(datetime(2026, 11, 14, 23, 0, tzinfo=JER)) is False  # Sat evening
+        assert market_window.is_open(datetime(2026, 11, 17, 3, 0, tzinfo=JER)) is True    # Tue (Mon's)
+        assert market_window.is_open(datetime(2026, 11, 13, 12, 0, tzinfo=JER)) is False  # Fri midday
+
+    def test_open_minutes_follow_the_same_rule(self, configure):
+        configure(market_window_start="22:30", market_window_end="05:00", market_week="1-5")
+        fri_night = datetime(2026, 11, 13, 22, 30, tzinfo=JER)
+        sat_morning = datetime(2026, 11, 14, 5, 0, tzinfo=JER)
+        assert market_window.open_minutes_between(fri_night, sat_morning) == 390
+        sun_night = datetime(2026, 11, 15, 22, 30, tzinfo=JER)
+        mon_morning = datetime(2026, 11, 16, 5, 0, tzinfo=JER)
+        assert market_window.open_minutes_between(sun_night, mon_morning) == 0
+        # A gap starting after midnight still sees the previous evening's session.
+        assert market_window.open_minutes_between(datetime(2026, 11, 14, 1, 0, tzinfo=JER), sat_morning) == 240
+
     def test_naive_input_read_as_reporting_local(self, configure):
         configure(market_window_start="15:15", market_window_end="23:15", market_week="1-5")
         # 16:00 naive is inside the window when read as Jerusalem; the same

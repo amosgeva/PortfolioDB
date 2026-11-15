@@ -6,6 +6,7 @@ Rules:
 - Average cost is recalculated on BUYs only (moving weighted average).
 - On SELL, realized P&L = (net proceeds per share - avg_cost) * qty_sold.
 - Shorting not supported.
+- Within a trade date, buys are processed before sells (ledger_core.processing_key).
 
 This is meant to complement fifo.py so we can report both methods.
 """
@@ -14,29 +15,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal
 
+# One Lot for both engines (see ledger_core); re-exported under the old name.
+from ledger_core import Lot, lot_order_key
 
-@dataclass
-class Lot:
-    id: int
-    symbol: str
-    account: str | None
-    side: str  # BUY/SELL
-    trade_date: date
-    quantity: Decimal
-    price: Decimal
-    fees: Decimal
-
-    @property
-    def net_per_share(self) -> Decimal:
-        if self.quantity == 0:
-            return Decimal("0")
-        gross = self.price * self.quantity
-        if self.side.upper() == "BUY":
-            return (gross + self.fees) / self.quantity
-        return (gross - self.fees) / self.quantity
+__all__ = ["Lot", "AvgResult", "run_avg_cost"]
 
 
 @dataclass
@@ -48,8 +32,8 @@ class AvgResult:
 
 
 def run_avg_cost(lots: list[Lot]) -> AvgResult:
-    # Sort deterministically
-    lots_sorted = sorted(lots, key=lambda l: (l.trade_date, l.id))
+    # Same order as FIFO: date, BUY before SELL within the day, then id.
+    lots_sorted = sorted(lots, key=lot_order_key)
 
     qty = Decimal("0")
     avg_cost = Decimal("0")  # per share

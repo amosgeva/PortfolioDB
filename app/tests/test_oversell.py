@@ -76,3 +76,78 @@ def test_the_wrong_account_is_the_common_case():
 def test_no_position_at_all():
     msg = oversell.oversell_warning(None, "ZZZ", None, D3, 1)
     assert msg is not None and "holds 0" in msg and "(no account)" in msg
+
+
+# ── 1.8.0: the account is matched exactly, exact arithmetic, same-day order ──
+
+
+def _with_lots(monkeypatch, lots, actions=()):
+    def load(conn, *, symbol=None, account=None, as_of=None):
+        rows = [r for r in lots
+                if (symbol is None or r["symbol"] == symbol.upper())
+                and (account is None or r["account"] == account)
+                and (as_of is None or r["trade_date"] <= as_of)]
+        acts = [a for a in actions if as_of is None or a.ex_date <= as_of]
+        return ledger_inputs.prepare(rows, acts)
+    monkeypatch.setattr(oversell.ledger_inputs, "load", load)
+
+
+def _lot(i, side, qty, day, account="IBKR", symbol="AAA"):
+    return {"id": i, "symbol": symbol, "account": account, "side": side, "trade_date": day,
+            "quantity": Decimal(str(qty)), "price": Decimal("100"), "fees": Decimal("0")}
+
+
+def test_a_sale_with_no_account_is_checked_against_the_unassigned_account(monkeypatch):
+    """Audit F-2. Ten shares in IBKR; a sale of ten entered with no account.
+    None used to mean "every account", so the check passed — and FIFO, which
+    matches per (symbol, account), then dropped the sale."""
+    _with_lots(monkeypatch, [_lot(1, "BUY", 10, D1)])
+    check = oversell.check_sell(None, "AAA", None, D2, 10)
+    assert not check.ok and check.held == 0 and check.shortfall == 10
+    assert "(no account)" in check.message() and "holds 0" in check.message()
+
+
+def test_shares_in_the_unassigned_account_do_count_for_it(monkeypatch):
+    _with_lots(monkeypatch, [_lot(1, "BUY", 10, D1, account=None)])
+    assert oversell.oversell_warning(None, "AAA", None, D2, 10) is None
+
+
+def test_fractional_shares_do_not_trip_a_false_warning(monkeypatch):
+    """Audit F-13: 0.7 + 0.1 was 0.7999999999999999 in floats, so selling 0.8
+    warned."""
+    _with_lots(monkeypatch, [_lot(1, "BUY", "0.7", D1), _lot(2, "BUY", "0.1", D1)])
+    assert oversell.oversell_warning(None, "AAA", "IBKR", D2, Decimal("0.8")) is None
+    assert oversell.open_quantity(None, "AAA", "IBKR", D2) == Decimal("0.8")
+
+
+def test_a_buy_the_same_day_covers_the_sale(monkeypatch):
+    """Same-day order is BUY before SELL (audit F-1), so a buy recorded that day
+    counts for a sale dated that day, whatever order they were entered in."""
+    _with_lots(monkeypatch, [_lot(1, "BUY", 5, D2)])
+    assert oversell.oversell_warning(None, "AAA", "IBKR", D2, 5) is None
+
+
+def test_a_backdated_sale_that_starves_a_later_one_is_reported(monkeypatch):
+    """Ten bought D1, ten sold D3 (fine). Entering a further sale of 4 dated
+    D2 leaves only 6 for the D3 sale: 4 of it would be dropped."""
+    _with_lots(monkeypatch, [_lot(1, "BUY", 10, D1), _lot(7, "SELL", 10, D3)])
+    check = oversell.check_sell(None, "AAA", "IBKR", D2, 4)
+    assert check.shortfall == 0                    # D2 itself held ten
+    assert check.later_shortfall == 4 and check.later_lot_ids == (7,)
+    msg = check.message()
+    assert "lot id 7" in msg and "4 AAA" in msg
+
+
+def test_check_sell_is_ok_for_a_covered_sale(monkeypatch):
+    _with_lots(monkeypatch, LOTS, ACTIONS)
+    check = oversell.check_sell(None, "AAA", "IBKR", D3, "16")
+    assert check.ok and check.message() is None
+    assert check.held == Decimal("16") and isinstance(check.quantity, Decimal)
+
+
+def test_a_pre_split_sale_is_judged_in_pre_split_units(monkeypatch):
+    """Ten held before the 2:1; selling 12 on D1 (pre-split) is an oversell of
+    2, not a sale within twenty restated shares."""
+    _with_lots(monkeypatch, LOTS, ACTIONS)
+    check = oversell.check_sell(None, "AAA", "IBKR", D1, 12)
+    assert check.held == 10 and check.shortfall == 2

@@ -61,7 +61,9 @@ def tz_name() -> str:
 REPORTING_CURRENCY = "USD"
 
 # Tracks the `-- PortfolioDB schema vX.Y` header in sql/schema.sql. 0.5 is the
-# 1.8.0 schema: migrations 004-006 (bookkeeping, price_alerts, lot_deletions).
+# 1.8.0 schema: migrations 004 (symbol check) and 005 (finite split ratio), and
+# 006 (price_alerts, lot_deletions) when it lands — bump both together if 006
+# moves the header.
 SCHEMA_VERSION = "0.5"
 
 # How long a snapshot run may be in flight before we stop deferring to it.

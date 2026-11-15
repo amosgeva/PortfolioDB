@@ -11,6 +11,15 @@ Equities get sector/country straight from yfinance. Funds/ETPs (where yfinance
 exposes no sector/country) fall back to the curated ETF_META map below, keyed
 off `fd_store.ETF_SYMBOLS`.
 
+A vendor failure never overwrites what is already there (audit E-2). When
+yfinance raises, or answers with the near-empty dict it serves when it is
+throttling (no quote type, no name), the symbol is skipped and reported; it
+used to be written as stock / "Other" / "Unknown" over good data. Those
+placeholders are now only ever written into a column that is still empty.
+
+Exit status: 0 when at least one symbol was enriched (or none needed it), 1
+when the vendor failed for every symbol, 2 for an invalid --symbol.
+
 Usage (from app/, with PORTFOLIODB_PASSWORD set or .env present):
   python enrich_instruments.py                 # all instruments
   python enrich_instruments.py --symbol NVDA   # one symbol (repeatable)
@@ -26,6 +35,8 @@ import logging
 import yfinance as yf
 
 import fd_store
+import ledger_inputs
+import symbol_paths
 from db import connect, execute, fetch_all, load_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -52,30 +63,50 @@ ETF_META: dict[str, dict[str, str]] = {
 }
 
 
-def classify(symbol: str) -> dict[str, str | None]:
-    """Return {asset_type, sector, country, name, exchange} for one symbol.
+def _usable(info: dict) -> bool:
+    """Whether yfinance actually answered. Throttled or failed lookups come
+    back as {} or a handful of unrelated keys, with no quote type and no name."""
+    return bool(info) and bool(info.get("quoteType") or info.get("longName") or info.get("shortName"))
+
+
+def classify(symbol: str) -> dict[str, str | None] | None:
+    """Return {asset_type, sector, country, name, exchange, placeholders} for
+    one symbol, or None when there is nothing trustworthy to write.
 
     Equities resolve from yfinance; funds prefer the curated ETF_META overrides
-    (with yfinance as a fallback for whatever it does expose).
+    (with yfinance as a fallback for whatever it does expose). ``placeholders``
+    names the fields filled with a stand-in ("Other", "Unknown", "ETF",
+    "Global") rather than a real value; the caller writes those only into an
+    empty column.
     """
     info: dict = {}
     try:
         info = yf.Ticker(symbol).info or {}
     except Exception as exc:  # yfinance is flaky; degrade gracefully per symbol
         log.warning("yfinance info failed for %s: %s", symbol, exc)
-
-    quote_type = (info.get("quoteType") or "").upper()
-    is_etf = quote_type in {"ETF", "MUTUALFUND"} or symbol in fd_store.ETF_SYMBOLS
+        info = {}
 
     meta = ETF_META.get(symbol)
+    if not _usable(info) and meta is None:
+        return None   # a failed lookup is not evidence about the instrument
+
+    quote_type = (info.get("quoteType") or "").upper()
+    is_etf = quote_type in {"ETF", "MUTUALFUND"} or symbol in fd_store.ETF_SYMBOLS or meta is not None
+
     if is_etf:
         asset_type = (meta or {}).get("asset_class") or "ETF"
-        sector = (meta or {}).get("sector") or info.get("sector") or "ETF"
-        country = (meta or {}).get("region") or info.get("country") or "Global"
+        sector = (meta or {}).get("sector") or info.get("sector")
+        country = (meta or {}).get("region") or info.get("country")
+        stand_in = {"sector": "ETF", "country": "Global"}
     else:
         asset_type = "stock"
-        sector = info.get("sector") or "Other"
-        country = info.get("country") or "Unknown"
+        sector = info.get("sector")
+        country = info.get("country")
+        stand_in = {"sector": "Other", "country": "Unknown"}
+
+    placeholders = {field for field, value in (("sector", sector), ("country", country)) if not value}
+    sector = sector or stand_in["sector"]
+    country = country or stand_in["country"]
 
     return {
         "asset_type": asset_type,
@@ -83,69 +114,85 @@ def classify(symbol: str) -> dict[str, str | None]:
         "country": country,
         "name": info.get("longName") or info.get("shortName"),
         "exchange": info.get("exchange"),
+        "placeholders": placeholders,
     }
 
 
-def main():
+# A placeholder only fills an empty column; a real value always wins.
+UPDATE_SQL = """
+    UPDATE instruments
+    SET asset_type = %(asset_type)s,
+        sector     = CASE WHEN %(sector_placeholder)s THEN COALESCE(sector, %(sector)s) ELSE %(sector)s END,
+        country    = CASE WHEN %(country_placeholder)s THEN COALESCE(country, %(country)s) ELSE %(country)s END,
+        name       = COALESCE(%(name)s, name),
+        exchange   = COALESCE(%(exchange)s, exchange),
+        updated_at = now()
+    WHERE symbol = %(symbol)s
+"""
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--symbol", action="append", help="symbol to enrich (repeatable); default = all")
+    ap.add_argument("--symbol", action="append", type=symbol_paths.symbol_arg,
+                    help="symbol to enrich (repeatable); default = all")
     ap.add_argument("--held-only", action="store_true", help="only symbols with open lots")
     ap.add_argument("--missing-only", action="store_true", help="only rows lacking sector or country")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     cfg = load_config()
-    with connect(cfg) as conn:
-        if args.symbol:
-            symbols = [s.strip().upper() for s in args.symbol]
-        elif args.held_only:
-            rows = fetch_all(
-                conn,
-                """
-                SELECT symbol FROM lots
-                GROUP BY symbol
-                HAVING SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) > 0
-                ORDER BY symbol
-                """,
-            )
-            symbols = [r["symbol"] for r in rows]
-        elif args.missing_only:
-            rows = fetch_all(
-                conn,
-                "SELECT symbol FROM instruments WHERE sector IS NULL OR country IS NULL ORDER BY symbol",
-            )
-            symbols = [r["symbol"] for r in rows]
-        else:
-            rows = fetch_all(conn, "SELECT symbol FROM instruments ORDER BY symbol")
-            symbols = [r["symbol"] for r in rows]
+    conn = connect(cfg)
+    try:
+        return _enrich(conn, args)
+    finally:
+        conn.close()
 
-        if not symbols:
-            log.info("No symbols to enrich.")
-            return
 
-        log.info("Enriching %d symbol(s)…", len(symbols))
-        for sym in symbols:
-            m = classify(sym)
-            execute(
-                conn,
-                """
-                UPDATE instruments
-                SET asset_type = %(asset_type)s,
-                    sector     = %(sector)s,
-                    country    = %(country)s,
-                    name       = COALESCE(%(name)s, name),
-                    exchange   = COALESCE(%(exchange)s, exchange),
-                    updated_at = now()
-                WHERE symbol = %(symbol)s
-                """,
-                {**m, "symbol": sym},
-            )
-            log.info(
-                "  %-6s asset=%-9s sector=%-22s region=%s",
-                sym, m["asset_type"], m["sector"], m["country"],
-            )
+def _symbols(conn, args) -> list[str]:
+    if args.symbol:
+        return list(dict.fromkeys(args.symbol))
+    if args.held_only:
+        # Open by the engines' rules (holdings.open_quantities), not a plain
+        # signed sum (audit R-1).
+        return sorted(ledger_inputs.open_symbols(conn))
+    if args.missing_only:
+        sql_text = "SELECT symbol FROM instruments WHERE sector IS NULL OR country IS NULL ORDER BY symbol"
+    else:
+        sql_text = "SELECT symbol FROM instruments ORDER BY symbol"
+    return [r["symbol"] for r in fetch_all(conn, sql_text)]
 
+
+def _enrich(conn, args) -> int:
+    symbols = _symbols(conn, args)
+    if not symbols:
+        log.info("No symbols to enrich.")
+        return 0
+
+    log.info("Enriching %d symbol(s)…", len(symbols))
+    failed: list[str] = []
+    for sym in symbols:
+        m = classify(sym)
+        if m is None:
+            failed.append(sym)
+            log.warning("  %-6s skipped: yfinance returned nothing usable; existing metadata kept", sym)
+            continue
+        placeholders = m.pop("placeholders")
+        execute(
+            conn,
+            UPDATE_SQL,
+            {**m, "symbol": sym,
+             "sector_placeholder": "sector" in placeholders,
+             "country_placeholder": "country" in placeholders},
+        )
+        log.info(
+            "  %-6s asset=%-9s sector=%-22s region=%s",
+            sym, m["asset_type"], m["sector"], m["country"],
+        )
+
+    if failed:
+        log.warning("Vendor failed for %d of %d symbol(s): %s", len(failed), len(symbols), ", ".join(failed))
     log.info("Done.")
+    return 1 if failed and len(failed) == len(symbols) else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

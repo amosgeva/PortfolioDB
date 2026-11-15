@@ -187,11 +187,11 @@ def _default_news_universe() -> list[str]:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                -- lot_open_quantities(): the engines' net quantity in SQL
+                -- (sql/schema.sql; audit R-1).
                 WITH pos AS (
-                  SELECT symbol,
-                         SUM(CASE WHEN side='BUY' THEN  quantity
-                                  WHEN side='SELL' THEN -quantity END) AS qty
-                  FROM lots GROUP BY symbol
+                  SELECT symbol, SUM(quantity) AS qty
+                  FROM lot_open_quantities() GROUP BY symbol
                 )
                 SELECT i.symbol
                 FROM instruments i

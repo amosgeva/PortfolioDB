@@ -19,28 +19,21 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from db import connect, fetch_all, load_config
-
+import ledger_inputs
 import symbol_paths
+from db import connect, fetch_all, load_config
 
 LOGO_DIR = Path(__file__).resolve().parent / "dashboard" / "static" / "logos"
 LOGO_URL = "https://assets.parqet.com/logos/symbol/{sym}?format=png&size=64"
 
 
 def active_symbols(conn) -> list[str]:
+    """Held (by the engines' rules — ledger_inputs.open_symbols) plus watched."""
+    held = sorted(ledger_inputs.open_symbols(conn))
     rows = fetch_all(
         conn,
-        """
-        WITH pos AS (
-          SELECT symbol,
-                 SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) AS qty
-          FROM lots GROUP BY symbol
-        )
-        SELECT i.symbol FROM instruments i
-        LEFT JOIN pos p ON p.symbol = i.symbol
-        WHERE COALESCE(p.qty, 0) > 0 OR i.watchlist = TRUE
-        ORDER BY i.symbol
-        """,
+        "SELECT symbol FROM instruments WHERE watchlist = TRUE OR symbol = ANY(%s) ORDER BY symbol",
+        (held,),
     )
     return [r["symbol"] for r in rows]
 
@@ -67,11 +60,14 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.symbols:
-        symbols = [s.upper() for s in args.symbols]
+        symbols = [s.strip().upper() for s in args.symbols]
     else:
         cfg = load_config()
-        with connect(cfg) as conn:
+        conn = connect(cfg)
+        try:
             symbols = active_symbols(conn)
+        finally:
+            conn.close()
 
     LOGO_DIR.mkdir(parents=True, exist_ok=True)
     max_age_s = args.max_age_days * 86400

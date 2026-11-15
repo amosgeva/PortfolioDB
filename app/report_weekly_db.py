@@ -20,6 +20,7 @@ from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 import fd_store
+import holdings
 import ledger_inputs
 import portfolio_kpis as kpis
 from db import connect, fetch_all, load_config
@@ -203,12 +204,14 @@ def positions_from(lots, asof_date) -> dict[tuple[str, str], Decimal]:
     and the end positions from it, so the two share counts it subtracts and
     the quotes it multiplies them by are all in the same units.
     """
-    out: dict[tuple[str | None, str], Decimal] = defaultdict(Decimal)
-    for lot in lots:
-        if lot["trade_date"] > asof_date:
-            continue
-        qty = D(lot["quantity"])
-        out[(lot["account"], lot["symbol"])] += qty if lot["side"] == "BUY" else -qty
+    # The one net-quantity implementation (holdings.net_quantities): per
+    # (symbol, account), same-day buys before sells, a sale truncated at the
+    # open quantity — the engines' rules, so this agrees with the cost column
+    # it is shown next to (audit R-1, F-1).
+    out = {
+        (account, symbol): qty
+        for (symbol, account), qty in holdings.net_quantities(lots, as_of=asof_date).items()
+    }
     # Sorted through account_sort_key (see there); the returned keys keep the
     # account exactly as stored, so None and "" stay distinct.
     ordered = sorted(out.items(), key=lambda kv: (*account_sort_key(kv[0][0]), kv[0][1]))

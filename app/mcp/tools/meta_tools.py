@@ -40,12 +40,11 @@ def register(mcp: FastMCP) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     """
+                    -- lot_open_quantities(): the engines' net quantity in
+                    -- SQL (sql/schema.sql; audit R-1).
                     WITH pos AS (
-                      SELECT symbol,
-                             SUM(CASE WHEN side='BUY'  THEN  quantity
-                                      WHEN side='SELL' THEN -quantity
-                                      ELSE 0 END) AS qty
-                      FROM lots
+                      SELECT symbol, SUM(quantity) AS qty
+                      FROM lot_open_quantities()
                       GROUP BY symbol
                     )
                     SELECT i.symbol, i.name, i.asset_type, i.exchange, i.currency,
