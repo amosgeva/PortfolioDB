@@ -27,3 +27,20 @@ __pycache__/
 .ruff_cache/
 node_modules/
 archive/
+# The front end's build and test inputs. app/streamlit_app.py and
+# modern2_native.py serve only the committed outputs in app/dashboard/static/
+# (app.js, app.css, shell.html, skeleton.html, tokens.css, nav.json, fonts/), and the
+# Dockerfile COPYs the whole app/ tree, so without these lines the image carried
+# the unbundled sources, the jsdom suite and its fixtures, and the esbuild
+# script. Nothing in the Python suites reads them. The npm manifests at the root
+# are never COPYd; they are listed to keep them out of the build context too.
+app/dashboard/static/src/
+app/dashboard/static/tests/
+app/dashboard/static/e2e/
+app/dashboard/static/tools/
+playwright.config.mjs
+app/dashboard/static/build.mjs
+package.json
+package-lock.json
+eslint.config.mjs
+.eslintrc.json

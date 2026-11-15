@@ -20,8 +20,10 @@ each one. How each number is computed is in
 | Plumbing | `db.py` (connections and credentials), `settings.py` (DB → env → default), `apply_schema.py` (schema and migrations), `create_ro_role.py` (the MCP's read-only role), `demo_seed.py` |
 | MCP server | `mcp/` — see the [MCP section](../README.md#mcp-server) of the root README |
 
-`Dockerfile` builds the one image every service runs (dashboard, scheduler,
-MCP server and the CLIs).
+`Dockerfile` builds the one image every service runs (dashboard, both
+schedulers, MCP server and the CLIs). Its last stage, `runtime`, is what runs
+and ships, and has no pip; the `dev` stage keeps pip for `make lock` and
+`make test`.
 
 ## Running from here
 

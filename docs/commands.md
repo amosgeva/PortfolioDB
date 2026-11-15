@@ -23,7 +23,7 @@ dump.**
 |---|---|
 | `up` | `docker compose up -d` |
 | `down` | `docker compose down` |
-| `restart` | `docker compose up -d --force-recreate dashboard scheduler` |
+| `restart` | `docker compose up -d --force-recreate dashboard scheduler scheduler-llm` |
 | `pull` | `docker compose pull` |
 | `ps` | `docker compose ps` |
 | `logs ARGS=scheduler` | `docker compose logs -f scheduler` |
@@ -76,14 +76,21 @@ what keeps `--note 'manual update'` together.
 | `shell` | `docker compose run --rm --entrypoint sh dashboard` |
 | `build` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build` |
 | `dev-up` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` |
-| `lock` | Four steps. `docker compose -f docker-compose.yml -f docker-compose.dev.yml build --build-arg PIP_LOCK=refresh dashboard`; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps -T dashboard pip freeze --all --exclude-editable` written into `app/constraints.txt` below its comment header; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps -T dashboard python /app/tools/hash_lock.py - < app/constraints.txt > app/requirements.lock`; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, which proves the new hashed lock installs. Regenerates the tested dependency lock after a `requirements.txt` change; run it in the image, never from a host interpreter, or CI rejects the result. On Windows PowerShell 5.1 redirect with `\| Out-File -Encoding utf8`, not `>`, which writes UTF-16, and feed the third step with `Get-Content app/constraints.txt \|` instead of `<`. |
-| `test` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml build dashboard`, then `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps -e PORTFOLIODB_PASSWORD= dashboard sh -c 'pip install --user --quiet pytest && export PATH=$PATH:/home/appuser/.local/bin && echo "── app suite ──" && cd /app/app && python -m pytest -p no:cacheprovider tests/ -q && echo "── MCP suite ──" && cd /app && python -m pytest -p no:cacheprovider app/mcp/tests/ -m "not slow" -q'` |
+| `lock` | Four steps. `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile devtools build --build-arg PIP_LOCK=refresh devtools`; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile devtools run --rm --no-deps -T devtools pip freeze --all --exclude-editable` written into `app/constraints.txt` below its comment header; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile devtools run --rm --no-deps -T devtools python /app/tools/hash_lock.py - < app/constraints.txt > app/requirements.lock`; then `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile devtools build devtools`, which proves the new hashed lock installs. Regenerates the tested dependency lock after a `requirements.txt` change; run it in the image, never from a host interpreter, or CI rejects the result. On Windows PowerShell 5.1 redirect with `\| Out-File -Encoding utf8`, not `>`, which writes UTF-16, and feed the third step with `Get-Content app/constraints.txt \|` instead of `<`. |
+| `test` | `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile devtools build devtools`, then `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile devtools run --rm --no-deps -e PORTFOLIODB_PASSWORD= devtools sh -c 'pip install --user --quiet pytest && export PATH=$PATH:/home/appuser/.local/bin && echo "── app suite ──" && cd /app/app && python -m pytest -p no:cacheprovider tests/ -q && echo "── MCP suite ──" && cd /app && python -m pytest -p no:cacheprovider app/mcp/tests/ -m "not slow" -q'` |
 
 `make test` builds the image from your working tree first, so it tests your
 edits rather than the published image, and it runs with a blank database
 password so no test can reach whatever database the stack holds. The
 database-backed tests run in CI; [CONTRIBUTING.md](../CONTRIBUTING.md#tests)
 shows how to run them against a throwaway Postgres.
+
+`lock` and `test` run in the dev overlay's `devtools` service, which builds
+the Dockerfile's `dev` stage: the application image plus pip. Every service the
+stack runs — and every published image — is the `runtime` stage, which has no
+pip at all, so `pip` is not something you can run inside `dashboard` or either
+scheduler. CI runs both suites inside `runtime` as well, to prove nothing at
+runtime needed the installer.
 
 `make build` also stamps the image with your short commit SHA
 (`PORTFOLIODB_VERSION`); without it a locally built image reports its version as

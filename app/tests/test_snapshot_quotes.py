@@ -169,3 +169,22 @@ class TestVolume:
             "regularMarketPrice": 100.0, "regularMarketVolume": 1234.5,
         })
         assert sp.get_quote("X").volume == 1234.5
+
+
+# The collector's compose service passes these through as `${VAR:-}` (it gets an
+# allowlist, not .env), so an install that never set one hands the module "".
+# That must mean "use the default", not a crash at import.
+@pytest.mark.parametrize("value,quote_age,deadline", [("", 60, 240.0), ("  ", 60, 240.0), ("7", 7, 7.0)])
+def test_blank_collector_tunables_mean_the_defaults(value, quote_age, deadline):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = {**os.environ, "PORTFOLIODB_QUOTE_MAX_AGE_MIN": value, "PORTFOLIODB_COLLECTOR_DEADLINE_S": value}
+    out = subprocess.run(
+        [sys.executable, "-c", "import snapshot_prices as sp; print(sp.QUOTE_MAX_AGE_MIN, sp.RUN_DEADLINE_S)"],
+        cwd=Path(sp.__file__).resolve().parent, env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == [str(quote_age), str(deadline)]

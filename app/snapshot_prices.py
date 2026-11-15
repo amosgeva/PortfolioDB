@@ -72,13 +72,15 @@ log = logging.getLogger(__name__)
 # this is treated as stale upstream data rather than a real print. Generous by
 # design: thin names can legitimately go a while between trades, and a false
 # "partial" run is worse noise than a slightly late catch.
-QUOTE_MAX_AGE_MIN = int(os.environ.get("PORTFOLIODB_QUOTE_MAX_AGE_MIN", "60"))
+# An empty value means unset: the collector's compose service passes these
+# through as `${VAR:-}`, so an install that never set one hands it "".
+QUOTE_MAX_AGE_MIN = int(os.environ.get("PORTFOLIODB_QUOTE_MAX_AGE_MIN", "").strip() or "60")
 
 # Whole-run budget. The holdings job ticks every five minutes; a run that is
 # still fetching after four has stopped being useful, and stopping it keeps the
 # next tick from finding the lock held. yfinance's own HTTP timeout (30 s) bounds
 # a single request, not a run of forty symbols with retries.
-RUN_DEADLINE_S = float(os.environ.get("PORTFOLIODB_COLLECTOR_DEADLINE_S", "240"))
+RUN_DEADLINE_S = float(os.environ.get("PORTFOLIODB_COLLECTOR_DEADLINE_S", "").strip() or "240")
 
 # Session-level advisory locks: (namespace, kind). Released when the
 # connection closes, including when the process dies, so a crash never leaves

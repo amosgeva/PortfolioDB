@@ -319,8 +319,15 @@ jobs:
 
       # Plain `docker build`, deliberately: the runner already has BuildKit, and
       # this way one build needs no third-party action pinned and audited.
-      - name: Build the image
-        run: docker build -f app/Dockerfile -t portfoliodb-ci:${{ github.sha }} .
+      #
+      # Two targets of one Dockerfile (audit O-2): `runtime`, which is what
+      # publish.yml ships and the stack runs, and `dev`, the same filesystem
+      # plus pip, which is what `make lock` freezes and `make test` installs
+      # pytest into. The second build is all cache hits but the last layer.
+      - name: Build the image (runtime and dev targets)
+        run: |
+          docker build -f app/Dockerfile --target runtime -t portfoliodb-ci:${{ github.sha }} .
+          docker build -f app/Dockerfile --target dev -t portfoliodb-ci-dev:${{ github.sha }} .
 
       # grep the *filesystem* of the built image, not the build log: a file that
       # is in the context but never COPYd is harmless, one that landed in a
@@ -333,35 +340,72 @@ jobs:
           fi
           echo "no canary in the image"
 
-      # The lock is only worth having if it is what the image contains. Before
-      # anything else is installed into the container, its `pip freeze` must be
-      # exactly app/constraints.txt — so a requirements change without `make
-      # lock` fails here, and so does a constraints edit made by hand from a
-      # different interpreter. `--all` so pip, setuptools and wheel are in the
-      # comparison too: setuptools is what Trivy flagged first.
+      # Audit O-2: the image that ships carries no package installer. Every way
+      # back to pip is checked — the module, its entry points, ensurepip's
+      # bundled wheel, an installed dist-info — and the dev target is checked to
+      # still have it, because `make lock` and `make test` depend on that.
+      - name: The runtime image has no pip; the dev target does
+        run: |
+          set -euo pipefail
+          rt=portfoliodb-ci:${{ github.sha }}
+          docker run --rm "$rt" sh -c '
+            if python -c "import pip" 2>/dev/null; then echo "::error::pip is importable in the runtime image"; exit 1; fi
+            if command -v pip pip3 2>/dev/null; then echo "::error::a pip entry point is on PATH in the runtime image"; exit 1; fi
+            if python -m ensurepip --root /tmp/probe >/dev/null 2>&1; then echo "::error::ensurepip can restore pip in the runtime image"; exit 1; fi
+            if python -c "import importlib.metadata as m, sys; sys.exit(0 if any((d.metadata[\"Name\"] or \"\").lower() == \"pip\" for d in m.distributions()) else 1)"; then
+              echo "::error::a pip distribution is installed in the runtime image"; exit 1
+            fi
+            echo "runtime image: no pip, no pip entry point, no ensurepip wheel"'
+          docker run --rm portfoliodb-ci-dev:${{ github.sha }} pip --version
+
+      # The lock is only worth having if it is what the image contains. The dev
+      # target's `pip freeze` must be exactly app/constraints.txt — so a
+      # requirements change without `make lock` fails here, and so does a
+      # constraints edit made by hand from a different interpreter. `--all` so
+      # pip itself is in the comparison too. And the runtime image must hold
+      # exactly the same distributions minus pip: read through importlib.metadata,
+      # since there is no pip there to ask.
       - name: The image matches app/constraints.txt
         run: |
-          docker run --rm portfoliodb-ci:${{ github.sha }} pip freeze --all --exclude-editable > image-freeze.txt
+          set -euo pipefail
           grep -v '^#' app/constraints.txt | sed '/^$/d' | sort > expected.txt
-          sort image-freeze.txt > actual.txt
-          if ! diff -u expected.txt actual.txt; then
-            echo "::error::the image's pip freeze differs from app/constraints.txt — run \`make lock\` and commit the result"
+          docker run --rm portfoliodb-ci-dev:${{ github.sha }} pip freeze --all --exclude-editable | sort > dev-freeze.txt
+          if ! diff -u expected.txt dev-freeze.txt; then
+            echo "::error::the dev target's pip freeze differs from app/constraints.txt — run \`make lock\` and commit the result"
             exit 1
           fi
-          echo "image matches the lock ($(wc -l < actual.txt) packages)"
+          grep -iv '^pip==' expected.txt > expected-runtime.txt
+          docker run --rm portfoliodb-ci:${{ github.sha }} python -c '
+          import importlib.metadata as m
+          for d in m.distributions():
+              print(d.metadata["Name"] + "==" + d.version)' | sort > runtime-dists.txt
+          if ! diff -u expected-runtime.txt runtime-dists.txt; then
+            echo "::error::the runtime image holds a different package set from app/constraints.txt (minus pip)"
+            exit 1
+          fi
+          echo "dev target matches the lock ($(wc -l < dev-freeze.txt) packages); runtime is the same set minus pip"
 
       # The same two invocations `make test` uses, split for the same reason:
       # run both in one pytest process and four reconciliation tests fail on
       # cross-test state. The MCP suite runs from /app, never /app/app — there
       # the local app/mcp/ package lands on the path as top-level `mcp` and
-      # shadows the SDK that fastmcp imports. Hardened like a compose service,
-      # with the pinned pytest from tools/requirements-ci.txt.
-      - name: Test suites inside the image (hardened runtime)
+      # shadows the SDK that fastmcp imports.
+      #
+      # Inside the *runtime* image, hardened like a compose service, so the run
+      # also proves nothing the app does at runtime needs the pip it no longer
+      # has. The runtime image cannot install pytest, so the dev target installs
+      # the pinned one (tools/requirements-ci.txt, its dependencies held to the
+      # lock) into a host directory, mounted read-only and appended to the path.
+      - name: Test suites inside the runtime image (hardened)
         run: |
+          set -euo pipefail
           pytest_pin=$(grep -E '^pytest==' tools/requirements-ci.txt)
-          docker run --rm $HARDENED -e PYTEST_PIN="$pytest_pin" portfoliodb-ci:${{ github.sha }} sh -c '
-            pip install --user --quiet "$PYTEST_PIN" &&
-            export PATH=$PATH:/home/appuser/.local/bin &&
+          tooldir="${RUNNER_TEMP}/pytest-target"
+          mkdir -p "$tooldir" && chmod 777 "$tooldir"
+          docker run --rm -v "${tooldir}:/opt/pytest" portfoliodb-ci-dev:${{ github.sha }} \
+            pip install --quiet --target /opt/pytest -c /app/app/constraints.txt "$pytest_pin"
+          docker run --rm $HARDENED -v "${tooldir}:/opt/pytest:ro" -e PYTHONPATH=/app:/opt/pytest \
+            portfoliodb-ci:${{ github.sha }} sh -c '
             echo "-- app suite --" && cd /app/app && python -m pytest -p no:cacheprovider tests/ -q &&
             echo "-- MCP suite --" && cd /app && python -m pytest -p no:cacheprovider app/mcp/tests/ -m "not slow" -q'
 
@@ -369,7 +413,11 @@ jobs:
       # started the way compose starts them. A container that is up but never
       # healthy — wrong port, endpoint moved in a Streamlit upgrade, a write to
       # the read-only root — fails here.
-      - name: Dashboard and scheduler start hardened and report healthy
+      #
+      # Both schedulers (audit O-3): the collector on docker/crontab and the
+      # keyed jobs on docker/crontab-llm, each in its own container as compose
+      # runs them.
+      - name: Dashboard and both schedulers start hardened and report healthy
         run: |
           set -euo pipefail
           img=portfoliodb-ci:${{ github.sha }}
@@ -377,21 +425,26 @@ jobs:
             sh -c 'cd /app/app && streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501'
           docker run -d --name ci-scheduler $HARDENED "$img" \
             /usr/local/bin/supercronic -passthrough-logs -prometheus-listen-address 127.0.0.1:9746 /app/docker/crontab
+          docker run -d --name ci-scheduler-llm $HARDENED "$img" \
+            /usr/local/bin/supercronic -passthrough-logs -prometheus-listen-address 127.0.0.1:9746 /app/docker/crontab-llm
           probe() {
             docker exec "$1" python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('$2', timeout=4).status==200 else 1)"
           }
           ok=0
           for _ in $(seq 1 30); do
-            if probe ci-dashboard http://127.0.0.1:8501/_stcore/health && probe ci-scheduler http://127.0.0.1:9746/health; then
+            if probe ci-dashboard http://127.0.0.1:8501/_stcore/health \
+               && probe ci-scheduler http://127.0.0.1:9746/health \
+               && probe ci-scheduler-llm http://127.0.0.1:9746/health; then
               ok=1; break
             fi
             sleep 2
           done
           docker logs ci-dashboard 2>&1 | tail -20
           docker logs ci-scheduler 2>&1 | tail -5
-          docker rm -f ci-dashboard ci-scheduler >/dev/null
+          docker logs ci-scheduler-llm 2>&1 | tail -5
+          docker rm -f ci-dashboard ci-scheduler ci-scheduler-llm >/dev/null
           test "$ok" = 1 || { echo "::error::a service never answered its healthcheck"; exit 1; }
-          echo "dashboard and scheduler healthy under the hardened runtime"
+          echo "dashboard and both schedulers healthy under the hardened runtime"
 
       # Every dependency must *import*, not merely install. This is the check
       # that fails loudly on a base image the pins have no wheels for, and the
@@ -417,10 +470,11 @@ jobs:
       # The scheduler's two silent-at-runtime failure modes: a supercronic that
       # did not land where the compose command looks for it, and a crontab it
       # will refuse to start on. `-test` exits non-zero on an invalid one.
-      - name: Scheduler entrypoint and crontab
+      - name: Scheduler entrypoint and both crontabs
         run: |
-          docker run --rm portfoliodb-ci:${{ github.sha }} \
-            /usr/local/bin/supercronic -test /app/docker/crontab
+          for tab in /app/docker/crontab /app/docker/crontab-llm; do
+            docker run --rm portfoliodb-ci:${{ github.sha }} /usr/local/bin/supercronic -test "$tab"
+          done
 
   # pdb.ps1 is the Windows runner, and until this job existed nothing on a
   # Linux-only CI could tell whether it still parsed, let alone worked. It is

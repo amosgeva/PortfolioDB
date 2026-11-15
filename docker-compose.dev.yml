@@ -11,14 +11,20 @@
 # confused with a published one — otherwise a later `docker compose pull` would
 # happily replace your build with the registry's.
 
+x-build-args: &build-args
+  # `make build` passes the local short SHA, so a locally built image still
+  # reports what it is instead of "build unknown".
+  PORTFOLIODB_VERSION: ${PORTFOLIODB_VERSION:-dev}
+
+# The stack's services run the Dockerfile's `runtime` stage — the one that is
+# published, with no pip in it (audit O-2). Named explicitly rather than left
+# to "the last stage" so a stage added later cannot silently change it.
 x-build: &build
   build:
     context: .
     dockerfile: app/Dockerfile
-    args:
-      # `make build` passes the local short SHA, so a locally built image still
-      # reports what it is instead of "build unknown".
-      PORTFOLIODB_VERSION: ${PORTFOLIODB_VERSION:-dev}
+    target: runtime
+    args: *build-args
   image: portfoliodb-app:dev
   pull_policy: never
 
@@ -27,5 +33,30 @@ services:
     <<: *build
   scheduler:
     <<: *build
+  scheduler-llm:
+    <<: *build
   mcp:
     <<: *build
+
+  # Build and test tooling: the Dockerfile's `dev` stage, which keeps pip.
+  # `make lock` freezes it and `make test` installs pytest into it; nothing
+  # else uses it. Behind a profile so `make dev-up` never starts it, and with
+  # no env_file: the suites run with a blank database password and need none
+  # of .env's secrets. Hardened like the services it stands in for.
+  devtools:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      target: dev
+      args: *build-args
+    image: portfoliodb-app:devtools
+    pull_policy: never
+    profiles: ["devtools"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /home/appuser:uid=10001,gid=10001,mode=0700

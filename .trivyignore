@@ -19,6 +19,12 @@
 # checked against app/requirements.lock's hashes. Upgrading pip changes nothing
 # until pypa re-vendors. (pip 26.3 re-vendored msgpack and urllib3, so their
 # entries are gone.)
+# Since the runtime/dev split (audit O-2) the image built from this tree has no
+# pip at all — app/Dockerfile's `runtime` stage uninstalls it — so the scans of
+# a fresh build (security-scan.yml `image`, publish.yml's pre-push scans) no
+# longer meet this finding. It stays for security-scan.yml's `published` job,
+# which scans the `:1` and `latest` already on GHCR: remove this entry once
+# both have been rebuilt from a commit with the pip-less runtime stage.
 # added: 2026-09-09
 # reviewed: 2026-11-15
 # review-by: 2027-02-15

@@ -12,6 +12,10 @@ name: Security scan
 #                    and `1`, each architecture, resolved to a digest first so
 #                    the log says exactly which bytes were judged (audit C-1:
 #                    before 1.8.0 nothing ever scanned the published image)
+#   llm-models       the default LLM model IDs in app/llm.py against their
+#                    review-by dates and the public, keyless model listings
+#                    (tools/check_default_models.py): a vendor retiring a
+#                    default is a dependency going stale too
 #
 # It also runs when an input changes in a pull request, so a bump is checked
 # before it merges. publish.yml runs the same Trivy policy on every image
@@ -136,12 +140,30 @@ jobs:
           trivyignores: .trivyignore
           exit-code: '1'
 
+  # The defaults an install uses until someone sets LLM_MODEL. Every entry in
+  # app/llm.py's DEFAULT_MODEL_REVIEW carries a review-by date, which fails here
+  # once it passes — so a provider whose catalogue needs a key (Anthropic,
+  # OpenAI) is still re-checked by a person — and --online checks each ID
+  # against OpenRouter's public model list (which mirrors those catalogues and
+  # carries an expiration_date for withdrawn models) and the Ollama registry.
+  # Not on pull requests, like `published`: a vendor's announcement must not
+  # redden an unrelated change. docs/llm-providers.md says what to do when red.
+  llm-models:
+    name: Default LLM models are current
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Review dates and public model listings
+        run: python3 tools/check_default_models.py --online
+
   # One issue, not one per run: opened (or commented on) when a scheduled scan
   # fails, closed by the next scheduled scan that passes. The only job with a
   # write permission, and only to issues.
   track:
     name: Track scheduled scan result
-    needs: [python-packages, image, published]
+    needs: [python-packages, image, published, llm-models]
     if: always() && github.event_name == 'schedule' && github.repository == 'amosgeva/PortfolioDB'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -161,7 +183,7 @@ jobs:
           existing=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
                      | jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -1)
           if [ -n "$failed" ]; then
-            body=$(printf 'The scheduled scan on %s failed.\n\n```\n%s\n```\n\nRun: %s\n\nRefresh the pin it names (`make lock`, a Dependabot PR, or the weekly rebuild in publish.yml). This issue closes itself after the next clean scheduled scan.' "$(date -u +%F)" "$failed" "$RUN_URL")
+            body=$(printf 'The scheduled scan on %s failed.\n\n```\n%s\n```\n\nRun: %s\n\nRefresh the pin it names (`make lock`, a Dependabot PR, or the weekly rebuild in publish.yml); for llm-models, a default model in app/llm.py (docs/llm-providers.md). This issue closes itself after the next clean scheduled scan.' "$(date -u +%F)" "$failed" "$RUN_URL")
             if [ -n "$existing" ]; then
               gh issue comment "$existing" --body "$body"
             else

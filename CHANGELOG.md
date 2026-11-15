@@ -84,8 +84,59 @@ needs a schema step says so under **Upgrading**.
   them: the theme now ships in `app/.streamlit/config.toml`, and an
   environment variable still overrides it.
 
+**Upgrading (two schedulers, a runtime image without pip)**
+
+- **The scheduler is now two services.** `scheduler` runs only the price
+  collector (`docker/crontab`) and receives no `.env` — an allowlist of the
+  database login, the timezone, the collector window and the collector's
+  tunables. The advisor brief and the Financial Datasets enrichment moved to a
+  new `scheduler-llm` service (`docker/crontab-llm`), which receives `.env` as
+  the old scheduler did. `docker compose up -d` (or `make up`) after the pull
+  starts it; nothing to configure. If you had commented out the brief or the
+  enrichment in `docker/crontab`, do it in `docker/crontab-llm` now — or stop
+  `scheduler-llm` if you use neither. If a `docker-compose.override.yml` of
+  yours gives the old `scheduler` anything (an HTTP proxy, a key), move it to
+  the service that needs it; the collector reads only the variables
+  docs/scheduling.md lists.
+- **There is no `pip` inside the running containers any more.** The image is a
+  three-stage build and every service runs the `runtime` stage, which has pip
+  removed. `make test` and `make lock` use a new `devtools` service in
+  `docker-compose.dev.yml` (the `dev` stage, which keeps pip); if you ran
+  `pip` inside `dashboard` yourself, use `docker compose -f docker-compose.yml
+  -f docker-compose.dev.yml --profile devtools run --rm devtools …` instead.
+
 ### Security
 
+- **The price collector holds no API key** (audit O-3). Quote scraping and the
+  jobs that call keyed APIs ran in one container, so the LLM and Financial
+  Datasets keys sat in the environment of the process that parses Yahoo's
+  responses every five minutes. They are now separate containers; the
+  collector's environment is an explicit allowlist, so a vendor key added to
+  `.env` later does not reach it either. `tools/tests/test_compose_overrides.py`
+  renders the model with synthetic keys and fails if any reaches it.
+- **The runtime image has no package installer** (audit O-2). `pip` — and the
+  setuptools, certifi and urllib3 it vendors — are uninstalled in the final
+  stage, ensurepip's bundled wheel with them, and the build fails if any route
+  back to pip survives. The `dev` stage keeps pip for `make lock` and
+  `make test`. CI proves the runtime image has no pip, that it holds exactly
+  `app/constraints.txt` minus pip, and that both test suites pass *inside it*
+  (pytest is mounted read-only from outside), so nothing at runtime needed the
+  installer. The `.trivyignore` entry for pip's vendored setuptools stays only
+  until the published `:1` and `latest` are rebuilt from such an image.
+- **Publishing waits on the front-end gate** (audit NEW-2). `frontend.yml` is
+  now callable and `publish.yml`'s publish job needs it alongside CI, so an
+  image is never built for the registry from a tree whose bundle fails its
+  build reproduction, ESLint rules, jsdom tests or browser integration (the
+  call waits for every job in `frontend.yml`). The pull-request checks keep
+  their names, "Build check, lint, tests" and "Browser integration (Streamlit
+  + Postgres)".
+- The image no longer carries the front end's unbundled sources, jsdom tests,
+  fixtures or build script; the dashboard serves only the committed bundle.
+- The weekly rebuild of an existing release builds that release's own
+  Dockerfile stage when it predates the `runtime` stage (1.7.x has a single
+  stage, which still contains pip), and the pip-less `runtime` stage for every
+  ref that has it; every push and tag must have it. The rebuild no longer
+  fails on `--target runtime` against an old Dockerfile.
 - Every change made from the dashboard needs `PORTFOLIODB_DASHBOARD_PASSWORD`:
   adding, selling and deleting lots, the watchlist, cash, price alerts, the
   Settings form, the investor one-pager, and every brief or chat message that
@@ -107,8 +158,27 @@ needs a schema step says so under **Upgrading**.
   `'`, so a spreadsheet does not run them as formulas (A-4, the Manage half).
   Numbers are untouched.
 
+### Dependencies
+
+- Dependabot now proposes weekly updates for the front end's npm toolchain
+  (esbuild, ESLint, jsdom and the rest of `package.json`), minor and patch
+  bumps grouped into one pull request, majors on their own.
+- The default LLM model IDs carry a retirement watch: `DEFAULT_MODEL_REVIEW`
+  in `app/llm.py` dates each default's last check and its review-by date, and
+  `tools/check_default_models.py` runs in the weekly security scan, failing on
+  a passed review date or when OpenRouter's public model list (or the Ollama
+  registry) drops an ID or schedules its expiry within 45 days. See
+  docs/llm-providers.md.
+- **The `openai` provider's default model is now `gpt-6.1-sol`; `gpt-5`
+  retires 2026-12-11** (OpenRouter's listing, found by the check above). An
+  install that set `LLM_MODEL` (or the model on the Settings page) is
+  unaffected; one on the `openai` provider with no model set moves to
+  `gpt-6.1-sol`, which is in the same output price tier.
+
 ### Fixed
 
+- Blank `PORTFOLIODB_QUOTE_MAX_AGE_MIN` / `PORTFOLIODB_COLLECTOR_DEADLINE_S`
+  now mean the default instead of failing the collector at import.
 - Adding a lot that matches one already recorded (same symbol, account,
   side, date, quantity and price) on the Manage page now says **"DUPLICATE —
   NOT RECORDED"**, in the same words as the CLIs, instead of "Added" over a

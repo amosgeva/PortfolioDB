@@ -49,7 +49,14 @@ SYNTHETIC_ENV = (
     "PORTFOLIODB_MCP_RO_PASSWORD=synthetic-ro\n"
     "PORTFOLIODB_DASHBOARD_PASSWORD=synthetic-dashboard\n"
     "ANTHROPIC_API_KEY=synthetic-llm-key\n"
+    "OPENAI_API_KEY=synthetic-openai-key\n"
+    "OPENROUTER_API_KEY=synthetic-openrouter-key\n"
+    "LLM_API_KEY=synthetic-generic-llm-key\n"
     "FINANCIAL_DATASETS_API_KEY=synthetic-fd-key\n"
+    # A key nobody has heard of yet: the collector's allowlist must not let
+    # tomorrow's vendor key in either.
+    "SOMEVENDOR_API_KEY=synthetic-future-key\n"
+    "PORTFOLIODB_MARKET_START=13:30\n"
     "PORTFOLIODB_TZ=Asia/Jerusalem\n"
     "PORTFOLIODB_MCP_ALLOWED_HOSTS=nas.lan,192.168.1.20\n"
     "PGADMIN_EMAIL=nobody@example.invalid\n"
@@ -57,7 +64,8 @@ SYNTHETIC_ENV = (
 )
 
 ALL_PROFILES = ("mcp", "tools")
-APP_SERVICES = ("dashboard", "scheduler", "mcp")
+APP_SERVICES = ("dashboard", "scheduler", "scheduler-llm", "mcp")
+SCHEDULERS = ("scheduler", "scheduler-llm")
 
 _FENCE = re.compile(r"```yaml\n(.*?)```", re.DOTALL)
 
@@ -274,7 +282,7 @@ def test_the_mcp_service_is_not_handed_the_write_password():
     # It still knows where the database is, and the services that write still log in.
     assert mcp["PORTFOLIODB_HOST"] == "postgres" and mcp["PORTFOLIODB_DB"] == "portfoliodb"
     assert "PORTFOLIODB_MCP_RO_USER" in mcp and "PORTFOLIODB_MCP_RO_PASSWORD" in mcp
-    for service in ("dashboard", "scheduler"):
+    for service in ("dashboard", "scheduler", "scheduler-llm"):
         env = _env(model, service)
         assert env.get("PORTFOLIODB_PASSWORD") == "synthetic-not-a-secret", service
         assert env.get("PORTFOLIODB_HOST") == "postgres", service
@@ -366,7 +374,7 @@ def test_pgadmin_runs_unprivileged_on_the_port_it_is_published_from(full_model):
     assert targets == {int(env["PGADMIN_LISTEN_PORT"])}
 
 
-@pytest.mark.parametrize("service", ["postgres", "dashboard", "scheduler", "mcp"])
+@pytest.mark.parametrize("service", ["postgres", "dashboard", "scheduler", "scheduler-llm", "mcp"])
 def test_every_long_running_service_has_a_healthcheck(full_model, service):
     hc = full_model["services"][service].get("healthcheck") or {}
     assert hc.get("test"), f"{service} has no healthcheck"
@@ -378,12 +386,13 @@ def test_healthchecks_poll_the_endpoints_the_commands_actually_serve(full_model)
     port = re.search(r"--server\.port (\d+)", " ".join(dash["command"])).group(1)
     assert f"127.0.0.1:{port}/_stcore/health" in " ".join(dash["healthcheck"]["test"])
 
-    sched = full_model["services"]["scheduler"]
-    cmd = sched["command"]
-    listen = cmd[cmd.index("-prometheus-listen-address") + 1]
-    assert listen.startswith("127.0.0.1:"), "supercronic's metrics must stay on the container's loopback"
-    assert f"http://{listen}/health" in " ".join(sched["healthcheck"]["test"])
-    assert not _ports(full_model, "scheduler"), "the scheduler publishes nothing"
+    for name in SCHEDULERS:
+        sched = full_model["services"][name]
+        cmd = sched["command"]
+        listen = cmd[cmd.index("-prometheus-listen-address") + 1]
+        assert listen.startswith("127.0.0.1:"), f"{name}: supercronic's metrics must stay on the container's loopback"
+        assert f"http://{listen}/health" in " ".join(sched["healthcheck"]["test"]), name
+        assert not _ports(full_model, name), f"{name} publishes nothing"
 
 
 @pytest.mark.parametrize("service", ["postgres", "pgadmin"])
@@ -400,24 +409,127 @@ def test_third_party_images_are_pinned_by_digest(full_model, service):
 def test_the_dashboard_password_reaches_the_dashboard_and_nothing_else(full_model):
     services = full_model["services"]
     assert _env(full_model, "dashboard").get("PORTFOLIODB_DASHBOARD_PASSWORD") == "synthetic-dashboard"
-    assert _env(full_model, "scheduler").get("PORTFOLIODB_DASHBOARD_PASSWORD") == ""
+    assert _env(full_model, "scheduler-llm").get("PORTFOLIODB_DASHBOARD_PASSWORD") == ""
+    assert "PORTFOLIODB_DASHBOARD_PASSWORD" not in _env(full_model, "scheduler")
     assert "PORTFOLIODB_DASHBOARD_PASSWORD" not in _env(full_model, "mcp")
     assert "PORTFOLIODB_DASHBOARD_PASSWORD" not in (services["pgadmin"].get("environment") or {})
 
 
-@pytest.mark.parametrize("service", ["dashboard", "scheduler"])
+@pytest.mark.parametrize("service", ["dashboard", "scheduler-llm"])
 def test_other_processes_secrets_are_blanked_for_the_app(full_model, service):
     env = _env(full_model, service)
     for key in ("PORTFOLIODB_MCP_TOKEN", "PORTFOLIODB_MCP_RO_PASSWORD", "PGADMIN_PASSWORD"):
         assert env.get(key) == "", f"{service} still receives {key}"
 
 
-def test_the_scheduler_keeps_the_keys_its_jobs_need(full_model):
+def test_the_keyed_scheduler_keeps_the_keys_its_jobs_need(full_model):
     """The brief calls the LLM and the enrichment calls Financial Datasets."""
-    env = _env(full_model, "scheduler")
+    env = _env(full_model, "scheduler-llm")
     assert env.get("ANTHROPIC_API_KEY") == "synthetic-llm-key"
+    assert env.get("LLM_API_KEY") == "synthetic-generic-llm-key"
     assert env.get("FINANCIAL_DATASETS_API_KEY") == "synthetic-fd-key"
     assert env.get("PORTFOLIODB_PASSWORD") == "synthetic-not-a-secret"
+
+
+# ── the collector's per-job secret boundary (audit O-3, re-score) ────────────
+
+# Everything the quote collector may be handed: where the database is, its
+# login, and the settings snapshot_prices.py and the modules it imports read
+# from the environment when the settings table cannot answer. Anything else —
+# above all an API key — stays out of the process that parses third-party pages.
+COLLECTOR_ALLOWLIST = {
+    "PORTFOLIODB_HOST", "PORTFOLIODB_PORT", "PORTFOLIODB_DB", "TZ",
+    "PORTFOLIODB_USER", "PORTFOLIODB_PASSWORD",
+    "PORTFOLIODB_TZ", "PORTFOLIODB_MARKET_START", "PORTFOLIODB_MARKET_END", "PORTFOLIODB_MARKET_WEEK",
+    "PORTFOLIODB_MARKET_OVERVIEW", "PORTFOLIODB_COLLECTOR_DEADLINE_S", "PORTFOLIODB_QUOTE_MAX_AGE_MIN",
+    "PORTFOLIODB_CONNECT_TIMEOUT",
+}
+
+
+def test_the_collector_is_handed_an_allowlist_not_the_env_file(full_model):
+    svc = full_model["services"]["scheduler"]
+    assert not svc.get("env_file"), "the collector must not receive .env wholesale"
+    env = _env(full_model, "scheduler")
+    assert set(env) <= COLLECTOR_ALLOWLIST, f"the collector receives {sorted(set(env) - COLLECTOR_ALLOWLIST)}"
+
+
+def test_the_collector_holds_no_api_key_not_even_a_new_one(full_model):
+    env = _env(full_model, "scheduler")
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "LLM_API_KEY",
+                "FINANCIAL_DATASETS_API_KEY", "SOMEVENDOR_API_KEY", "PORTFOLIODB_MCP_TOKEN",
+                "PORTFOLIODB_MCP_RO_PASSWORD", "PGADMIN_PASSWORD", "PORTFOLIODB_DASHBOARD_PASSWORD"):
+        assert key not in env, f"the collector holds {key}"
+    assert not [v for v in env.values() if str(v).startswith("synthetic-") and v != "synthetic-not-a-secret"], (
+        "a synthetic secret reached the collector under some other name"
+    )
+
+
+def test_the_collector_still_gets_its_login_and_its_window(full_model):
+    """The market window pinned in an operator's .env must still reach it."""
+    env = _env(full_model, "scheduler")
+    assert env["PORTFOLIODB_PASSWORD"] == "synthetic-not-a-secret"
+    assert env["PORTFOLIODB_HOST"] == "postgres"
+    assert env["PORTFOLIODB_MARKET_START"] == "13:30"
+    assert env["PORTFOLIODB_TZ"] == "Asia/Jerusalem"
+
+
+def test_each_scheduler_runs_its_own_crontab(full_model):
+    assert full_model["services"]["scheduler"]["command"][-1] == "/app/docker/crontab"
+    assert full_model["services"]["scheduler-llm"]["command"][-1] == "/app/docker/crontab-llm"
+
+
+def _cron_commands(path: Path) -> list[str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [l.split(None, 5)[5] for l in lines if l.strip() and not l.lstrip().startswith("#")]
+
+
+def test_the_crontabs_split_collection_from_keyed_jobs():
+    """Collection in the keyless container, keyed calls in the other, and
+    every job in exactly one of them."""
+    collector = _cron_commands(ROOT / "docker" / "crontab")
+    keyed = _cron_commands(ROOT / "docker" / "crontab-llm")
+    assert collector, "docker/crontab has no jobs"
+    assert keyed, "docker/crontab-llm has no jobs"
+    assert all("snapshot_prices.py" in c for c in collector), collector
+    assert not any("snapshot_prices.py" in c for c in keyed), keyed
+    assert any("advisor.py brief" in c for c in keyed)
+    assert any("fd_weekly_enrichment.py" in c for c in keyed)
+    assert not any("advisor.py" in c or "fd_weekly_enrichment" in c for c in collector)
+
+
+def test_the_image_ships_both_crontabs():
+    text = (ROOT / "app" / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^COPY docker/crontab docker/crontab-llm /app/docker/$", text, re.MULTILINE)
+
+
+# ── the dev overlay: runtime for the stack, dev for the tooling (audit O-2) ──
+
+
+@pytest.fixture(scope="module")
+def dev_model() -> dict:
+    if not _compose_available():
+        pytest.skip("docker compose is not installed here")
+    overlay = (ROOT / "docker-compose.dev.yml").read_text(encoding="utf-8")
+    return _render(overlay, profile=("devtools", "mcp"))
+
+
+def test_the_dev_overlay_builds_the_runtime_stage_for_every_service(dev_model):
+    for name in APP_SERVICES:
+        build = dev_model["services"][name].get("build") or {}
+        assert build.get("target") == "runtime", f"{name} would run a stage with pip in it"
+
+
+def test_the_devtools_service_is_the_dev_stage_hardened_and_keyless(dev_model):
+    svc = dev_model["services"]["devtools"]
+    assert svc["build"]["target"] == "dev"
+    assert svc.get("profiles") == ["devtools"], "`make dev-up` must never start it"
+    assert not svc.get("env_file"), "the test runner needs none of .env's secrets"
+    assert svc.get("read_only") is True
+    assert svc.get("cap_drop") == ["ALL"]
+    assert "no-new-privileges:true" in (svc.get("security_opt") or [])
+    assert svc["image"] != dev_model["services"]["dashboard"]["image"], (
+        "the dev stage must not overwrite the image the stack runs"
+    )
 
 
 def test_the_mcp_server_gets_the_reporting_timezone(full_model):
