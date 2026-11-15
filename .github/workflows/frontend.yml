@@ -1,0 +1,52 @@
+name: Front end
+
+# The dashboard's custom front end (app/dashboard/static): the committed bundle
+# must be the one its sources build, ESLint must pass with zero warnings (its
+# no-restricted-syntax rules are what make an unescaped innerHTML a build
+# failure), and the JavaScript must run - mount, every view, refresh, theme,
+# CSV export and a hostile-payload XSS walk - in jsdom.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Build check, lint, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Pinned to full commit SHAs, as every workflow is (tools/tests/test_ci_workflows.py).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # --ignore-scripts: nothing in the tree needs an install script (esbuild
+      # resolves its platform binary from an optional dependency).
+      - name: Install (exact versions from package-lock.json)
+        run: npm ci --ignore-scripts
+
+      - name: Syntax check the committed bundle
+        run: node --check app/dashboard/static/app.js
+
+      - name: Committed build matches its sources
+        run: npm run build:check
+
+      - name: ESLint (zero warnings)
+        run: npm run lint
+
+      - name: Tests (jsdom)
+        run: npm test

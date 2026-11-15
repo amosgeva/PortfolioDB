@@ -275,6 +275,70 @@ needs a schema step says so under **Upgrading**.
 - The positions CLI, both text reports and the Advisor close their
   connections instead of leaving them to the garbage collector (audit R-6).
 
+### Dashboard front end
+
+- **Security: payload text can no longer become markup.** Every write of
+  markup in the read-only views now goes through one escaping template
+  (`html` in `app/dashboard/static/src/core/html.js`); a symbol, note,
+  account, news title or fundamentals field containing `<img onerror=…>`,
+  quotes or `&#60;` entities renders as text. *At run time* a slot may sit
+  only between tags (text or nested markup), inside `<title>` (text only),
+  inside a quoted attribute value (text only), as the whole quoted value of
+  a URL attribute (`safeUrl()` only), or as a separated attribute list in a
+  tag (`attrs()` only, allow-listed names); anything else throws. Literal
+  text is tokenized: every attribute name and element it completes is
+  checked (no `on*`, `srcdoc`, script/style/iframe/textarea and other raw-text
+  or script-capable elements, no comments), and every template must end
+  outside any tag. *Lint and an AST guard* add that the template is only
+  ever used as a tag, imported plainly from `core/html.js`; that no other
+  markup sink is referenced; and that the front-end sources contain no
+  computed member access at all outside two audited data helpers. The exact
+  rules and their known limits are at the top of `core/html.js`. A jsdom test
+  walks every view with a hostile payload. Links must be `http(s)`.
+- **Security: CSV exports neutralise formulas.** A text cell starting with
+  `= + - @`, a tab or a carriage return is prefixed with `'` in the positions
+  and lots exports; numbers stay numeric.
+- **Privacy: no third-party requests by default.** Space Grotesk and
+  JetBrains Mono are self-hosted (SIL OFL, licences in
+  `app/dashboard/static/fonts/`) for the dashboard and for Manage, Advisor
+  and Data Health, which no longer load Google Fonts. The
+  ticker-logo CDN is used only when the payload's `config.logo_cdn` is true;
+  otherwise a symbol without a cached logo shows its letter badge.
+- **Price alerts are stored, not armed in the page.** The Alerts view lists
+  the alerts kept in the database (created on Manage → Alerts) and no longer
+  offers a form whose alerts vanished on refresh. The level shown is the one
+  compared, restated for any split since; an alert on a symbol with no quote
+  says "no quote" instead of "watching".
+- Amounts recorded in a currency other than USD are named in a notice at the
+  top of the dashboard, with what was done with each (added unconverted, or
+  left out). A non-USD cash balance is listed in the cash evidence but not
+  summed.
+- The KPI evidence follows the server's corrected figures: unrealized P&L is
+  market value less the cost of *priced* positions (an unpriced position is
+  named, not shown as a loss), total return is shown over peak invested
+  capital, and a ratio the server cannot compute reads "n/a" — including the
+  day change when no holding has a previous close, which the tab title, the
+  total-value line and the hero story now show as unknown rather than as a
+  flat +0.00%. The 1Y value
+  chart says when it is drawn from all history because less than a year has
+  been collected.
+- The benchmark label follows `config.benchmark_label`; the reporting time
+  zone and currency come from the payload (UTC and USD when absent — the
+  `Asia/Jerusalem` fallback is gone); NYSE holidays and 13:00 early closes are
+  derived from the exchange's rules instead of a 2026–2030 table.
+- "Buying power — Settled cash" is now **Cash (as entered)**, with the date
+  the balance was entered.
+- Chart values can be read by keyboard (focus the chart, arrow keys; each
+  point is announced) and by touch. Toasts are announced to screen readers.
+- Refreshing no longer leaves a resize and a popstate listener behind on the
+  page for every refresh.
+- `app.js` is now built from ES modules under `src/` by `npm run build`; the
+  bundle stays committed, so running the dashboard needs no Node. CSS tokens
+  live in `app/dashboard/static/tokens.css`, read by both halves of the UI
+  (the native pages' `_TOKENS_SOURCE`; `--warn-soft` moved there). A new
+  workflow (`frontend.yml`) checks the build, lints with zero warnings and
+  runs the tests.
+
 **Upgrading (ledger core)**
 
 - Run the schema step: `docker compose run --rm dashboard python app/apply_schema.py`.
