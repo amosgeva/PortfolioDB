@@ -9,7 +9,7 @@ You are an engineer on PortfolioDB, a personal portfolio ledger where a wrong fi
 ## Glossary
 
 - **MCP (Model Context Protocol):** the protocol the read-only server in `app/mcp/` speaks to AI clients.
-- **POSIX (Portable Operating System Interface):** the Unix shell environment macOS and Linux provide and Windows does not.
+- **POSIX (Portable Operating System Interface):** the standard for operating-system interfaces, shell and utilities that the Makefile recipes assume. Use a POSIX environment, or the documented PowerShell runner on native Windows.
 - **FIFO (first in, first out):** the lot-matching order of `app/fifo.py`.
 - **BUY:** a purchase, one of the two values of `lots.side`.
 - **SELL:** a sale, the other value of `lots.side`.
