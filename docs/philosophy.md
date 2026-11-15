@@ -24,7 +24,7 @@ phones it anywhere.
 
 Don't start from a blank page. Paste the prompt in
 [docs/investor-interview.md](investor-interview.md) into any capable LLM, answer
-its questions for twenty minutes, and paste the result into **Advisor → 📝
+its questions for twenty minutes, and paste the result into **Advisor →
 Investor one-pager**. Being interviewed is much easier than introspecting, and
 the output is already shaped to the headings below.
 
@@ -159,9 +159,10 @@ Note how much of it is numbers and refusals. That's what makes it usable.
 
 ## Where it's stored, and updating it
 
-Paste it into **Advisor → 📝 Investor one-pager** and it's saved in your
-database — included in `make backup`, and the expander title tells you which
-source is in force.
+Paste it into **Advisor → Investor one-pager** and press **Save one-pager**
+(the dashboard password unlocks the button). It is stored in your database —
+included in `make backup`, and the expander title tells you which source is in
+force. The MCP server reads the same saved copy through its read-only role.
 
 A `philosophy.md` file next to your `docker-compose.yml` still works as a
 fallback if you'd rather keep it in a file: the order is **database → mounted

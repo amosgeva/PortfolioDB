@@ -56,3 +56,4 @@ run `apply_schema.py` against the result.)
 | `003_finite_numeric_checks.sql` | `<> 'NaN'` checks on every numeric ledger column. |
 | `004_symbol_check.sql` | `instruments_symbol_format`: what a symbol may be (= `symbol_paths.SYMBOL_FILENAME_RE`). |
 | `005_corporate_actions_ratio_finite.sql` | `corporate_actions` ratio not NaN and consistent with `kind`; `price_snapshots.last_price > 0`. |
+| `006_price_alerts_and_lot_audit.sql` | `price_alerts` (Manage → Alerts) and `lot_deletions` (the audit row for each lot deleted from the Manage page). |

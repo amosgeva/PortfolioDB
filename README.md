@@ -95,10 +95,11 @@ random-walk prices, not anyone's holdings.</sub>
 
 - **Lots**, not positions: every BUY/SELL is a row. Open quantity, cost basis, and realized P&L are always recomputed from `lots` on read — never persisted. FIFO and moving-average engines run side-by-side.
 - **Several brokers, one record.** Every lot and cash balance carries an `account` — a free-form label, so call them whatever your statements call them. Matching is scoped per `(symbol, account)`, which is what keeps each broker's cost basis its own: shares bought at one broker are never FIFO-matched against a sale at another. The dashboard shows both views — per account, and merged across all of them — so the same holding split across two brokers reads as one position without the two ledgers contaminating each other.
-- **Price snapshots** collected on a schedule inside the stack (via yfinance) during a collector window you configure. Append-only `(symbol, ts)` PK. Quotes that are stale upstream are rejected rather than written under a fresh timestamp, and vendor-reported splits are recorded to `corporate_actions`.
-- **Splits adjusted at read time**: `corporate_actions` is the source of truth and `lots`/`price_snapshots` are never rewritten, so the append-only invariant holds and an adjustment is undone by deleting its row.
+- **Price snapshots** collected on a schedule inside the stack (via yfinance) during a collector window you configure. Append-only `(symbol, ts)` PK. Quotes that are stale upstream, and zero prices, are rejected rather than written under a fresh timestamp, and vendor-reported splits are recorded to `corporate_actions` for your review.
+- **Splits adjusted at read time**: `corporate_actions` is the source of truth and `lots`/`price_snapshots` are never rewritten, so the append-only invariant holds and an adjustment is undone by deleting its row. A split the collector recorded changes nothing until you approve it, because only you know whether your broker credited the shares: `docker compose run --rm dashboard python app/check_splits.py` lists pending ones, and `--approve SYMBOL:YYYY-MM-DD --shares-credited` (or `--quantities-already-post-split`) applies one ([methodology](docs/methodology.md)).
+- **Price alerts**: armed in Manage → Alerts on a held or watchlisted symbol, stored in the database, and shown armed or triggered in the Alerts & News view against the latest collected price. Deactivated, never deleted, from the page. There are no push notifications: an alert shows as triggered when you look.
 - **Markets strip**: index futures and volatility above the returns row, so the dashboard says something during the hours your own holdings have no prints — futures quote nearly 23 hours, and a pre-market equity quote usually does not exist at all. Context only: benchmarks have no lots, so they cannot reach any position, cost-basis or return calculation, and they stay out of the watchlist rail and Data Health. Set the symbols in Manage → Settings (`SYMBOL:Label`, any yfinance symbol — `^TA125.TA`, `^STOXX50E`, `GC=F`, `BTC-USD`); clear the field to hide the strip.
-- **Streamlit dashboard** with KPIs, holdings, equity curve, market movers, period statistics (best/worst day, week and month, consistency, streaks), fundamentals, news, a data-health panel, an Advisor tab, and a one-click HTML executive report.
+- **Streamlit dashboard** with KPIs, holdings, equity curve, market movers, period statistics (best/worst day, week and month, consistency, streaks), fundamentals, news, a data-health panel, an Advisor tab, and a one-click HTML executive report. The read-only views are open to whoever can reach the port; everything that writes — Manage (trades, watchlist, cash, alerts, settings) and the Advisor's model calls — needs the dashboard password, `PORTFOLIODB_DASHBOARD_PASSWORD`.
 - **Advisor layer** (optional): injects your `philosophy.md` + live portfolio snapshot + recent chat into every model call. Works with Anthropic, OpenAI, OpenRouter, or a **fully local model via Ollama** — so your financial data can stay on your machine, LLM included. Persists structured briefs to `advisor_briefs`. Streaming chat in the dashboard. See [docs/llm-providers.md](docs/llm-providers.md).
 - **Fundamentals enrichment** (optional): a weekly pull from Financial Datasets populates `fd_*` tables (company facts, financial metrics, earnings, filings, insider trades, institutional ownership, news).
 - **MCP server** (optional): exposes positions, P&L, KPIs, prices, fundamentals, risk analytics, trade quality, data-quality diagnostics and a consolidated portfolio review to AI agents (Claude Code, Claude Desktop, Cursor) over Streamable HTTP with Bearer auth. Read-only — same engines as the dashboard. See [MCP server](#mcp-server) below.
@@ -175,6 +176,7 @@ Worth setting now if they apply to you:
 
 | Key | Why |
 |---|---|
+| `PORTFOLIODB_DASHBOARD_PASSWORD` | Unlocks the dashboard's write pages (Manage, Advisor). Any long random string. Without it they stay read-only |
 | `PORTFOLIODB_TZ` | Your IANA zone (e.g. `Europe/Berlin`). The collector window defaults are UTC-shaped, so on another zone the daily numbers will not line up ([scheduling](docs/scheduling.md)) |
 | `LLM_API_KEY` | Enables the advisor. Any provider — Anthropic, OpenAI, OpenRouter, or a local model with no key at all ([providers](docs/llm-providers.md)) |
 | `PORTFOLIODB_MCP_TOKEN` | Only if you plan to let AI agents query the ledger |
@@ -211,7 +213,8 @@ differ by platform, and everything from here on is the same on all three.
 Those `docker compose` lines are the whole product and you never need anything
 else. Each platform also has a shortcut runner that wraps them, and both give
 you the same one-command version of step 2 — generate a password, write it to
-both keys, generate an MCP token, and lock the file down:
+both keys, generate the dashboard password and an MCP token, and lock the file
+down:
 
 **macOS / Linux — the Makefile.** `make` on its own lists every target.
 
@@ -321,17 +324,23 @@ Then, in whatever order suits you:
   ([docs/llm-providers.md](docs/llm-providers.md), including fully-local Ollama),
   then give it your investing rules: paste the prompt from
   [docs/investor-interview.md](docs/investor-interview.md) into any LLM, answer
-  its questions, and paste the one-pager it writes into **Advisor → 📝 Investor
-  one-pager**. [docs/philosophy.md](docs/philosophy.md) explains what makes a
+  its questions, and paste the one-pager it writes into **Advisor → Investor
+  one-pager** (saving it needs the dashboard password, below). [docs/philosophy.md](docs/philosophy.md) explains what makes a
   good one.
+- **Unlock the write pages** — Manage and the Advisor's model calls ask for
+  `PORTFOLIODB_DASHBOARD_PASSWORD` from `.env` (`make init` generates one); the
+  unlock lasts one browser session and relocks after 30 minutes idle.
 - **Set up backups** before you have data worth losing —
   [docs/operations.md](docs/operations.md).
 
-Machine-specific tweaks — a host directory for the database, a different port,
-binding to localhost only — go in `docker-compose.override.yml`; copy
-`docker-compose.override.yml.example` to start. Don't put this on the public
-internet: it has no login. [docs/exposure.md](docs/exposure.md) covers doing it
-safely.
+Every port is bound to `127.0.0.1` by default, so the dashboard, Postgres and
+the MCP server are reachable from this machine only. Machine-specific tweaks — a
+host directory for the database, a different port, reaching the dashboard from
+your LAN — go in `docker-compose.override.yml`; copy
+`docker-compose.override.yml.example` to start (the LAN opt-in is its last block,
+commented out). Don't put this on the public internet: the read-only views have
+no login, and the write pages share one password. [docs/exposure.md](docs/exposure.md)
+covers tunnels, a tailnet and proxies, which are safer than a LAN bind.
 
 ### Documentation
 
@@ -343,9 +352,10 @@ safely.
 | [Scheduling](docs/scheduling.md) | The jobs, the collector window, upgrading |
 | [Operations](docs/operations.md) | Backups, restore, upgrades, health checks |
 | [Changelog](CHANGELOG.md) | What changed, and whether an upgrade moves a number |
-| [Exposure](docs/exposure.md) | Default bindings, localhost-only override, tailnet, reverse proxies |
+| [Exposure](docs/exposure.md) | Loopback-only defaults, the LAN opt-in, tunnels, tailnet, reverse proxies, container hardening |
 | [CSV import](docs/csv-import.md) | Bulk-loading history from a broker export |
-| [Methodology](docs/methodology.md) | How trade quality and fee attribution are computed |
+| [Methodology](docs/methodology.md) | How every figure is computed: fees, processing order, returns, splits and their review, currency scope, total return |
+| [Commands](docs/commands.md) | Every `make` target beside the `docker compose` line it runs |
 
 Prefer running Python on the host? That still works: install
 `app/requirements.txt`, set `PORTFOLIODB_PASSWORD`, and run the scripts from
@@ -360,23 +370,28 @@ PortfolioDB/
 ├── app/                       # Long-lived Python code
 │   ├── streamlit_app.py       # Dashboard shell + embedded views
 │   ├── modern2_native.py      # Native views (Manage / Advisor / Data Health)
+│   ├── native_auth.py         # The password gate in front of every dashboard write
 │   ├── dashboard/             # Payload builder + static shell / js / css
 │   ├── advisor.py             # Brief + chat (Anthropic/OpenAI/OpenRouter/Ollama)
 │   ├── exec_report.py         # Self-contained HTML executive report
 │   ├── portfolio.py           # FIFO/avg-cost merge (single source of truth for positions)
+│   ├── ledger_inputs.py       # Lots and prices restated by the splits in effect — what every reader loads
 │   ├── fifo.py / avg_cost.py  # Lot-matching engines (per-match fee attribution)
-│   ├── twr.py / holdings.py   # Time-weighted return + historical holdings
+│   ├── holdings.py            # The one open-quantity implementation + historical holdings
+│   ├── twr.py                 # Time-weighted return
+│   ├── portfolio_kpis.py      # Totals every surface shares (dashboard, reports, Advisor, MCP)
 │   ├── xirr.py                # Money-weighted return (investment-level)
 │   ├── period_stats.py        # Best/worst period statistics
 │   ├── corporate_actions.py   # Read-time split adjustment + detection
-│   ├── check_splits.py        # Split scanner, cross-checked against the vendor
+│   ├── check_splits.py        # Split review (--approve) + scanner, cross-checked against the vendor
 │   ├── db.py                  # Postgres connection helpers
 │   ├── snapshot_prices.py     # yfinance price collector
 │   ├── fd_store.py            # Financial Datasets persistence + read API
 │   ├── fd_weekly_enrichment.py
 │   ├── add_lot.py / sell_lot.py / set_cash.py / set_watchlist.py / positions.py
 │   ├── report_portfolio_db.py # Text briefing (daily/EOD)
-│   ├── Dockerfile             # Image for the optional MCP service
+│   ├── apply_schema.py        # Schema + migrations, recorded in schema_migrations
+│   ├── Dockerfile             # The one image every service runs (dashboard, scheduler, MCP, CLIs)
 │   ├── mcp/                   # MCP server — exposes data to AI agents
 │   │   ├── server.py          # FastMCP entrypoint, /mcp + /healthz
 │   │   ├── auth.py            # Bearer-token verifier
@@ -389,23 +404,23 @@ PortfolioDB/
 │   │   └── tests/             # KPI parity, reconciliation, null contracts
 │   └── tests/                 # engines, splits, TWR, XIRR, period stats
 ├── sql/
-│   ├── schema.sql             # Core tables: instruments, lots, price_snapshots,
-│   │                          # cash_snapshots, income, corporate_actions,
-│   │                          # snapshot_runs, chat_log, advisor_briefs
-│   └── schema_fd.sql          # Financial Datasets enrichment tables
+│   ├── schema.sql             # The full current schema (see Data model below)
+│   ├── schema_fd.sql          # Financial Datasets enrichment tables
+│   ├── migrations/            # Numbered upgrades for existing databases
+│   └── create_ro_role.sql     # The MCP's SELECT-only role (make ro-role)
 ├── Makefile                   # Entry point for every command (wraps compose)
 ├── docker/crontab             # What the scheduler service runs
 ├── docker-compose.yml         # postgres + dashboard + scheduler; mcp/pgadmin behind profiles
 ├── docker-compose.override.yml.example
 ├── philosophy.md.template     # Stub for the advisor's operator one-pager
 ├── .env.template
-├── .githooks/                 # Pre-commit: unused imports + both test suites
+├── .githooks/                 # Pre-commit: unused imports, ruff, both test suites
 ├── docs/
 │   ├── methodology.md         # How every number is computed — read before extending
 │   ├── philosophy.md          # Writing the one-pager the advisor reads
 │   └── investor-interview.md  # A prompt that interviews you and writes it
 ├── CLAUDE.md                  # Guidance for Claude Code working in this repo
-└── data/                      # Live Postgres data (gitignored — DO NOT EDIT)
+└── data/                      # Only with the ./data override: live Postgres data (gitignored — DO NOT EDIT)
 ```
 
 ---
@@ -430,7 +445,7 @@ make report
 make backup                        # gzipped pg_dump into backups/
 make psql
 make logs ARGS=scheduler
-make test                          # both suites, inside the container
+make test                          # build the image from your working tree, run the fast suites in it
 ```
 
 Each target is a thin wrapper — `docker compose run --rm dashboard python app/positions.py`
@@ -445,14 +460,21 @@ without `make`. Running the Python on the host also works: install
 
 ## Data model
 
-Four core tables, all append-only:
+The ledger tables, appended to rather than rewritten:
 
 - **`instruments`** — symbol registry. `watchlist=TRUE` keeps a symbol in the snapshot rotation even when no lots are open.
 - **`lots`** — every BUY/SELL trade. `side` + positive `quantity` encode direction; a unique index on `(symbol, account, side, trade_date, quantity, price)` is a best-effort dedupe guard; every writer reports a refused duplicate instead of claiming success.
 - **`price_snapshots`** — time-series quotes, PK `(symbol, ts)`.
 - **`cash_snapshots`** — manual cash balances per account (no broker auto-pull). Latest row per `account` wins.
+- **`income`** — dividends, interest and distributions, kept out of cost basis.
+- **`corporate_actions`** — splits, applied at read time once in effect (reviewed, or entered by hand).
 
-Plus advisor-layer tables (`chat_log`, `advisor_briefs`) and the optional Financial Datasets enrichment tables (`fd_*`).
+Around them: `settings` (what the Settings tab edits), `price_alerts`,
+`lot_deletions` (every lot deleted from the Manage page, in full, with the
+reason given), `snapshot_runs` (the collector's run log), the advisor's
+`chat_log` and `advisor_briefs`, `schema_migrations` (which migrations
+`apply_schema.py` has applied), and the optional Financial Datasets enrichment
+tables (`fd_*`).
 
 There is **no positions table.** Recomputing from `lots` on every read is the design.
 
@@ -495,16 +517,28 @@ make ro-role          # creates portfoliodb_ro and prints the two .env lines
 ```env
 PORTFOLIODB_MCP_RO_USER=portfoliodb_ro       # required — printed by make ro-role
 PORTFOLIODB_MCP_RO_PASSWORD=<printed>        # required
-PORTFOLIODB_MCP_TOKEN=<long-random-string>   # required — clients send as Bearer
+PORTFOLIODB_MCP_TOKEN=<long-random-string>   # required — clients send as Bearer; 32+ characters
+PORTFOLIODB_MCP_ALLOWED_HOSTS=               # optional — names/addresses other machines use
 PORTFOLIODB_MCP_PORT=8765                    # optional, default 8765
-PORTFOLIODB_MCP_HOST=0.0.0.0                 # optional, default 127.0.0.1 —
-                                             # set this only to serve the LAN
 ```
 
-The role holds `SELECT` and nothing else, so "read-only" is a property of the
-database and not a promise of the code. Without it the server refuses to
-connect and says so ([exposure](docs/exposure.md#the-mcp-server) has the
-deliberate opt-out).
+The role holds `SELECT` on exactly the tables the server reads and nothing
+else, so "read-only" is a property of the database and not a promise of the
+code. Without it the server refuses to connect and says so
+([exposure](docs/exposure.md#the-mcp-server) has the deliberate opt-out).
+**Re-run `make ro-role` after upgrading**: it revokes and re-grants, so an
+existing role picks up a changed list (1.8.0 adds `settings`, for the reporting
+timezone and the saved one-pager). `python app/create_ro_role.py --password
+<current>` keeps the password you have.
+
+The server refuses to start with a token under 32 characters or with fewer
+than 10 distinct ones (`make init` generates 40). It accepts requests whose
+`Host` header is a loopback name or one listed in
+`PORTFOLIODB_MCP_ALLOWED_HOSTS` and answers anything else with 421, which is
+what stops a DNS-rebinding web page from reaching it through your browser. An
+agent on another machine that connects by name or LAN address needs that name
+listed — and the port reached through a tunnel or an override, since compose
+publishes it on `127.0.0.1` only.
 
 Generate a strong token:
 
@@ -530,9 +564,14 @@ curl -s localhost:8765/healthz
 It sits behind a compose profile because most installs won't want a second
 network listener. The equivalent long form:
 
-```powershell
-docker-compose --profile mcp up -d mcp
+```bash
+docker compose --profile mcp up -d mcp
 ```
+
+Running the server on the host instead (`python -m app.mcp.server` from the
+repo root), `PORTFOLIODB_MCP_HOST` sets the interface it binds — default
+`127.0.0.1`. In compose it listens on the container's own interface and the
+published port decides who reaches it.
 
 Liveness check (unauthenticated, for tunnels / health probes):
 
@@ -650,18 +689,28 @@ git config core.hooksPath .githooks
 
 Known and deliberate, so you can decide before you invest an evening:
 
-- **Single currency.** The engines assume one currency end to end. If you hold
-  instruments in several, the totals are arithmetic on mixed units — wrong, not
-  approximate. Multi-currency (FX table, per-lot currency, translated cost basis)
-  is the top roadmap item and touches every engine, so it will not be a patch.
+- **USD only.** The engines assume one currency end to end, and there is no FX
+  table. What can be detected is refused at the door: `add-lot`, `sell-lot` and
+  the CSV importer refuse a non-US listing (`.TA`, `.L`, `.HK` …) or an
+  instrument registered in another currency unless you pass `--allow-non-usd`,
+  the Manage page asks before recording one, and income in another currency is
+  refused. Anything non-USD already in the ledger is not summed as dollars
+  without saying so: such income and cash are left out of every total and
+  listed, and such an instrument stays in the valuation, flagged on every
+  surface ([methodology §12](docs/methodology.md#12-reporting-currency)).
+  Multi-currency (FX table, per-lot currency, translated cost basis) is the top
+  roadmap item and touches every engine, so it will not be a patch.
 - **No broker sync.** You enter trades, or import a CSV. There is no Plaid, no
   IBKR Flex, no scraping — by design: no third party gets credentials to your
   brokerage, and the ledger can't be silently rewritten by an integration.
 - **Equities, ETFs, and anything yfinance quotes.** No options, bonds, or
   crypto-native accounting. You *can* record them as lots and they will value if
   yfinance has a symbol, but there is no options-specific handling.
-- **No authentication.** Single-user by design; the network is your access
-  control ([docs/exposure.md](docs/exposure.md)). Built-in auth is post-1.0.
+- **No user accounts.** Single-user by design, and the network is your main
+  access control: every port binds to `127.0.0.1` unless you opt in
+  ([docs/exposure.md](docs/exposure.md)). The dashboard's read-only views have
+  no login. Its write pages share one password (`PORTFOLIODB_DASHBOARD_PASSWORD`;
+  unset means read-only), and the MCP server needs its bearer token.
 - **Cash is manual.** Latest snapshot per account wins. No auto-pull.
 - **Shorts are not supported.** A SELL exceeding open BUYs is truncated with a
   warning; the Data Health page reports it as an orphaned sell.

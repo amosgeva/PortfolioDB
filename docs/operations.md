@@ -137,6 +137,10 @@ If prices look stale:
 - **The advisor** stores each brief in `advisor_briefs` and chat in `chat_log`;
   both grow slowly and are included in backups.
 - **Splits** are recorded in `corporate_actions` and applied at read time.
-  `docker compose run --rm dashboard python app/check_splits.py` scans for
-  unrecorded ones and cross-checks each hit against the vendor — a price ratio
-  alone cannot tell a split from a crash.
+  `docker compose run --rm dashboard python app/check_splits.py` lists the
+  splits the collector recorded that await your review — they change no figure
+  until you approve one with `--approve SYMBOL:YYYY-MM-DD --shares-credited` (or
+  `--quantities-already-post-split`; [methodology](methodology.md#7-splits)
+  explains which) — and scans for unrecorded ones, cross-checking each hit
+  against the vendor: a price ratio alone cannot tell a split from a crash.
+  `apply_schema.py` also lists pending reviews after an upgrade.

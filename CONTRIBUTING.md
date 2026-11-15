@@ -109,10 +109,22 @@ working tree.
   when handing data to a DataFrame for display.
 - **The ledger is append-only.** Corrections are new rows, and split adjustment
   happens at read time (`app/corporate_actions.py`) — nothing rewrites `lots` or
-  `price_snapshots`.
+  `price_snapshots`. The one deletion path, the Manage page, records the whole
+  row and a reason in `lot_deletions` in the same statement.
 - **There is no positions table.** Open quantity, cost basis and realized P&L are
   recomputed from `lots` on every read, through
   `app/portfolio.py::compute_fifo_merged`. Keep its output contract stable.
+- **Readers load lots through `app/ledger_inputs.py`**, which restates them and
+  their prices by the splits in effect; a pending (unreviewed) split adjusts
+  nothing. Lots are processed in `ledger_core.processing_key` order — date, then
+  every BUY before any SELL that day — and "what is held" is
+  `holdings.net_quantities` (or `lot_open_quantities()` in SQL), not a fresh
+  sum. A reader that does its own thing disagrees with the others the day a
+  split is recorded; the source scan in `app/tests/test_ledger_inputs.py` lists
+  the deliberate exceptions.
+- **Dashboard writes go through the password gate.** A new write path on a
+  native page calls `native_auth.require_unlocked()` immediately before it
+  writes; the CLIs and the scheduler do not use the password.
 - **Symbols are uppercase** on the way in.
 - **Credentials come from `app/db.py::load_config`.** Never read a password
   directly, never hardcode one, not even in a throwaway script. The one
@@ -130,8 +142,13 @@ working tree.
 Add a numbered file under `sql/migrations/` **and** make the same change in
 `sql/schema.sql` in the same commit, then bump the version header there and
 `SCHEMA_VERSION` in `app/mcp/services/cutoff.py`. Fresh installs read
-`schema.sql`; existing ones apply migrations in order. See
-`sql/migrations/README.md`.
+`schema.sql`; existing ones apply migrations in order through
+`app/apply_schema.py` (`make schema`), which records each one in
+`schema_migrations` with a checksum and reports a migration whose text changed
+after it was applied — so fix a shipped migration with a new one. If the MCP
+server must read the new table, add it to the read-only role's grant list
+(`sql/create_ro_role.sql`) and say in the changelog that `make ro-role` needs
+re-running. See `sql/migrations/README.md`.
 
 ## Cutting a release
 
@@ -169,6 +186,13 @@ because they could be.
 Explain *why* in the message, not just what — the diff already says what. Keep
 one concern per PR where you can. CI runs both suites on Linux; a green run and
 a description of how you verified the change by hand is plenty.
+
+`main` is protected. A pull request merges only when it is up to date with
+`main` and these checks pass: `Test suites (no database)`, `Lint (ruff)`,
+`Test suites (live database)`, `Application image (build and self-test)`,
+`Windows runner (init, both PowerShell hosts)` and `Windows runner
+(backup/restore round trip)`. When `main` moves under your branch, merge it in
+rather than force-pushing.
 
 ### Merging without publishing: `[skip publish]`
 
