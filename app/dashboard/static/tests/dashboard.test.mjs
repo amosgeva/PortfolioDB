@@ -419,3 +419,25 @@ test('native pages open through Streamlit’s hidden nav buttons when present (W
     assert.deepEqual(bare.clicks.anchors, ['?view=advisor']);
   });
 });
+test('dayChangePct null (no previous close) renders n/a, neutral, in the title, the total line and the story', () => {
+  const p = demo();
+  p.kpi.dayChangePct = null;
+  p.kpi.dayChange = 0;
+  withPage(p, {}, (page) => {
+    const title = page.parent.window.document.title;
+    assert.equal(title, '● n/a · PortfolioDB', 'tab title says n/a, not +0.00%');
+    const sub = $(page, '#kpi-total-sub');
+    assert.match(sub.textContent, /^n\/a/);
+    assert.equal(sub.querySelector('svg'), null, 'no up/down arrow');
+    assert.equal(sub.querySelectorAll('.up, .down').length, 0, 'no gain/loss colour');
+    assert.ok(!sub.textContent.includes('+$0.00'));
+    const story = $(page, '#kpi-story').textContent;
+    assert.ok(!story.includes('Flat today'), 'unknown is not flat');
+    assert.match(story, /^No day change yet/);
+  });
+  // A known day move still gets its sign, arrow and colour.
+  withPage(demo(), {}, (page) => {
+    assert.match(page.parent.window.document.title, /^[▲▼●] [+-]\d+\.\d\d% · PortfolioDB$/);
+    assert.ok($(page, '#kpi-total-sub .delta.up, #kpi-total-sub .delta.down'));
+  });
+});

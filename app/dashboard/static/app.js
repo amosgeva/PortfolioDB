@@ -476,9 +476,10 @@
   function brandParent(dayPct) {
     const d = parentDoc();
     if (!d) return;
-    const dp = Number(dayPct) || 0;
-    const arrow = dp > 0 ? "▲" : dp < 0 ? "▼" : "●";
-    d.title = arrow + " " + (dp >= 0 ? "+" : "") + dp.toFixed(2) + "% · PortfolioDB";
+    const known = dayPct != null && Number.isFinite(Number(dayPct));
+    const dp = known ? Number(dayPct) : 0;
+    const arrow = !known ? "●" : dp > 0 ? "▲" : dp < 0 ? "▼" : "●";
+    d.title = arrow + " " + (known ? (dp >= 0 ? "+" : "") + dp.toFixed(2) + "%" : "n/a") + " · PortfolioDB";
     try {
       const c = document.createElement("canvas");
       c.width = 64;
@@ -487,7 +488,7 @@
       if (x) {
         x.beginPath();
         x.arc(32, 32, 24, 0, Math.PI * 2);
-        x.fillStyle = dp >= 0 ? "#0c994f" : "#ed4a46";
+        x.fillStyle = !known ? "#72767d" : dp >= 0 ? "#0c994f" : "#ed4a46";
         x.fill();
         let link = d.querySelector('link[rel~="icon"]');
         if (!link) {
@@ -1140,10 +1141,11 @@
   }
   function narrative() {
     const k = app.D.kpi || {}, dc = k.dayChange || 0, parts = [];
-    if (Math.abs(dc) < 5e-3) parts.push("Flat today");
+    if (k.dayChangePct == null) parts.push("No day change yet (no previous close to compare with)");
+    else if (Math.abs(dc) < 5e-3) parts.push("Flat today");
     else parts.push((dc > 0 ? "Up " : "Down ") + money(Math.abs(dc)) + " (" + pct(k.dayChangePct) + ") today");
     const rs = holdingRows();
-    if (rs.length && Math.abs(dc) >= 5e-3) {
+    if (k.dayChangePct != null && rs.length && Math.abs(dc) >= 5e-3) {
       const top = rs.slice().sort((a, b) => Math.abs(b.day * b.qty) - Math.abs(a.day * a.qty))[0];
       if (top && Math.abs(top.day * top.qty) > 5e-3) {
         parts.push((top.day * top.qty >= 0 ? "led by " : "dragged by ") + top.sym + " " + pct(top.dayPct));
@@ -1174,7 +1176,7 @@
   function renderKPIs() {
     const k = app.D.kpi || {};
     countUp($("#kpi-total"), k.totalValue || 0, money);
-    setHTML($("#kpi-total-sub"), html`${deltaHTML(k.dayChange || 0, k.dayChangePct, true)}${muted("today")}`);
+    setHTML($("#kpi-total-sub"), k.dayChangePct == null ? html`<span class="delta">n/a</span>${muted("today · no previous close yet")}` : html`${deltaHTML(k.dayChange || 0, k.dayChangePct, true)}${muted("today")}`);
     setText($("#kpi-story"), narrative());
     const spark = $("#kpi-hero-spark");
     if (spark) {

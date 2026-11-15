@@ -173,9 +173,12 @@ export function themeParent(dark) {
 export function brandParent(dayPct) {
   const d = parentDoc();
   if (!d) return;
-  const dp = Number(dayPct) || 0;
-  const arrow = dp > 0 ? '▲' : dp < 0 ? '▼' : '●';
-  d.title = arrow + ' ' + (dp >= 0 ? '+' : '') + dp.toFixed(2) + '% · PortfolioDB';
+  // null = no previous close to compare with: unknown, shown as n/a with a
+  // neutral dot, never as a flat +0.00%.
+  const known = dayPct != null && Number.isFinite(Number(dayPct));
+  const dp = known ? Number(dayPct) : 0;
+  const arrow = !known ? '●' : dp > 0 ? '▲' : dp < 0 ? '▼' : '●';
+  d.title = arrow + ' ' + (known ? (dp >= 0 ? '+' : '') + dp.toFixed(2) + '%' : 'n/a') + ' · PortfolioDB';
   try {
     const c = document.createElement('canvas'); c.width = 64; c.height = 64;
     const x = c.getContext('2d');
@@ -183,7 +186,7 @@ export function brandParent(dayPct) {
       x.beginPath(); x.arc(32, 32, 24, 0, Math.PI * 2);
       // The tab strip is light or dark by OS theme, not ours, so the dot has to
       // clear 3:1 on both: the --up/--down hues re-solved at that lightness.
-      x.fillStyle = dp >= 0 ? '#0c994f' : '#ed4a46'; x.fill();
+      x.fillStyle = !known ? '#72767d' : dp >= 0 ? '#0c994f' : '#ed4a46'; x.fill();
       let link = d.querySelector('link[rel~="icon"]');
       if (!link) { link = d.createElement('link'); link.rel = 'icon'; d.head.appendChild(link); }
       link.href = c.toDataURL('image/png');

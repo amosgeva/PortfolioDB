@@ -72,10 +72,13 @@ function cashSub() {
 // One-line story for the hero card: day move, top contributor, MTD vs benchmark.
 export function narrative() {
   const k = app.D.kpi || {}, dc = k.dayChange || 0, parts = [];
-  if (Math.abs(dc) < 0.005) parts.push('Flat today');
+  // dayChangePct is null when no holding has a priced previous close: the day
+  // move is unknown, which is not the same as flat (dayChange is 0.0 then).
+  if (k.dayChangePct == null) parts.push('No day change yet (no previous close to compare with)');
+  else if (Math.abs(dc) < 0.005) parts.push('Flat today');
   else parts.push((dc > 0 ? 'Up ' : 'Down ') + F.money(Math.abs(dc)) + ' (' + F.pct(k.dayChangePct) + ') today');
   const rs = holdingRows();
-  if (rs.length && Math.abs(dc) >= 0.005) {
+  if (k.dayChangePct != null && rs.length && Math.abs(dc) >= 0.005) {
     const top = rs.slice().sort((a, b) => Math.abs(b.day * b.qty) - Math.abs(a.day * a.qty))[0];
     if (top && Math.abs(top.day * top.qty) > 0.005) {
       parts.push((top.day * top.qty >= 0 ? 'led by ' : 'dragged by ') + top.sym + ' ' + F.pct(top.dayPct));
@@ -108,7 +111,10 @@ function sparkWindowLabel(series, up) {
 export function renderKPIs() {
   const k = app.D.kpi || {};
   countUp($('#kpi-total'), k.totalValue || 0, F.money);
-  setHTML($('#kpi-total-sub'), html`${deltaHTML(k.dayChange || 0, k.dayChangePct, true)}${muted('today')}`);
+  // Unknown day move: a neutral "n/a", no arrow and no gain/loss colour.
+  setHTML($('#kpi-total-sub'), k.dayChangePct == null
+    ? html`<span class="delta">n/a</span>${muted('today · no previous close yet')}`
+    : html`${deltaHTML(k.dayChange || 0, k.dayChangePct, true)}${muted('today')}`);
   setText($('#kpi-story'), narrative());
   const spark = $('#kpi-hero-spark');
   if (spark) {

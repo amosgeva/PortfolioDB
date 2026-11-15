@@ -124,7 +124,10 @@ needs a schema step says so under **Upgrading**.
 - The KPI evidence follows the server's corrected figures: unrealized P&L is
   market value less the cost of *priced* positions (an unpriced position is
   named, not shown as a loss), total return is shown over peak invested
-  capital, and a ratio the server cannot compute reads "n/a". The 1Y value
+  capital, and a ratio the server cannot compute reads "n/a" — including the
+  day change when no holding has a previous close, which the tab title, the
+  total-value line and the hero story now show as unknown rather than as a
+  flat +0.00%. The 1Y value
   chart says when it is drawn from all history because less than a year has
   been collected.
 - The benchmark label follows `config.benchmark_label`; the reporting time
