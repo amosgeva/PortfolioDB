@@ -338,6 +338,22 @@ needs a schema step says so under **Upgrading**.
   (the native pages' `_TOKENS_SOURCE`; `--warn-soft` moved there). A new
   workflow (`frontend.yml`) checks the build, lints with zero warnings and
   runs the tests.
+- The rail, the phone tab bars, the page headings and every rail glyph come
+  from one file, `app/dashboard/static/nav.json`, for both halves of the UI:
+  the front end draws its rail and tab bar from it (through the escaping
+  template), the native pages and `streamlit_app.py` read it through
+  `app/dashboard/nav.py`, which refuses an entry or glyph either half could
+  not draw. Contract tests on both sides (`app/tests/test_nav_contract.py`,
+  `tests/nav.test.mjs`) fail when a navigation or icon change reaches only
+  one of them (R-3). The command palette now lists Data Health too.
+- **A real-browser integration job** (`frontend.yml`, *Browser integration
+  (Streamlit + Postgres)*) runs the dashboard in Chromium against a real
+  Streamlit server and a demo-seeded Postgres at 360, 768 and 1440 px: iframe
+  mount and soft-refresh remount (no listener build-up, no page load), sizing
+  and scroll, theme, rail/tab-bar navigation into the native pages and back in
+  one session, a Manage draft and the unlock surviving the trip, and the write
+  gate. It names any private Streamlit selector `core/host.js` depends on that
+  stops matching (U-9). Locally: `npm run e2e` (see `playwright.config.mjs`).
 
 **Upgrading (ledger core)**
 

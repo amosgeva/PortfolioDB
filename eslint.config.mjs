@@ -122,4 +122,18 @@ export default [
       'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none' }],
     },
   },
+  {
+    // The Playwright integration suite (playwright.config.mjs): Node code that
+    // hands callbacks to page.evaluate(), which run in the browser.
+    files: ['app/dashboard/static/e2e/**/*.mjs', 'playwright.config.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: {
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none' }],
+    },
+  },
 ];

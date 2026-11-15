@@ -122,3 +122,6 @@ DESIGN.md
 
 # Front-end tooling (package.json at the repo root; see app/dashboard/static/build.mjs).
 node_modules/
+# Playwright's run output (playwright.config.mjs): traces, screenshots, report.
+test-results/
+playwright-report/
