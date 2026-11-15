@@ -10,8 +10,9 @@ for. Answer its questions honestly, including the uncomfortable ones. It will
 interview you for twenty to thirty minutes and then produce a finished
 one-pager.
 
-Then bring the result back: **Advisor → 📝 Investor one-pager → paste → Save.**
-That's it — no files to place, no restart.
+Then bring the result back: **Advisor → Investor one-pager → paste → Save
+one-pager** (after unlocking the page with the dashboard password). That's it —
+no files to place, no restart.
 
 > Answer as if briefing a new advisor who will act on what you say. Vague
 > answers produce a vague document, and a vague document produces the generic
@@ -157,7 +158,7 @@ Read it once with a cold eye. The five failure modes in
 against: hedged language, too many rules, generic risk talk, writing for an
 imagined audience, and skipping tax.
 
-Then paste it into **Advisor → 📝 Investor one-pager**. The advisor reads it on
+Then paste it into **Advisor → Investor one-pager**. The advisor reads it on
 every brief and every chat message from that point on, and will cite the rule it
 thinks you are about to break.
 

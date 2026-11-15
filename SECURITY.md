@@ -118,7 +118,9 @@ Secrets live in `.env` at the repo root, which is gitignored, excluded from the
 build context, and read only by server-side processes — the browser is served
 rendered output, not the file. Runtime settings live in the database and are
 editable from the dashboard; API keys and passwords deliberately are not,
-because the dashboard has no authentication. The Settings page reports whether a
+because the dashboard's read-only views have no login and its write pages share
+a single password — not a boundary to store credentials behind. The Settings
+tab reports whether a
 key is set, not what it is. If you find a path that leaks `.env` contents into a
 response, a log line, or a container image, that is a vulnerability — please
 report it.
