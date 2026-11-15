@@ -15,10 +15,13 @@ grep and upgrade pip first.
 Standard library only, on purpose: `make lock` runs it inside the application
 image right after the freeze (the image carries a copy at
 /app/tools/hash_lock.py), and nothing here may depend on what that freeze
-contains.
+contains. The pins come in on stdin -- the image was built before they existed,
+so there is no file in it to name -- and the lock goes out on stdout:
 
-    python tools/hash_lock.py app/constraints.txt > app/requirements.lock
     python tools/hash_lock.py - < app/constraints.txt > app/requirements.lock
+
+(The `-` is required, so running it bare prints this instead of waiting on a
+terminal.)
 
 Exit status is non-zero, and nothing is printed to stdout, if any pin has no
 installable wheel -- the image build would fail on it anyway, later and less
@@ -58,32 +61,31 @@ _WHEEL = re.compile(
 )
 
 
+def _platform_ok(plats: list[str]) -> bool:
+    return any(p == "any" or (p.startswith("manylinux") and p.endswith(ARCHES)) for p in plats)
+
+
+def _abi3_covers_us(pys: list[str]) -> bool:
+    """abi3 wheels are tagged with the *oldest* CPython they support."""
+    ours = int(PYTHON_TAG[3:])
+    versions = [re.fullmatch(r"cp3(\d+)", p) for p in pys]
+    return any(m is not None and int(m.group(1)) <= ours for m in versions)
+
+
+def _interpreter_ok(pys: list[str], abis: list[str]) -> bool:
+    if "none" in abis and any(p.startswith("py3") or p == PYTHON_TAG for p in pys):
+        return True
+    if PYTHON_TAG in abis and PYTHON_TAG in pys:
+        return True
+    return "abi3" in abis and _abi3_covers_us(pys)
+
+
 def wheel_is_installable(filename: str) -> bool:
     """True if pip in the image (cp314, manylinux, amd64/arm64) could pick it."""
     m = _WHEEL.match(filename)
     if not m:
         return False
-    pys = m["py"].split(".")
-    abis = m["abi"].split(".")
-    plats = m["plat"].split(".")
-
-    platform_ok = any(
-        p == "any" or (p.startswith("manylinux") and p.endswith(ARCHES)) for p in plats
-    )
-    if not platform_ok:
-        return False
-
-    if "none" in abis and any(p == "py3" or p.startswith("py3") or p == PYTHON_TAG for p in pys):
-        return True
-    if PYTHON_TAG in abis and PYTHON_TAG in pys:
-        return True
-    if "abi3" in abis:
-        # abi3 wheels are tagged with the *oldest* CPython they support.
-        for p in pys:
-            mm = re.fullmatch(r"cp3(\d+)", p)
-            if mm and int(mm.group(1)) <= int(PYTHON_TAG[3:]):
-                return True
-    return False
+    return _platform_ok(m["plat"].split(".")) and _interpreter_ok(m["py"].split("."), m["abi"].split("."))
 
 
 def read_pins(lines: Iterable[str]) -> list[tuple[str, str]]:
@@ -137,16 +139,10 @@ def build_lock(pins: list[tuple[str, str]], fetch: Callable[[str, str], dict] = 
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    if argv[1:] != ["-"]:
         print(__doc__, file=sys.stderr)
         return 2
-    if argv[1] == "-":
-        # `make lock` feeds the freshly frozen pins on stdin: the image it runs
-        # in was built before they existed.
-        pins = read_pins(sys.stdin)
-    else:
-        with open(argv[1], encoding="utf-8") as fh:
-            pins = read_pins(fh)
+    pins = read_pins(sys.stdin)
     # Build the whole text first: a failure half-way must not leave a truncated
     # lock behind on the caller's redirect. Bytes, so a Windows host does not
     # turn the line endings into CRLF on the way out.

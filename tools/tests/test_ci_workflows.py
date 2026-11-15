@@ -71,9 +71,8 @@ def test_test_jobs_use_the_image_python_and_the_lock(job_id):
     installs = [line for line in _run_text(job).splitlines() if "pip install" in line and "requirements.txt" in line]
     assert installs, f"{job_id} installs no requirements"
     for line in installs:
-        assert "-c app/constraints.txt" in line and "--only-binary :all:" in line, (
-            f"{job_id} installs without the lock or allows sdists: {line.strip()}"
-        )
+        assert "-c app/constraints.txt" in line, f"{job_id} installs without the lock: {line.strip()}"
+        assert "--only-binary :all:" in line, f"{job_id} allows sdists: {line.strip()}"
 
 
 # ── T-1: every database-backed test runs against a database ──────────────────
@@ -123,7 +122,8 @@ def test_publish_scans_both_architectures_before_it_pushes():
         assert str(steps[i]["with"]["exit-code"]) == "1", "a pre-publish scan that cannot fail gates nothing"
     # The scanned builds must be fresh: a cached apt layer would ship old Debian.
     loads = [s for s in steps if (s.get("with") or {}).get("load") is True]
-    assert len(loads) == 2 and all(s["with"].get("no-cache") is True for s in loads)
+    assert len(loads) == 2
+    assert all(s["with"].get("no-cache") is True for s in loads)
 
 
 def test_publish_attaches_sbom_and_provenance_and_signs():
@@ -143,9 +143,11 @@ def test_only_the_publish_job_can_mint_an_oidc_token_or_push():
     for job_id, job in doc["jobs"].items():
         perms = job.get("permissions") or {}
         if job_id == "publish":
-            assert perms.get("id-token") == "write" and perms.get("packages") == "write"
+            assert perms.get("id-token") == "write"
+            assert perms.get("packages") == "write"
         else:
-            assert "id-token" not in perms and "packages" not in perms, job_id
+            assert "id-token" not in perms, job_id
+            assert "packages" not in perms, job_id
 
 
 def test_publish_rebuilds_on_a_schedule_and_honours_skip_publish():
@@ -156,7 +158,8 @@ def test_publish_rebuilds_on_a_schedule_and_honours_skip_publish():
     tag_branch = plan.index('[[ "$GITHUB_REF" == refs/tags/v* ]]')
     skip_branch = plan.index('[[ "$HEAD_MESSAGE" == *"[skip publish]"* ]]')
     assert tag_branch < skip_branch, "a tag must publish even if its commit says [skip publish]"
-    assert "HEAD_MESSAGE" in plan and "${{ github.event.head_commit.message }}" not in plan, (
+    assert "HEAD_MESSAGE" in plan
+    assert "${{ github.event.head_commit.message }}" not in plan, (
         "the commit message must reach the script through env, never pasted into it"
     )
 
@@ -166,7 +169,8 @@ def test_published_images_are_scanned_on_a_schedule_by_digest():
     job = doc["jobs"]["published"]
     assert set(job["strategy"]["matrix"]["tag"]) == {"latest", "1"}
     assert set(job["strategy"]["matrix"]["platform"]) == {"linux/amd64", "linux/arm64"}
-    assert "imagetools inspect" in _run_text(job) and ".digest" in _run_text(job)
+    assert "imagetools inspect" in _run_text(job)
+    assert ".digest" in _run_text(job)
     assert doc["on"].get("schedule")
 
 
@@ -174,7 +178,8 @@ def test_a_failing_scheduled_scan_opens_a_tracking_issue():
     job = _workflows()["security-scan.yml"]["jobs"]["track"]
     assert job["permissions"] == {"issues": "write"}
     assert set(job["needs"]) == {"python-packages", "image", "published"}
-    assert "gh issue create" in _run_text(job) and "gh issue close" in _run_text(job)
+    assert "gh issue create" in _run_text(job)
+    assert "gh issue close" in _run_text(job)
 
 
 # ── supply-chain hygiene across every workflow ───────────────────────────────

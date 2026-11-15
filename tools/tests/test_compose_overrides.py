@@ -177,7 +177,8 @@ def test_base_file_binds_every_published_port_to_loopback():
     """
     model = _render("services: {}\n", profile=ALL_PROFILES)
     published = {s: _ports(model, s) for s in model["services"]}
-    assert published["dashboard"] and published["postgres"], "dashboard/postgres stopped publishing"
+    assert published["dashboard"], "the dashboard stopped publishing"
+    assert published["postgres"], "postgres stopped publishing"
     for service, entries in published.items():
         for entry in entries:
             assert entry.get("host_ip") == "127.0.0.1", (
@@ -331,7 +332,8 @@ def full_model() -> dict:
 @pytest.mark.parametrize("service", APP_SERVICES)
 def test_app_services_run_with_no_capabilities_and_a_read_only_root(full_model, service):
     svc = full_model["services"][service]
-    assert svc.get("cap_drop") == ["ALL"] and not svc.get("cap_add"), service
+    assert svc.get("cap_drop") == ["ALL"], service
+    assert not svc.get("cap_add"), service
     assert "no-new-privileges:true" in (svc.get("security_opt") or []), service
     assert svc.get("read_only") is True, service
     tmpfs = svc.get("tmpfs") or []

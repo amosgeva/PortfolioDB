@@ -111,7 +111,8 @@ def test_backup_writes_into_a_directory_with_an_apostrophe(sandbox):
     out, _ = _make(sandbox, "backup", f"ARGS={dest}")
     assert out.returncode == 0, out.stdout + out.stderr
     dumps = list(dest.glob("portfoliodb-*.sql.gz"))
-    assert len(dumps) == 1 and gzip.decompress(dumps[0].read_bytes()).endswith(b"dump complete\n")
+    assert len(dumps) == 1
+    assert gzip.decompress(dumps[0].read_bytes()).endswith(b"dump complete\n")
 
 
 # ── the targets whose recipe changed in 1.8.0 ────────────────────────────────
@@ -129,8 +130,10 @@ def test_make_test_builds_the_working_tree_and_never_reaches_the_database(sandbo
     """Audit C-4: `make test` ran the published image, so it never saw an edit."""
     _, calls = _make(sandbox, "test")
     build, run = calls
-    assert build[-2:] == ["build", "dashboard"] and "docker-compose.dev.yml" in build
-    assert "docker-compose.dev.yml" in run and "run" in run
+    assert build[-2:] == ["build", "dashboard"]
+    assert "docker-compose.dev.yml" in build, "the build must use the dev overlay (build from source)"
+    assert "docker-compose.dev.yml" in run, "the run must use the image just built"
+    assert "run" in run
     assert "--no-deps" in run, "make test must not start (or need) the stack's postgres"
     assert run[run.index("-e") + 1] == "PORTFOLIODB_PASSWORD=", (
         "a blank password is what makes every database-backed test skip"
@@ -153,7 +156,8 @@ def test_init_generates_every_secret_including_the_dashboard_password(sandbox):
     out, _ = _make(sandbox, "init")
     assert out.returncode == 0, out.stderr
     env = _env(sandbox / ".env")
-    assert env["POSTGRES_PASSWORD"] and env["POSTGRES_PASSWORD"] == env["PORTFOLIODB_PASSWORD"]
+    assert env["POSTGRES_PASSWORD"]
+    assert env["POSTGRES_PASSWORD"] == env["PORTFOLIODB_PASSWORD"]
     assert len(env["PORTFOLIODB_MCP_TOKEN"]) == 40
     assert len(env["PORTFOLIODB_DASHBOARD_PASSWORD"]) == 20
     assert oct((sandbox / ".env").stat().st_mode & 0o777) == "0o600"
@@ -167,7 +171,8 @@ def test_init_adds_the_dashboard_password_to_an_env_from_before_1_8(sandbox):
     out, _ = _make(sandbox, "init")
     assert out.returncode == 0, out.stderr
     env = _env(sandbox / ".env")
-    assert env["PORTFOLIODB_MCP_TOKEN"] == "keepme" and env["POSTGRES_PASSWORD"] == "same"
+    assert env["PORTFOLIODB_MCP_TOKEN"] == "keepme"
+    assert env["POSTGRES_PASSWORD"] == "same"
     assert len(env["PORTFOLIODB_DASHBOARD_PASSWORD"]) == 20
 
 

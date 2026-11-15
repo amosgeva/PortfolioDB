@@ -120,6 +120,13 @@ def test_build_lock_refuses_a_pin_with_no_installable_wheel():
         hash_lock.build_lock([("old", "0.1")], fetch=lambda n, v: releases[(n, v)])
 
 
+@pytest.mark.parametrize("argv", [["hash_lock.py"], ["hash_lock.py", "app/constraints.txt"], ["hash_lock.py", "-", "x"]])
+def test_main_reads_stdin_only_and_prints_usage_otherwise(argv, capsys):
+    """`make lock` pipes the pins in; the tool opens no path it was handed."""
+    assert hash_lock.main(argv) == 2
+    assert "make lock" in capsys.readouterr().err
+
+
 def test_read_pins_rejects_anything_but_exact_pins():
     assert hash_lock.read_pins(["# c", "", "a==1 # why", "B_c==2.0"]) == [("a", "1"), ("B_c", "2.0")]
     with pytest.raises(ValueError):
