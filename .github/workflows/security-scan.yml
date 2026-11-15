@@ -25,7 +25,8 @@ name: Security scan
 # a check nobody reads: an OS package with no fixed version in Debian yet
 # (`ignore-unfixed`), and the entries in .trivyignore, each with its reason and
 # a review-by date written next to it. Those two are the whole allowlist, and
-# an entry past its review date fails the `image` job until someone looks.
+# an entry past its review date fails every job here that scans — and every
+# publish (tools/check_trivyignore_dates.py, shared) — until someone looks.
 #
 # A scheduled failure opens (or comments on) one tracking issue, and the next
 # clean scheduled run closes it: a red scheduled run alone emails one person
@@ -75,17 +76,10 @@ jobs:
       # Every .trivyignore entry carries `# review-by: YYYY-MM-DD`
       # (tools/tests/test_trivyignore.py enforces the format). Past that date
       # the entry has to be looked at again: removed if pip re-vendored, or
-      # re-dated with a reason if it still holds.
+      # re-dated with a reason if it still holds. The same script gates the
+      # pre-publish scans in publish.yml.
       - name: No .trivyignore entry is past its review date
-        run: |
-          today=$(date -u +%F)
-          overdue=$(grep -oE '^# review-by: [0-9]{4}-[0-9]{2}-[0-9]{2}' .trivyignore \
-                    | awk -v t="$today" '$3 < t {print $3}')
-          if [ -n "$overdue" ]; then
-            echo "::error file=.trivyignore::entries past their review date: $overdue"
-            exit 1
-          fi
-          echo "every .trivyignore entry is within its review date"
+        run: python3 tools/check_trivyignore_dates.py < .trivyignore
 
       - name: Build the image
         run: docker build -f app/Dockerfile -t portfoliodb-scan:${{ github.sha }} .
@@ -114,6 +108,9 @@ jobs:
     steps:
       # Checked out for .trivyignore.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: No .trivyignore entry is past its review date
+        run: python3 tools/check_trivyignore_dates.py < .trivyignore
 
       # The package is public, so this needs no login. The digest is the
       # multi-arch index; Trivy picks the platform below out of it.

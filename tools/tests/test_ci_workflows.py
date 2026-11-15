@@ -134,7 +134,19 @@ def test_publish_attaches_sbom_and_provenance_and_signs():
     run = _run_text(_publish_job())
     assert "cosign sign --yes --recursive" in run
     assert "cosign verify" in run, "the workflow verifies its own signature the way a user would"
-    assert any("attest-build-provenance" in str(s.get("uses", "")) for s in steps)
+    # The GitHub provenance is a custom SLSA v1 predicate that names the built
+    # checkout (QA of PR #124, defect 1), not the stock action, whose predicate
+    # only knows the workflow's commit.
+    assert not any("attest-build-provenance" in str(s.get("uses", "")) for s in steps)
+    attest = next(s for s in steps if str(s.get("uses", "")).startswith("actions/attest@"))
+    assert attest["with"]["predicate-type"] == "https://slsa.dev/provenance/v1"
+    assert attest["with"]["predicate-path"] == "${{ runner.temp }}/provenance.json"
+    assert attest["with"]["subject-digest"] == "${{ steps.push.outputs.digest }}"
+    write = next(s for s in steps if s.get("name", "").startswith("Write the provenance predicate"))
+    assert "provenance_predicate.py" in write["run"]
+    assert write["env"]["BUILT_COMMIT"] == "${{ steps.policy.outputs.built }}"
+    names = [s.get("name", "") for s in steps]
+    assert names.index(write["name"]) < names.index(attest["name"])
 
 
 def test_only_the_publish_job_can_mint_an_oidc_token_or_push():

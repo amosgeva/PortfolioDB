@@ -64,11 +64,15 @@ the tag first and verify the digest (`docker buildx imagetools inspect
 ghcr.io/amosgeva/portfoliodb:1` prints it), then pin `PORTFOLIODB_IMAGE` in
 `.env` to `ghcr.io/amosgeva/portfoliodb@sha256:…`.
 
-The build provenance — which workflow run, from which commit — is also recorded
-as a GitHub attestation:
+The build provenance is also recorded as a signed GitHub attestation (SLSA v1):
+which workflow run built the image, the commit that workflow ran from, and the
+commit the image was built from. Those two commits differ for the weekly
+rebuild, which runs today's workflow against the release it republishes, so
+the predicate lists both, named `workflow` and `source`:
 
 ```bash
-gh attestation verify oci://ghcr.io/amosgeva/portfoliodb:1 --owner amosgeva
+gh attestation verify oci://ghcr.io/amosgeva/portfoliodb:1 --owner amosgeva --format json \
+  | jq '.[].verificationResult.statement.predicate.buildDefinition.resolvedDependencies'
 ```
 
 And the SBOM (SPDX) and BuildKit provenance ride in the image index:
@@ -105,8 +109,8 @@ by design.
   (unless a maintainer deliberately republishes that version and says so in the
   changelog).
 - **The allowlist is short and dated.** `.trivyignore` holds the findings the
-  scans may skip, each with its reason and a review-by date; a scan fails once
-  that date passes.
+  scans may skip, each with its reason and a review-by date; once that date
+  passes, every scan and every publish fails until the entry is re-checked.
 
 ## Secrets
 

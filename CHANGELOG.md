@@ -60,8 +60,11 @@ needs a schema step says so under **Upgrading**.
 - `publish.yml` (audit C-1, C-5): both architectures are scanned with Trivy
   *before* anything is pushed, so an image with a fixable HIGH/CRITICAL finding
   is never published; published images carry an SBOM and SLSA provenance, a
-  GitHub build-provenance attestation and a keyless cosign signature
-  (SECURITY.md shows how to verify them); a weekly rebuild moves `latest` and
+  signed GitHub provenance attestation that names both the workflow's commit
+  and the commit the image was built from (they differ for a rebuild), and a
+  keyless cosign signature (SECURITY.md shows how to verify them); the
+  pre-publish scans refuse an expired `.trivyignore` exception just as the
+  scheduled scan does; a weekly rebuild moves `latest` and
   the floating `X`/`X.Y` tags onto new Debian fixes; `[skip publish]` in a
   merge commit skips publishing that push (tags always publish).
 - `security-scan.yml`: a weekly scan of the published `latest` and `1` images by

@@ -11,8 +11,9 @@ name: Publish image
 #     from the same builder's cache, so the bytes pushed are the bytes scanned.
 #     A red image is never published.
 #   * An SBOM and a SLSA provenance attestation (BuildKit's, attached to the
-#     image index), a GitHub build-provenance attestation, and a keyless cosign
-#     signature. SECURITY.md shows how to verify each.
+#     image index), a signed GitHub provenance attestation naming both the
+#     workflow's commit and the commit actually built (tools/provenance_predicate.py),
+#     and a keyless cosign signature. SECURITY.md shows how to verify each.
 #   * A weekly rebuild. The Dockerfile takes Debian's security updates at build
 #     time; without a rebuild `:1` only moved on a release and `latest` only on
 #     a push, so a fix published on Tuesday reached nobody until someone merged
@@ -165,6 +166,29 @@ jobs:
           ref: ${{ matrix.ref }}
           fetch-depth: 0             # tags, so a rebuilt release's stamp names it
 
+      # The checkout above is the *application* source being built, which for
+      # a rebuild is an older commit than the workflow's own. The publishing
+      # policy comes from the workflow's commit instead (GITHUB_SHA, present in
+      # the full-depth checkout): today's .trivyignore and its date check, and
+      # the provenance generator — a rebuilt release may predate both. The date
+      # check runs here, before either pre-publish scan reads the allowlist, so
+      # an expired exception stops a publish exactly as it fails a scan.
+      - name: Publishing policy from the workflow's own commit
+        id: policy
+        run: |
+          set -euo pipefail
+          git cat-file -e "${GITHUB_SHA}^{commit}" \
+            || { echo "::error::workflow commit ${GITHUB_SHA} is not in the checkout"; exit 1; }
+          dir="${RUNNER_TEMP}/workflow-src"
+          mkdir -p "$dir"
+          for f in .trivyignore tools/check_trivyignore_dates.py tools/provenance_predicate.py; do
+            git show "${GITHUB_SHA}:${f}" > "${dir}/$(basename "$f")"
+          done
+          python3 "${dir}/check_trivyignore_dates.py" < "${dir}/.trivyignore"
+          echo "dir=${dir}" >> "$GITHUB_OUTPUT"
+          echo "built=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "workflow commit ${GITHUB_SHA}; building $(git rev-parse HEAD)"
+
       # QEMU only for the arm64 leg: a sizeable share of self-hosters run a
       # Raspberry Pi, an ARM NAS, or Apple silicon, and shipping amd64 only
       # would quietly exclude them.
@@ -260,7 +284,7 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          trivyignores: .trivyignore
+          trivyignores: ${{ steps.policy.outputs.dir }}/.trivyignore
           exit-code: '1'
 
       - name: Trivy — arm64 must be clean before anything is pushed
@@ -270,7 +294,7 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          trivyignores: .trivyignore
+          trivyignores: ${{ steps.policy.outputs.dir }}/.trivyignore
           exit-code: '1'
           skip-setup-trivy: true
 
@@ -306,11 +330,31 @@ jobs:
           IMAGE: ${{ steps.img.outputs.name }}
         run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
+      # Not the stock attest-build-provenance: its predicate is built from the
+      # job's OIDC claims, whose only source is the commit the *workflow* ran
+      # from — for a rebuild, main's head, not the release or revision actually
+      # built. tools/provenance_predicate.py writes the same predicate plus the
+      # built checkout (`git rev-parse HEAD`, captured by the policy step) as a
+      # second resolved dependency; actions/attest signs it as given.
+      - name: Write the provenance predicate (workflow source + built source)
+        env:
+          BUILT_REF: ${{ matrix.ref }}
+          BUILT_COMMIT: ${{ steps.policy.outputs.built }}
+          POLICY_DIR: ${{ steps.policy.outputs.dir }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BUILT_COMMIT"   # nothing moved the checkout
+          python3 "${POLICY_DIR}/provenance_predicate.py" \
+            --built-commit "$BUILT_COMMIT" --built-ref "$BUILT_REF" > "${RUNNER_TEMP}/provenance.json"
+          cat "${RUNNER_TEMP}/provenance.json"
+
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4.2.1
         with:
           subject-name: ${{ steps.img.outputs.name }}
           subject-digest: ${{ steps.push.outputs.digest }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: ${{ runner.temp }}/provenance.json
           push-to-registry: true
 
       # The arm64 safety net. The arm64 leg cannot be tested on an unprivileged
