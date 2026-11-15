@@ -86,6 +86,8 @@ needs a schema step says so under **Upgrading**.
 - `tools/tests/test_runner_parity.py` now checks that every command in
   `docs/commands.md` is the one the Makefile runs, argument for argument
   (audit K-5).
+- Every GitHub Action in every workflow, GitHub's own `actions/*` included, is
+  pinned to a commit SHA (audit C-6); before, only third-party actions were.
 - `.codacy.yaml` no longer lists another project's paths.
 
 ## [1.7.7] — 2026-11-15

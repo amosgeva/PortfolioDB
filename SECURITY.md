@@ -83,7 +83,7 @@ by design.
 - **Pinned, then moved on purpose.** The Python base image, Postgres and pgAdmin
   are pinned by digest, the Python packages by exact version *and* sha256 hash
   (`app/requirements.lock`, installed with `--require-hashes`), and every
-  third-party GitHub Action by commit. Dependabot proposes base-image digest
+  GitHub Action — GitHub's own included — by commit. Dependabot proposes base-image digest
   refreshes, Postgres 16.x and pgAdmin updates, and action bumps as pull
   requests; it never proposes a new Python minor or a Postgres major, which are
   migrations.
