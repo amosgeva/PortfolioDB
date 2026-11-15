@@ -1,5 +1,35 @@
-// Inline SVG glyphs. Literal templates with nothing interpolated.
+// Inline SVG glyphs. Literal templates; the shared ones are built from data.
 import { html } from '../core/html.js';
+import { item } from '../core/dict.js';
+// The rail/tab bar glyphs, shared with the native pages (audit R-3). esbuild
+// inlines the JSON into app.js. No import attribute: that spelling is ES2025,
+// which Codacy's ESLint 8 cannot parse; `npm test` loads tests/json-hook.mjs
+// so Node reads the import the way esbuild does.
+import NAV from '../../nav.json';
+
+// One template per shape nav.json may use, writing exactly the attributes
+// app/dashboard/nav.py's svg() writes, in the same order. Values land in
+// quoted attribute slots, so html escapes them; an element or attribute name
+// can never come from the data.
+const SHAPES = {
+  path: (s) => html`<path d="${s.d}"/>`,
+  rect: (s) => html`<rect x="${s.x}" y="${s.y}" width="${s.width}" height="${s.height}" rx="${s.rx}"/>`,
+  circle: (s) => html`<circle cx="${s.cx}" cy="${s.cy}" r="${s.r}"/>`,
+  line: (s) => html`<line x1="${s.x1}" y1="${s.y1}" x2="${s.x2}" y2="${s.y2}"/>`,
+};
+
+/** A nav.json glyph as Markup. Throws on an unknown icon or shape, so a bad
+ *  edit to nav.json fails the tests instead of drawing a blank. */
+export function icon(name) {
+  const i = item(NAV.icons, name);
+  if (!i || typeof i !== 'object') throw new Error('nav.json has no icon ' + name);
+  const shapes = i.shapes.map((s) => {
+    const draw = item(SHAPES, s.el);
+    if (typeof draw !== 'function') throw new Error('nav.json icon ' + name + ': unknown shape ' + s.el);
+    return draw(s);
+  });
+  return html`<svg viewBox="0 0 24 24" fill="none" stroke="${i.stroke}" stroke-width="${i.width}" stroke-linecap="${i.cap}" stroke-linejoin="${i.join}" aria-hidden="true">${shapes}</svg>`;
+}
 
 export const ARROW_UP = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M7 14l5-5 5 5"/></svg>`;
 export const ARROW_DN = html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`;
@@ -14,6 +44,7 @@ export const CHEVRON = html`<svg viewBox="0 0 24 24" fill="none" stroke="current
 export const FEED = {
   up: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M17 7h4v4"/></svg>`,
   down: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7l6 6 4-4 8 8"/><path d="M17 17h4v-4"/></svg>`,
-  bell: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`,
+  // The rail's Alerts glyph: the same bell in both places.
+  bell: icon('bell'),
   news: html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h13v14H6a2 2 0 0 1-2-2zM17 8h3v9a2 2 0 0 1-2 2"/><path d="M8 9h6M8 13h6"/></svg>`,
 };

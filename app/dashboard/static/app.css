@@ -124,6 +124,7 @@ a{color:inherit;text-decoration:none}
    tuned against a white ground and falls to 3.02:1 on the rail. */
 .rail{--up:oklch(70% 0.14 152);--down:oklch(68% 0.18 26)}
 .rail__sect{padding:8px 12px}
+.rail__nav{display:contents}
 .rail__label{font-size:var(--fs-micro);letter-spacing:.16em;text-transform:uppercase;color:var(--rail-muted);padding:12px 12px 7px}
 .nav{display:flex;flex-direction:column;gap:2px}
 .nav a{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:var(--r-ctl);color:var(--rail-muted);font-weight:500;font-size:var(--fs-sm);transition:background .14s,color .14s;cursor:pointer}

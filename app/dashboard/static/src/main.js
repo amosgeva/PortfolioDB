@@ -9,7 +9,7 @@ import { beginMount, onParent, fitFrame, brandParent, session } from './core/hos
 import { initToast, toast } from './ui/toast.js';
 import { initTheme, onThemeChange, toggleTheme } from './ui/theme.js';
 import { initShell, initRefresh } from './ui/shell.js';
-import { initNav, switchView, goNative, onFirstShow, currentView, restoreView } from './ui/nav.js';
+import { initNav, switchView, goTo, onFirstShow, currentView, restoreView, VIEWS } from './ui/nav.js';
 import { initDrawer, openDrawer, setDrawerHooks } from './ui/drawer.js';
 import { initPalette, isPaletteOpen } from './ui/cmdk.js';
 import { initFolds } from './ui/folds.js';
@@ -32,12 +32,9 @@ function openFundamentalsFor(sym) {
 }
 
 function staticCommands(refreshBtn) {
-  const v = (label, view) => ({ sect: 'Views', label, run: () => switchView(view) });
   return [
-    v('Portfolio', 'portfolio'), v('Market Movers', 'movers'), v('Statistics', 'stats'),
-    v('Alerts & News', 'alerts'), v('Fundamentals', 'fundamentals'), v('History', 'history'),
-    { sect: 'Views', label: 'Manage', run: () => goNative('manage') },
-    { sect: 'Views', label: 'Advisor', run: () => goNative('advisor') },
+    // Every rail entry, both halves, in rail order (nav.json).
+    ...VIEWS.map((v) => ({ sect: 'Views', label: v.label, run: () => goTo(v.id) })),
     { sect: 'Actions', label: 'Refresh data', run: () => { if (refreshBtn) refreshBtn.click(); } },
     { sect: 'Actions', label: 'Toggle dark mode', run: toggleTheme },
     { sect: 'Actions', label: 'Mark all alerts read', run: markAllRead },

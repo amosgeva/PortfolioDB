@@ -11,13 +11,15 @@
     "build": "node app/dashboard/static/build.mjs",
     "build:check": "node app/dashboard/static/build.mjs --check",
     "lint": "eslint --max-warnings 0 .",
-    "test": "node --test --test-reporter=spec \"app/dashboard/static/tests/*.test.mjs\"",
-    "ci": "npm run build:check && npm run lint && npm test"
+    "test": "node --import ./app/dashboard/static/tests/json-hook.mjs --test --test-reporter=spec \"app/dashboard/static/tests/*.test.mjs\"",
+    "ci": "npm run build:check && npm run lint && npm test",
+    "e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@fontsource-variable/space-grotesk": "5.3.0",
+    "@playwright/test": "1.64.1",
     "esbuild": "0.28.2",
     "eslint": "10.15.0",
     "espree": "11.2.0",

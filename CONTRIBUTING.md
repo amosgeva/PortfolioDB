@@ -130,6 +130,17 @@ the lint and the tests. Markup goes through the escaping `html` template in
 source patterns that contract lists; its exact rules and known limits are at the
 top of `core/html.js`.
 
+The rail, the phone tab bars, the page headings and the rail glyphs live in
+`app/dashboard/static/nav.json`, which both the front end and the native pages
+draw from; change them there, run `npm run build`, and both halves follow.
+
+`npm run e2e` drives the real thing in Chromium at three widths: it starts the
+Streamlit app on 127.0.0.1:18521 against the database in your `PORTFOLIODB_*`
+variables — the same throwaway one as above, demo-seeded, with the read-only
+role exported. Run `npx playwright install chromium` once first, and set
+`PDB_E2E_PYTHON` if the Python with the app's requirements is not `python`. CI
+runs it as *Browser integration (Streamlit + Postgres)*.
+
 ## What the code expects of you
 
 - **Money is `Decimal`** end to end inside the engines. Convert to `float` only
