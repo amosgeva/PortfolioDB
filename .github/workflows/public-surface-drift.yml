@@ -33,6 +33,7 @@ jobs:
   drift:
     name: Site vs repo
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 

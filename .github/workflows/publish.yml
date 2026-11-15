@@ -2,14 +2,43 @@ name: Publish image
 
 # Users should pull, not build. This publishes the shared application image to
 # GitHub Container Registry so `docker compose up -d` needs no toolchain.
+#
+# What a published image carries, and why (audit C-1, C-5):
+#
+#   * It was scanned before it was pushed. Both architectures are built without
+#     a layer cache, Trivy scans each for fixable HIGH/CRITICAL findings with the
+#     same policy as security-scan.yml, and only then is the push build run —
+#     from the same builder's cache, so the bytes pushed are the bytes scanned.
+#     A red image is never published.
+#   * An SBOM and a SLSA provenance attestation (BuildKit's, attached to the
+#     image index), a GitHub build-provenance attestation, and a keyless cosign
+#     signature. SECURITY.md shows how to verify each.
+#   * A weekly rebuild. The Dockerfile takes Debian's security updates at build
+#     time; without a rebuild `:1` only moved on a release and `latest` only on
+#     a push, so a fix published on Tuesday reached nobody until someone merged
+#     something. The schedule rebuilds `latest` from main and the floating
+#     `X` / `X.Y` tags from the newest release tag. The exact `X.Y.Z` and
+#     `sha-…` tags are never rebuilt: whoever pinned one asked for those bytes.
+#
+# `[skip publish]` anywhere in the head commit message skips a push to main
+# (the 1.8.0 series merges intermediate PRs that way, so `latest` does not move
+# to a half-finished release). A version tag always publishes, whatever its
+# commit says. CONTRIBUTING.md documents both.
 on:
   push:
     branches: [main]
     tags: ['v*']
+  schedule:
+    - cron: '23 4 * * 0'        # Sundays 04:23 UTC, the day before the Monday scan
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: 'Run the weekly rebuild (latest + the newest release''s floating tags) instead of publishing this ref'
+        type: boolean
+        default: false
 
-# Read-only by default. `packages: write` is granted to the publish job alone,
-# below — at workflow level it also reached the `test` job, which calls the
+# Read-only by default. Write permissions are granted to the publish job alone,
+# below — at workflow level they also reached the `test` job, which calls the
 # shared CI workflow. That handed a registry-write token to every test step and
 # every action they pull, for a job whose whole output is a pass or a fail.
 permissions:
@@ -17,41 +46,124 @@ permissions:
 
 # Third-party actions below are pinned to full commit SHAs, with the release
 # they correspond to in a trailing comment. A tag like @v3 is mutable: this job
-# can push to the registry, so an action that silently changed under a moved tag
-# could push whatever it liked. Update a pin by bumping the SHA *and* the
-# comment together. GitHub-owned actions/* are left on tags.
+# can push to the registry and sign as this repository, so an action that
+# silently changed under a moved tag could push or sign whatever it liked.
+# Update a pin by bumping the SHA *and* the comment together. GitHub-owned
+# actions/* are left on tags.
 
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false          # never abandon a half-pushed manifest
 
-# Only this repo publishes. `steps.img` below derives the package name from
-# `repository_owner` plus a literal `portfoliodb` — not the repo name — so any
-# fork or copy under the same account would push to the *same* GHCR package and
-# fight over `:latest`. That is not hypothetical: it happened while development
-# lived in a second repo, and the image a default install pulled ended up
-# claiming a source URL that 404s for everyone but its owner. On a project whose
-# audience chose AGPL so it could check what is running, that is the wrong
-# ten-second answer. The guard stays as a tripwire. The repo name is repeated
-# literally in both jobs because job-level `if` cannot read the `env` context.
+# Only this repo publishes. The package name is `repository_owner` plus a
+# literal `portfoliodb` — not the repo name — so any fork or copy under the
+# same account would push to the *same* GHCR package and fight over `:latest`.
+# That is not hypothetical: it happened while development lived in a second
+# repo, and the image a default install pulled ended up claiming a source URL
+# that 404s for everyone but its owner. The guard stays as a tripwire. The repo
+# name is repeated literally in each job because job-level `if` cannot read the
+# `env` context.
 
 jobs:
+  # Decides what this run publishes, as a matrix the publish job fans out over:
+  # one entry per git ref to build, each with the image tags it may move.
+  plan:
+    if: github.repository == 'amosgeva/PortfolioDB'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0             # tags, for the rebuild's "newest release"
+
+      - name: Plan the builds
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REBUILD: ${{ inputs.rebuild }}
+          # Through env, never pasted into the script: a commit message is
+          # attacker-influenced text.
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/portfoliodb"
+          entries=()
+          # ref to check out, newline-separated metadata-action tag rules,
+          # metadata-action context (workflow = this run's own ref; git = read
+          # ref and revision from the checkout, for a rebuild of another commit),
+          # and a label for the logs.
+          add() {
+            entries+=("$(jq -cn --arg ref "$1" --arg tags "$2" --arg context "$3" --arg label "$4" \
+              '{ref:$ref,tags:$tags,context:$context,label:$label}')")
+          }
+          semver_rules=$'type=semver,pattern={{version}}\ntype=semver,pattern={{major}}.{{minor}}\ntype=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}\ntype=sha,format=short'
+
+          if [ "$EVENT" = schedule ] || [ "$REBUILD" = true ]; then
+            # `latest` is rebuilt from the commit it already points at, read
+            # from the published image's revision label — not from main's head,
+            # which may be a `[skip publish]` merge nobody meant to ship yet.
+            rev=$(docker buildx imagetools inspect "${image}:latest" --format '{{json .Image}}' 2>/dev/null \
+                  | jq -r '."linux/amd64".config.Labels["org.opencontainers.image.revision"] // empty' || true)
+            if [ -n "$rev" ] && git cat-file -e "${rev}^{commit}" 2>/dev/null; then
+              add "$rev" 'type=raw,value=latest' git "rebuild latest (${rev:0:7})"
+            else
+              echo "::warning::could not read the revision behind ${image}:latest; not rebuilding it"
+            fi
+            release=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+            if [ -n "$release" ]; then
+              ver=${release#v}; major=${ver%%.*}; minor=${ver#*.}; minor=${minor%%.*}
+              rules="type=raw,value=${major}.${minor}"
+              if [ "$major" != 0 ]; then rules="${rules}"$'\n'"type=raw,value=${major}"; fi
+              add "$release" "$rules" git "rebuild ${release} floating tags"
+            fi
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            add "$GITHUB_SHA" "$semver_rules" workflow "release ${GITHUB_REF_NAME}"
+          elif [[ "$HEAD_MESSAGE" == *"[skip publish]"* ]]; then
+            echo "head commit says [skip publish]; nothing to publish for ${GITHUB_REF_NAME}" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            add "$GITHUB_SHA" $'type=raw,value=latest,enable={{is_default_branch}}\ntype=sha,format=short' workflow "push ${GITHUB_REF_NAME}"
+          fi
+
+          if [ ${#entries[@]} -eq 0 ]; then
+            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"; echo 'any=false' >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "${entries[@]}" | jq -cs '{include: .}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+            echo 'any=true' >> "$GITHUB_OUTPUT"
+          fi
+          printf '%s\n' "${entries[@]:-}" | jq -r 'select(.) | "- \(.label): \(.ref)"' >> "$GITHUB_STEP_SUMMARY" || true
+
   # Gate: the same CI workflow users see on pull requests, called rather than
   # copied, so a green badge and a published tag mean the same thing.
   test:
-    if: github.repository == 'amosgeva/PortfolioDB'
+    if: github.repository == 'amosgeva/PortfolioDB' && needs.plan.outputs.any == 'true'
+    needs: plan
     uses: ./.github/workflows/ci.yml
 
   publish:
-    if: github.repository == 'amosgeva/PortfolioDB'
-    needs: test
+    if: github.repository == 'amosgeva/PortfolioDB' && needs.plan.outputs.any == 'true'
+    needs: [plan, test]
     runs-on: ubuntu-latest
-    # The only job that pushes, so the only job that can.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1                # one push at a time; they share the package
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # The only job that pushes, so the only job that can. id-token is for the
+    # keyless signature and the provenance attestation (an OIDC token that says
+    # "this workflow, this repo, this ref"); attestations stores the latter.
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0             # tags, so a rebuilt release's stamp names it
 
       # QEMU only for the arm64 leg: a sizeable share of self-hosters run a
       # Raspberry Pi, an ARM NAS, or Apple silicon, and shipping amd64 only
@@ -68,37 +180,107 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}   # no extra secret needed
 
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
+
       # Lower-cases the owner: GHCR rejects capitals in a repository name, and
       # github.repository_owner preserves them.
       - name: Resolve image name and build stamp
         id: img
+        env:
+          LABEL: ${{ matrix.label }}
         run: |
           echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/portfoliodb" >> "$GITHUB_OUTPUT"
           # Baked into the image so the dashboard and MCP responses can report
-          # which build they are, instead of "unknown".
-          echo "stamp=${GITHUB_REF_NAME}@${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          # which build they are, instead of "unknown". A rebuild says so.
+          ref=$(git describe --tags --exact-match 2>/dev/null || echo "${GITHUB_REF_NAME}")
+          stamp="${ref}@$(git rev-parse --short=7 HEAD)"
+          case "$LABEL" in rebuild*) stamp="${stamp} (rebuilt $(date -u +%F))" ;; esac
+          echo "stamp=${stamp}" >> "$GITHUB_OUTPUT"
 
+      # For a rebuild, `context: git` reads the revision from the checkout, so
+      # the labels of a rebuilt release name the release's commit, not main's.
+      # A push or a tag publishes its own ref, which `workflow` describes.
       - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         id: meta
         with:
+          context: ${{ matrix.context }}
           images: ${{ steps.img.outputs.name }}
           # latest tracks main; a vX.Y.Z git tag publishes X.Y.Z plus the floating
           # X.Y and X. Note metadata-action strips the leading `v`, so the image
           # tag is `1.0.0` while the git tag is `v1.0.0` — the docs say so, and
           # they must keep saying so, because a pin that 404s breaks exactly the
-          # careful reader who pins. Every build also gets its SHA.
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=sha,format=short
+          # careful reader who pins. Every push build also gets its SHA.
+          tags: ${{ matrix.tags }}
           labels: |
             org.opencontainers.image.title=PortfolioDB
             org.opencontainers.image.description=Append-only, lot-based personal portfolio ledger on Postgres
             org.opencontainers.image.licenses=AGPL-3.0-or-later
 
+      # ── scan before push ──────────────────────────────────────────────────
+      # One single-platform build per architecture, loaded into the runner's
+      # Docker so Trivy can read it. No cache in or out: the Dockerfile's
+      # `apt-get upgrade` layer must be built today, or a cached layer from a
+      # month ago would ship last month's Debian.
+      - name: Build amd64 for the scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64
+          load: true
+          no-cache: true
+          build-args: |
+            PORTFOLIODB_VERSION=${{ steps.img.outputs.stamp }}
+          tags: portfoliodb-prepublish:amd64
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+
+      - name: Build arm64 for the scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/arm64
+          load: true
+          no-cache: true
+          build-args: |
+            PORTFOLIODB_VERSION=${{ steps.img.outputs.stamp }}
+          tags: portfoliodb-prepublish:arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+
+      # Same policy as security-scan.yml: fixable HIGH/CRITICAL fails, the
+      # dated entries in .trivyignore are the whole allowlist.
+      - name: Trivy — amd64 must be clean before anything is pushed
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: portfoliodb-prepublish:amd64
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+      - name: Trivy — arm64 must be clean before anything is pushed
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: portfoliodb-prepublish:arm64
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+          skip-setup-trivy: true
+
+      # ── push ──────────────────────────────────────────────────────────────
+      # Same builder, same inputs, so every layer comes from the cache the two
+      # scanned builds just filled: what is pushed is what was scanned. The
+      # attestations ride in the image index as extra `unknown/unknown`
+      # entries, which the architecture check below allows for.
       - name: Build and push
+        id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           context: .
@@ -111,45 +293,61 @@ jobs:
           # image.source is what links the package to this repository on GitHub,
           # which is also what lets the package inherit a sensible landing page.
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Off, and deliberately so (revisited 2026-09-09). With provenance on,
-          # BuildKit adds attestation manifests to the index as `unknown/unknown`
-          # platform entries, which every `docker manifest inspect` reader then
-          # has to know to skip, and the arm64 check below would have to filter
-          # them too. Nothing consumes the attestations: there is no verifier in
-          # the install path, and the repository already answers the question
-          # they would — the image is built from a tagged commit by this
-          # workflow, base pinned by digest, packages pinned by
-          # app/constraints.txt, and CI proves the image matches the lock. Turn
-          # this on the day a consumer verifies attestations, and fix the check
-          # below in the same change.
-          provenance: false
+          provenance: mode=max
+          sbom: true
 
-      # This is the arm64 safety net. The arm64 leg cannot be tested on an
-      # unprivileged LXC (registering a binfmt handler needs privileges the
-      # container does not have), so instead of trusting it, the workflow
-      # refuses to call a publish successful unless both architectures actually
-      # landed in the manifest.
-      - name: Verify both architectures are in the manifest
+      # Keyless: the certificate binds the signature to this workflow file, this
+      # repository and this ref through GitHub's OIDC token; there is no key to
+      # leak or rotate. --recursive signs the index and each platform manifest,
+      # so a client that resolves `:1` to its own architecture can verify too.
+      - name: Sign with cosign (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ steps.img.outputs.name }}
+        run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.img.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      # The arm64 safety net. The arm64 leg cannot be tested on an unprivileged
+      # LXC (registering a binfmt handler needs privileges the container does
+      # not have), so instead of trusting it, the workflow refuses to call a
+      # publish successful unless both architectures actually landed in the
+      # manifest — and the signature verifies, as a user would check it.
+      - name: Verify both architectures are in the manifest, and the signature
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ steps.img.outputs.name }}
         run: |
           set -euo pipefail
-          tag=$(printf '%s\n' "${{ steps.meta.outputs.tags }}" | head -1)
-          echo "inspecting $tag"
-          docker buildx imagetools inspect "$tag" | tee /tmp/manifest.txt
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" | tee /tmp/manifest.txt
           grep -q 'linux/amd64' /tmp/manifest.txt
           grep -q 'linux/arm64' /tmp/manifest.txt
           echo "both architectures present"
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-identity-regexp '^https://github\.com/amosgeva/PortfolioDB/\.github/workflows/publish\.yml@' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "signature verifies"
 
       - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          LABEL: ${{ matrix.label }}
         run: |
           {
-            echo "### Published"
+            echo "### Published (${LABEL})"
             echo ''
             echo '```'
-            printf '%s\n' "${{ steps.meta.outputs.tags }}"
+            printf '%s\n' "$TAGS"
+            echo "digest: ${DIGEST}"
             echo '```'
             echo ''
+            echo 'Scanned before push, signed (cosign, keyless), SBOM + provenance attached.'
             echo 'First publish only: make the package public in'
             echo '**Packages → portfoliodb → Package settings → Change visibility**,'
             echo 'otherwise `docker pull` asks strangers for credentials.'

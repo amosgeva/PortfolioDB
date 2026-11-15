@@ -18,6 +18,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job carries a timeout well above its normal run time. Without one a hung
+# step — a test waiting on a socket, an action that never returns — holds a
+# runner for GitHub's six-hour default and reports nothing until then.
+#
+# The test jobs install exactly what the image ships: the image's Python (3.14,
+# app/Dockerfile's FROM line), wheels only, and app/constraints.txt as the
+# constraint set, plus the pinned test tools in tools/requirements-ci.txt. Before
+# 1.8.0 they resolved requirements.txt afresh on 3.13, so a green run said
+# nothing about the set anyone runs (audit C-3).
 jobs:
   # The fast suites need no database: everything DB-touching is either stubbed
   # or guarded by a skip. Proving that on a runner with no Postgres is the point
@@ -25,19 +34,22 @@ jobs:
   tests:
     name: Test suites (no database)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: pip
-          cache-dependency-path: app/requirements.txt
+          cache-dependency-path: |
+            app/constraints.txt
+            tools/requirements-ci.txt
 
-      - name: Install dependencies
+      - name: Install the locked dependency set
         run: |
-          python -m pip install --upgrade pip
-          pip install -r app/requirements.txt pytest
+          python -m pip install --only-binary :all: -c app/constraints.txt --upgrade pip
+          pip install --only-binary :all: -c app/constraints.txt -r app/requirements.txt -r tools/requirements-ci.txt
 
       - name: Engines, settings, market window (from app/)
         working-directory: app
@@ -98,15 +110,51 @@ jobs:
           fi
           echo "no hand-written patch pins outside CHANGELOG/server.json"
 
-  # The reconciliation suite runs the real services against a real database, so
-  # it gets one: schema, migrations, and the fictional demo ledger.
-  reconciliation:
-    name: Reconciliation (live database)
+  # The in-repo linter (audit C-6). A conservative rule set — likely bugs, not
+  # style — that the tree passes today; tools/ruff.toml says why each rule is
+  # there and why the config is not at the root. Its own job so a lint failure
+  # reads as one, not as a broken test run.
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Install the pinned ruff
+        run: pip install "$(grep -E '^ruff==' tools/requirements-ci.txt)"
+
+      - name: ruff check
+        run: ruff check --config tools/ruff.toml --output-format=github .
+
+  # Everything that talks to a database runs here, against a real one: schema,
+  # migrations, the fictional demo ledger, and the read-only MCP role.
+  #
+  # Until 1.8.0 this job ran the reconciliation suite and three named SQL
+  # modules, so any other database-backed test — the Streamlit AppTest added in
+  # 1.7.6 among them — skipped here and in every other job, and never ran in CI
+  # at all (audit T-1). Now it runs the *whole* app suite and the *whole* MCP
+  # fast suite with PORTFOLIODB_TESTS_REQUIRE_DB=1, which turns "skipped for lack
+  # of a database" into a failure. A database-backed test added anywhere runs
+  # here without anyone remembering to list it.
+  #
+  # Coverage is measured across all three runs into one data file and printed
+  # at the end, and into the job summary. Shown, not gated (tools/coveragerc).
+  database:
+    name: Test suites (live database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
-        image: postgres:16
+        # The same image docker-compose.yml runs, digest and all, so CI tests
+        # the database an install gets. Dependabot bumps the compose file;
+        # tools/tests/test_ci_workflows.py fails until this line follows.
+        image: postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
         env:
           POSTGRES_DB: portfoliodb
           POSTGRES_USER: portfoliouser
@@ -127,20 +175,29 @@ jobs:
       # Pin the reporting timezone so day-bucketing is deterministic whatever
       # the runner's clock is set to.
       PORTFOLIODB_TZ: UTC
+      # One coverage data file for the three pytest runs below, which start in
+      # two different working directories.
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage
+      COV_ARGS: >-
+        --cov=${{ github.workspace }}/app
+        --cov-config=${{ github.workspace }}/tools/coveragerc
+        --cov-append --cov-report=
 
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
           cache: pip
-          cache-dependency-path: app/requirements.txt
+          cache-dependency-path: |
+            app/constraints.txt
+            tools/requirements-ci.txt
 
-      - name: Install dependencies
+      - name: Install the locked dependency set
         run: |
-          python -m pip install --upgrade pip
-          pip install -r app/requirements.txt pytest
+          python -m pip install --only-binary :all: -c app/constraints.txt --upgrade pip
+          pip install --only-binary :all: -c app/constraints.txt -r app/requirements.txt -r tools/requirements-ci.txt
 
       - name: Apply schema and migrations
         run: |
@@ -170,27 +227,37 @@ jobs:
           grep -E '^PORTFOLIODB_MCP_RO_USER=' ro-role.out
           rm ro-role.out
 
+      # First, while the database holds exactly the demo ledger it reconciles.
       - name: Reconciliation suite
-        run: python -m pytest app/mcp/tests/ -m slow -q
+        run: python -m pytest app/mcp/tests/ -m slow -q $COV_ARGS
 
-      # Three modules talk SQL to a real database and carry no marker: they skip
-      # themselves when none is configured, which is right on a laptop and was
-      # silently wrong here. This is the only job with a database, and until
-      # 1.7.4 it ran the slow suite alone, so their 35 cases had never executed
-      # in CI (re-audit N06). The flag turns "skipped for lack of a database"
-      # into a failure, so this job cannot go green by skipping. Same
-      # working-directory rule as the suites they live in; `-rs` prints any
-      # skip that does happen.
-      - name: SQL integration tests (app suite, from app/)
+      # The whole app suite, database required. Same working-directory rule as
+      # everywhere (bare imports, so from app/); `-rs` prints any skip that does
+      # happen — the only one expected is the opt-in live-vendor contract test,
+      # which is not a database skip and so is not turned into a failure.
+      - name: App suite, database required (from app/)
         working-directory: app
         env:
           PORTFOLIODB_TESTS_REQUIRE_DB: '1'
-        run: python -m pytest tests/test_dedupe_guards.py tests/test_fd_store.py -q -rs
+        run: python -m pytest tests/ -q -rs $COV_ARGS
 
-      - name: SQL integration tests (MCP data-quality detectors, from the root)
+      # The whole MCP fast suite, database required, from the repo root. A
+      # separate pytest process from the slow suite above, as everywhere: in
+      # one process four reconciliation tests fail on cross-test state.
+      - name: MCP fast suite, database required (from the root)
         env:
           PORTFOLIODB_TESTS_REQUIRE_DB: '1'
-        run: python -m pytest app/mcp/tests/test_data_quality_sql.py -q -rs
+        run: python -m pytest app/mcp/tests/ -m "not slow" -q -rs $COV_ARGS
+
+      - name: Coverage report
+        if: always()
+        run: |
+          python -m coverage report --rcfile=tools/coveragerc
+          {
+            echo '### Coverage (app suite + MCP fast + reconciliation, against a live database)'
+            echo ''
+            python -m coverage report --rcfile=tools/coveragerc --format=markdown
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Until this job existed, nothing in CI ever built app/Dockerfile — so a
   # Dockerfile-only PR passed every check without anyone learning whether the
@@ -198,11 +265,9 @@ jobs:
   # swapping Debian for Alpine, went green on all seven checks while
   # `docker build` died on line 35 with `apt-get: not found`.
   #
-  # The other two Docker-touching jobs cannot catch it. `reconciliation` only
-  # starts the `postgres` service, and `make test` runs against the *pulled*
-  # image — docker-compose.yml declares `image:`, not `build:`, so the tree's
-  # own Dockerfile is never consulted. publish.yml does build it, but only on a
-  # release tag, which is after merge.
+  # The other Docker-touching jobs cannot catch it. `database` only starts the
+  # `postgres` service, and `wrapper-live` starts nothing else either.
+  # publish.yml does build it, but only after merge.
   #
   # Building is necessary and not sufficient: a base-image change can build
   # cleanly and still ship an interpreter the pins have no wheels for. So the
@@ -213,9 +278,22 @@ jobs:
   # covering arm64 here would mean QEMU plus an emulated pip install on every
   # PR; publish.yml builds both platforms at release. If that trade stops
   # looking right, add `docker/setup-qemu-action` and a matrix.
+  #
+  # The build also proves app/requirements.lock: it installs with
+  # --require-hashes, so a pin without a matching amd64 wheel hash fails here.
+  #
+  # And the suites and the two long-running services start under the same
+  # hardening docker-compose.yml applies (read-only root, tmpfs /tmp and home,
+  # no capabilities, no-new-privileges), so a change that needs to write
+  # somewhere new fails in CI rather than on someone's host.
   image:
     name: Application image (build and self-test)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HARDENED: >-
+        --read-only --tmpfs /tmp --tmpfs /home/appuser:uid=10001,gid=10001,mode=0700
+        --cap-drop ALL --security-opt no-new-privileges:true
     steps:
       - uses: actions/checkout@v7
 
@@ -274,14 +352,44 @@ jobs:
       # run both in one pytest process and four reconciliation tests fail on
       # cross-test state. The MCP suite runs from /app, never /app/app — there
       # the local app/mcp/ package lands on the path as top-level `mcp` and
-      # shadows the SDK that fastmcp imports.
-      - name: Test suites inside the image
+      # shadows the SDK that fastmcp imports. Hardened like a compose service,
+      # with the pinned pytest from tools/requirements-ci.txt.
+      - name: Test suites inside the image (hardened runtime)
         run: |
-          docker run --rm portfoliodb-ci:${{ github.sha }} sh -c '
-            pip install --user --quiet pytest &&
+          pytest_pin=$(grep -E '^pytest==' tools/requirements-ci.txt)
+          docker run --rm $HARDENED -e PYTEST_PIN="$pytest_pin" portfoliodb-ci:${{ github.sha }} sh -c '
+            pip install --user --quiet "$PYTEST_PIN" &&
             export PATH=$PATH:/home/appuser/.local/bin &&
-            echo "-- app suite --" && cd /app/app && python -m pytest tests/ -q &&
-            echo "-- MCP suite --" && cd /app && python -m pytest app/mcp/tests/ -m "not slow" -q'
+            echo "-- app suite --" && cd /app/app && python -m pytest -p no:cacheprovider tests/ -q &&
+            echo "-- MCP suite --" && cd /app && python -m pytest -p no:cacheprovider app/mcp/tests/ -m "not slow" -q'
+
+      # The healthchecks docker-compose.yml declares, run against the services
+      # started the way compose starts them. A container that is up but never
+      # healthy — wrong port, endpoint moved in a Streamlit upgrade, a write to
+      # the read-only root — fails here.
+      - name: Dashboard and scheduler start hardened and report healthy
+        run: |
+          set -euo pipefail
+          img=portfoliodb-ci:${{ github.sha }}
+          docker run -d --name ci-dashboard $HARDENED "$img" \
+            sh -c 'cd /app/app && streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501'
+          docker run -d --name ci-scheduler $HARDENED "$img" \
+            /usr/local/bin/supercronic -passthrough-logs -prometheus-listen-address 127.0.0.1:9746 /app/docker/crontab
+          probe() {
+            docker exec "$1" python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('$2', timeout=4).status==200 else 1)"
+          }
+          ok=0
+          for _ in $(seq 1 30); do
+            if probe ci-dashboard http://127.0.0.1:8501/_stcore/health && probe ci-scheduler http://127.0.0.1:9746/health; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          docker logs ci-dashboard 2>&1 | tail -20
+          docker logs ci-scheduler 2>&1 | tail -5
+          docker rm -f ci-dashboard ci-scheduler >/dev/null
+          test "$ok" = 1 || { echo "::error::a service never answered its healthcheck"; exit 1; }
+          echo "dashboard and scheduler healthy under the hardened runtime"
 
       # Every dependency must *import*, not merely install. This is the check
       # that fails loudly on a base image the pins have no wheels for, and the
@@ -329,6 +437,7 @@ jobs:
   wrapper-windows:
     name: Windows runner (init, both PowerShell hosts)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -390,6 +499,7 @@ jobs:
   wrapper-live:
     name: Windows runner (backup/restore round trip)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -404,6 +514,8 @@ jobs:
           $pg = (Select-String -Path .env -Pattern '^POSTGRES_PASSWORD=(.+)$').Matches.Groups[1].Value
           $app = (Select-String -Path .env -Pattern '^PORTFOLIODB_PASSWORD=(.+)$').Matches.Groups[1].Value
           if ($pg -ne $app) { throw 'init left the two passwords different' }
+          $dash = (Select-String -Path .env -Pattern '^PORTFOLIODB_DASHBOARD_PASSWORD=(.+)$').Matches.Groups[1].Value
+          if (-not $dash) { throw 'init generated no dashboard password' }
           # A UTF-16 or BOM'd .env is unreadable to Compose, which reports the
           # variables as unset rather than as malformed.
           $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path .env))

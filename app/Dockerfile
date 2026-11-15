@@ -65,11 +65,18 @@ WORKDIR /app
 # System deps: psycopg2-binary ships its libpq, but tzdata is needed for the
 # timezone math the engines and the snapshot guard rely on (PORTFOLIODB_TZ).
 #
-# zlib1g is named so apt upgrades it from trixie-security: the pinned base
-# carries 1:1.3.dfsg+really1.3.1-1+b1, which has two HIGH advisories that
-# 1+deb13u1 fixes. Drop it from this line once a base digest ships deb13u1.
+# `apt-get upgrade` takes every Debian security fix published since the pinned
+# base digest was built. It replaced a hand-maintained line naming zlib1g, which
+# had to be noticed and removed once a base caught up, and only ever covered the
+# one package the last scan happened to flag. The cost is that two builds of one
+# commit on different days can carry different Debian patch releases. The
+# Python set, which is what the tests exercise, stays exactly locked below; and
+# publish.yml builds without a layer cache and scans before it pushes, so what
+# ships is always the fresh build that was scanned. The weekly rebuild in
+# publish.yml is what moves `:1` and `latest` onto new fixes between releases.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tzdata zlib1g \
+ && apt-get -y upgrade \
+ && apt-get install -y --no-install-recommends tzdata \
  && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first for better layer caching. requirements.txt is the
@@ -79,15 +86,38 @@ RUN apt-get update \
 # that the built image's `pip freeze` still equals the file.
 COPY app/requirements.txt /app/app/requirements.txt
 COPY app/constraints.txt /app/app/constraints.txt
+COPY app/requirements.lock /app/app/requirements.lock
 # `--only-binary :all:` — wheels only, so no package's setup.py runs at build
 # time; every pin in the lock has one.
 #
-# pip itself is upgraded to the locked version first. It vendors its own
-# certifi, msgpack and urllib3, and the base image's pip lags: 26.2.x bundles a
-# certifi that still trusts the compromised emSign roots, which pip would use
-# to verify its own downloads.
-RUN pip install --only-binary :all: -c /app/app/constraints.txt --upgrade pip \
- && pip install --only-binary :all: -c /app/app/constraints.txt -r /app/app/requirements.txt
+# `--require-hashes` against app/requirements.lock: the same pins as
+# constraints.txt, plus the sha256 of each wheel (tools/hash_lock.py). pip
+# refuses any file whose bytes differ, so a tampered upload or a compromised
+# mirror fails the build instead of shipping. The lock is the complete freeze,
+# so the resolver still checks that the set is consistent, and `pip check`
+# confirms it afterwards.
+#
+# pip itself is upgraded to the locked version first, from its own hashed line.
+# It vendors its own certifi, msgpack and urllib3, and the base image's pip
+# lags: 26.2.x bundles a certifi that still trusts the compromised emSign roots.
+#
+# PIP_LOCK=refresh is for `make lock` alone: it resolves requirements.txt under
+# the old constraints, without hashes, so a requirement added since the last
+# lock gets installed and frozen. Nothing published is built that way —
+# publish.yml and CI build the default, and CI fails if the image's freeze and
+# constraints.txt disagree.
+ARG PIP_LOCK=hashes
+RUN set -eu; \
+    if [ "$PIP_LOCK" = refresh ]; then \
+      pip install --only-binary :all: -c /app/app/constraints.txt --upgrade pip; \
+      pip install --only-binary :all: -c /app/app/constraints.txt -r /app/app/requirements.txt; \
+    else \
+      grep -E '^pip==' /app/app/requirements.lock > /tmp/pip.lock; \
+      pip install --require-hashes --only-binary :all: --no-deps -r /tmp/pip.lock; \
+      rm /tmp/pip.lock; \
+      pip install --require-hashes --only-binary :all: -r /app/app/requirements.lock; \
+    fi; \
+    pip check
 
 # Bring the rest of the app/ tree (engines, dashboard, services, MCP server),
 # the scheduler's crontab, and the SQL — the last one so an install that pulled
@@ -95,6 +125,9 @@ RUN pip install --only-binary :all: -c /app/app/constraints.txt --upgrade pip \
 COPY app /app/app
 COPY docker/crontab /app/docker/crontab
 COPY sql /app/sql
+# The lock's hash generator, so `make lock` can rehash inside the image (it is
+# stdlib-only and runs nowhere else in the container).
+COPY tools/hash_lock.py /app/tools/hash_lock.py
 # server.json carries the release number the dashboard footer reads
 # (app/version.py). It is also the MCP registry manifest.
 COPY server.json /app/server.json

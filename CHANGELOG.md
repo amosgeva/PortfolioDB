@@ -16,6 +16,78 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+**Upgrading (CI, supply chain, containers)**
+
+- **The dashboard and Postgres now listen on `127.0.0.1` only.** Before, they
+  were published on every interface. If you open the dashboard from another
+  machine, choose how: an SSH tunnel or `tailscale serve` (no port opened), or
+  the LAN opt-in override in `docker-compose.override.yml.example` /
+  [docs/exposure.md](docs/exposure.md#reaching-it-from-your-lan). Host tools and
+  host-run Python still reach Postgres at `127.0.0.1:54320`.
+- Run `make init` (or `.\pdb.ps1 init`) once: it adds
+  `PORTFOLIODB_DASHBOARD_PASSWORD` to an existing `.env` without touching the
+  other secrets.
+- The containers start with tighter defaults (see below). If you run a
+  `docker-compose.override.yml` that writes inside an app container's
+  filesystem, it now needs a volume or tmpfs for that path.
+- pgAdmin (`--profile tools`) moves from tag 8 to 9.19 and now listens on 8080
+  inside its container; the host port stays `127.0.0.1:58080`.
+- Postgres moves from the floating `postgres:16` to `16.16` pinned by digest — a
+  minor update within 16, no dump and restore.
+
+**Changed**
+
+- `docker-compose.yml`: every published port is loopback-only (audit A-1); LAN
+  exposure is documented as an explicit opt-in with a tested override.
+- Container hardening (audit O-1/O-2): the dashboard, scheduler and MCP server
+  run with no Linux capabilities, `no-new-privileges` and a read-only root
+  filesystem (tmpfs `/tmp` and home); Postgres keeps only the five capabilities
+  its entrypoint needs and is not read-only because `docker compose cp`, which
+  the Windows backup and restore use, refuses a read-only container; pgAdmin
+  runs with no capabilities. The dashboard and scheduler gained healthchecks
+  (Streamlit's `/_stcore/health`; supercronic's own `/health` on the
+  container's loopback).
+- Environment scoping (audit O-3): the dashboard and scheduler no longer receive
+  the MCP token and role password or pgAdmin's login; the scheduler also does
+  not receive the dashboard password. The scheduler keeps the LLM and Financial
+  Datasets keys its jobs use. The MCP server now receives `PORTFOLIODB_TZ`.
+- The image installs its Python packages from `app/requirements.lock` with
+  `--require-hashes` (audit O-2): pip refuses any wheel whose sha256 differs from
+  the recorded one. `make lock` regenerates the lock and its hashes together.
+  The Dockerfile now runs `apt-get upgrade`, replacing the hand-maintained
+  `zlib1g` line. pip stays in the runtime image: `make lock`, `make test` and
+  CI's lock check all run it there.
+- `publish.yml` (audit C-1, C-5): both architectures are scanned with Trivy
+  *before* anything is pushed, so an image with a fixable HIGH/CRITICAL finding
+  is never published; published images carry an SBOM and SLSA provenance, a
+  GitHub build-provenance attestation and a keyless cosign signature
+  (SECURITY.md shows how to verify them); a weekly rebuild moves `latest` and
+  the floating `X`/`X.Y` tags onto new Debian fixes; `[skip publish]` in a
+  merge commit skips publishing that push (tags always publish).
+- `security-scan.yml`: a weekly scan of the published `latest` and `1` images by
+  digest, both architectures (audit C-1); a failing scheduled scan opens a
+  tracking issue that the next clean run closes; `.trivyignore` entries are
+  dated and fail the scan past their review date (audit C-6).
+- CI (audit C-3, T-1, C-6): the test jobs run on the image's Python (3.14) with
+  the locked package set; the database job runs the whole app suite and the
+  whole MCP fast suite with the database required, so every database-backed
+  test — the Streamlit AppTest included — runs; coverage is measured and
+  printed; a `Lint (ruff)` job runs a conservative rule set
+  (`tools/ruff.toml`); every job has a timeout. Test tools are pinned in
+  `tools/requirements-ci.txt`.
+- Dependabot (audit P-2): base-image updates are digest and patch only, never a
+  new Python minor or major; Postgres and pgAdmin in `docker-compose.yml` are
+  now tracked too, never proposing a Postgres major.
+- `make test` builds the image from the working tree and tests that, and never
+  touches the stack's database (audit C-4). `make ask` passes the question as
+  one argument, so `make ask ARGS="what's my concentration risk?"` works (audit
+  E-7); backup and restore paths are quoted the same way. `make report` passes
+  `--mode eod` by default instead of failing with a usage error.
+- `tools/tests/test_runner_parity.py` now checks that every command in
+  `docs/commands.md` is the one the Makefile runs, argument for argument
+  (audit K-5).
+- `.codacy.yaml` no longer lists another project's paths.
+
 ## [1.7.7] — 2026-11-15
 
 A maintenance release, a month after 1.7.6. The image scan had started failing

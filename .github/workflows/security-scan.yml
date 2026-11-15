@@ -2,28 +2,46 @@ name: Security scan
 
 # The pins are what make the image reproducible, and pins are what go stale.
 # This runs on a schedule so a vulnerability disclosed after the last release
-# is seen without anyone touching the repository: pip-audit against the exact
-# package set in app/constraints.txt, and Trivy against the image built from
-# the digest-pinned base. It also runs when either input changes in a pull
-# request, so a bump is checked before it merges.
+# is seen without anyone touching the repository:
+#
+#   python-packages  pip-audit against the exact package set in
+#                    app/constraints.txt (and the pinned CI tools)
+#   image            Trivy against an image built from this commit — what the
+#                    next publish would ship
+#   published        Trivy against what users actually pull: ghcr.io's `latest`
+#                    and `1`, each architecture, resolved to a digest first so
+#                    the log says exactly which bytes were judged (audit C-1:
+#                    before 1.8.0 nothing ever scanned the published image)
+#
+# It also runs when an input changes in a pull request, so a bump is checked
+# before it merges. publish.yml runs the same Trivy policy on every image
+# *before* pushing it, so a red image cannot be published; this workflow is
+# what notices when a published image turns red later, as new advisories land.
 #
 # A failure here is a signal to refresh a pin — `make lock` for a package, a
-# Dependabot PR for the base image — not something to silence. Two things it
-# deliberately does not report, because no pin can change them and a check
-# that is always red is a check nobody reads: an OS package with no fixed
-# version in Debian yet (`ignore-unfixed`; util-linux has been that package on
-# every slim image for months), and the entries in .trivyignore, each with its
-# reason written next to it (pip's own vendored copies, as of this writing).
-# Those two are the whole allowlist.
+# Dependabot PR for the base image, or simply the weekly rebuild in publish.yml
+# for a Debian fix — not something to silence. Two things it deliberately does
+# not report, because no pin can change them and a check that is always red is
+# a check nobody reads: an OS package with no fixed version in Debian yet
+# (`ignore-unfixed`), and the entries in .trivyignore, each with its reason and
+# a review-by date written next to it. Those two are the whole allowlist, and
+# an entry past its review date fails the `image` job until someone looks.
+#
+# A scheduled failure opens (or comments on) one tracking issue, and the next
+# clean scheduled run closes it: a red scheduled run alone emails one person
+# at most, and was red for three weeks in 2026 before anyone acted on it.
 
 on:
   schedule:
-    - cron: '17 6 * * 1'        # Mondays 06:17 UTC
+    - cron: '17 6 * * 1'        # Mondays 06:17 UTC, the day after publish.yml's rebuild
   pull_request:
     paths:
       - app/requirements.txt
       - app/constraints.txt
+      - app/requirements.lock
       - app/Dockerfile
+      - tools/requirements-ci.txt
+      - .trivyignore
       - .github/workflows/security-scan.yml
   workflow_dispatch:
 
@@ -34,6 +52,7 @@ jobs:
   python-packages:
     name: pip-audit against app/constraints.txt
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -43,14 +62,30 @@ jobs:
       # ranges to whatever is newest today and audit a set nobody ships.
       - uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266  # v1.1.0
         with:
-          inputs: app/constraints.txt
+          inputs: app/constraints.txt tools/requirements-ci.txt
           no-deps: true
 
   image:
     name: Trivy against the built image
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      # Every .trivyignore entry carries `# review-by: YYYY-MM-DD`
+      # (tools/tests/test_trivyignore.py enforces the format). Past that date
+      # the entry has to be looked at again: removed if pip re-vendored, or
+      # re-dated with a reason if it still holds.
+      - name: No .trivyignore entry is past its review date
+        run: |
+          today=$(date -u +%F)
+          overdue=$(grep -oE '^# review-by: [0-9]{4}-[0-9]{2}-[0-9]{2}' .trivyignore \
+                    | awk -v t="$today" '$3 < t {print $3}')
+          if [ -n "$overdue" ]; then
+            echo "::error file=.trivyignore::entries past their review date: $overdue"
+            exit 1
+          fi
+          echo "every .trivyignore entry is within its review date"
 
       - name: Build the image
         run: docker build -f app/Dockerfile -t portfoliodb-scan:${{ github.sha }} .
@@ -61,4 +96,81 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          trivyignores: .trivyignore
           exit-code: '1'
+
+  published:
+    name: Trivy against the published image (${{ matrix.tag }}, ${{ matrix.platform }})
+    # Not on pull requests: a PR cannot change what is already published, and a
+    # new advisory against `latest` must not redden an unrelated change.
+    if: github.event_name != 'pull_request' && github.repository == 'amosgeva/PortfolioDB'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        tag: [latest, '1']
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v7      # for .trivyignore
+
+      # The package is public, so this needs no login. The digest is the
+      # multi-arch index; Trivy picks the platform below out of it.
+      - name: Resolve the tag to a digest
+        id: ref
+        env:
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          image=ghcr.io/amosgeva/portfoliodb
+          digest=$(docker buildx imagetools inspect "${image}:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "ref=${image}@${digest}" >> "$GITHUB_OUTPUT"
+          echo "### ${image}:${TAG} → ${digest} (${{ matrix.platform }})" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ steps.ref.outputs.ref }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: '1'
+
+  # One issue, not one per run: opened (or commented on) when a scheduled scan
+  # fails, closed by the next scheduled scan that passes. The only job with a
+  # write permission, and only to issues.
+  track:
+    name: Track scheduled scan result
+    needs: [python-packages, image, published]
+    if: always() && github.event_name == 'schedule' && github.repository == 'amosgeva/PortfolioDB'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULTS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='Scheduled security scan is failing'
+          failed=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')
+          existing=$(gh issue list --state open --search "in:title \"$title\"" --json number,title \
+                     | jq -r --arg t "$title" '.[] | select(.title == $t) | .number' | head -1)
+          if [ -n "$failed" ]; then
+            body=$(printf 'The scheduled scan on %s failed.\n\n```\n%s\n```\n\nRun: %s\n\nRefresh the pin it names (`make lock`, a Dependabot PR, or the weekly rebuild in publish.yml). This issue closes itself after the next clean scheduled scan.' "$(date -u +%F)" "$failed" "$RUN_URL")
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "$body"
+            else
+              gh issue create --title "$title" --body "$body"
+            fi
+            exit 1
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "The scheduled scan passed: $RUN_URL"
+          fi
+          echo "scheduled scan clean"

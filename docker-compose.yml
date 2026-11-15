@@ -5,6 +5,12 @@
 #   docker compose --profile mcp up -d      also the MCP server (:8765)
 #   docker compose --profile tools up -d    also pgAdmin (:58080)
 #
+# Every published port is bound to 127.0.0.1: reachable from this host and
+# nowhere else. The dashboard has no login of its own and can change the ledger,
+# so reaching it from another machine is something you opt into —
+# docs/exposure.md shows the override, and the tunnels and proxies that are
+# safer than a LAN bind.
+#
 # The application image is pulled, not built. To build from source instead —
 # what you want when changing the code — add the dev overlay:
 #
@@ -33,12 +39,39 @@ x-app-base: &app-base
   restart: unless-stopped
   # The whole .env reaches the container this way — LLM keys, the FD key, the
   # display name, the timezone — so adding a key never means editing compose.
-  # `environment:` below wins over anything with the same name in .env.
+  # `environment:` below wins over anything with the same name in .env, which
+  # is how each service blanks the secrets it has no use for (x-not-mine).
   env_file:
     - .env
   depends_on:
     postgres:
       condition: service_healthy
+  # Hardening. The app runs as an unprivileged user (app/Dockerfile) and needs
+  # no Linux capability at all, so it gets none, and no-new-privileges stops a
+  # setuid binary from handing one back. The root filesystem is read-only: the
+  # only places the app writes are its cache (a named volume), /tmp and the
+  # user's home (pip --user for `make test`, Streamlit's and yfinance's small
+  # per-user state), which are tmpfs and vanish with the container.
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+    - /home/appuser:uid=10001,gid=10001,mode=0700
+
+# Secrets in .env that no service built on x-app-base reads: the dashboard and
+# the scheduler would otherwise receive them through env_file. Blanking them
+# here (environment beats env_file) keeps "a new key needs no compose edit" for
+# the keys the app does use, while the ones that belong to another process —
+# the MCP server's token and role, pgAdmin's login — stay out of the processes
+# that fetch third-party web pages. Empty means unset to every reader.
+x-not-mine: &not-mine
+  PORTFOLIODB_MCP_TOKEN: ""
+  PORTFOLIODB_MCP_RO_PASSWORD: ""
+  PGADMIN_PASSWORD: ""
+  PGADMIN_EMAIL: ""
 
 # Where the database is. No credentials: the mcp service takes this alone and
 # brings its own read-only role.
@@ -58,7 +91,11 @@ x-app-env: &app-env
 
 services:
   postgres:
-    image: postgres:16
+    # Tag for the reader, digest for the machine: the tag names the release, the
+    # digest is what is actually pulled, so a re-pushed tag cannot change the
+    # database under you. Dependabot proposes digest and 16.x bumps; it never
+    # proposes a new major, which needs pg_upgrade, not a pull.
+    image: postgres:16.16@sha256:30551eca978d79ccf49d037bc297b5670baea61a04ceca42ff7fd3100163d3ce
     container_name: portfoliodb-postgres
     restart: unless-stopped
     environment:
@@ -66,8 +103,28 @@ services:
       POSTGRES_USER: portfoliouser
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       TZ: ${PORTFOLIODB_TZ:-UTC}
+    # The entrypoint starts as root, fixes ownership of the data directory and
+    # drops to the postgres user, which takes exactly these five capabilities;
+    # everything else Docker grants by default is removed. Not read_only: the
+    # Windows runner moves backups in and out with `docker compose cp`, which
+    # Docker refuses on a read-only root filesystem and cannot see through a
+    # tmpfs (checked 2026-11-15) — see docs/commands.md#backup for why that
+    # route is the only safe one on PowerShell 5.1.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    # Loopback only, like every port in this file: host tools and host-run
+    # Python reach it at 127.0.0.1:54320, and the other services use the compose
+    # network regardless. Publishing it to the LAN is an opt-in override.
     ports:
-      - "54320:5432"
+      - "127.0.0.1:54320:5432"
     volumes:
       # Named volume, not a ./data bind mount: Docker owns the permissions (a
       # bind mount hits uid mismatches on some hosts), `docker compose down`
@@ -85,13 +142,31 @@ services:
     <<: *app-base
     container_name: portfoliodb-dashboard
     environment:
-      <<: *app-env
+      <<: [*app-env, *not-mine]
+      # The shared password for the write pages (Manage, Advisor). `make init`
+      # generates it. Named here as well as arriving through env_file so the
+      # rendered model shows which service holds it — and that no other does.
+      PORTFOLIODB_DASHBOARD_PASSWORD: ${PORTFOLIODB_DASHBOARD_PASSWORD:-}
     # From /app/app, mirroring the documented host workflow (run it from app/):
     # the bare module imports resolve without putting app/ ahead of
     # site-packages, which would shadow the `mcp` SDK — see app/Dockerfile.
+    # 0.0.0.0 is inside the container's own network namespace; what the host
+    # exposes is decided by `ports:` below.
     command: ["sh", "-c", "cd /app/app && streamlit run streamlit_app.py --server.address 0.0.0.0 --server.port 8501"]
+    # Loopback only. The dashboard has no login of its own and can add and
+    # delete trades; reaching it from another machine is an opt-in override
+    # (docs/exposure.md#reaching-it-from-your-lan), or better, a tunnel.
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
+    # Streamlit's own liveness endpoint, read with the image's Python (there is
+    # no curl in it). `docker compose ps` then says "healthy" only once the
+    # server answers, not merely once the process exists.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
     volumes:
       # The operator's own philosophy, read-only — the advisor reads it on
       # every call and must never write it. Create it from
@@ -110,13 +185,30 @@ services:
   scheduler:
     <<: *app-base
     container_name: portfoliodb-scheduler
+    # Environment scope, decided rather than inherited (audit O-3): the
+    # scheduler does need most of .env — the morning brief calls the configured
+    # LLM and the weekly enrichment calls Financial Datasets, so those keys stay.
+    # What it never reads is blanked: the MCP and pgAdmin secrets (x-not-mine)
+    # and the dashboard's write-page password. A key added to .env for the app
+    # still arrives without a compose edit.
     environment:
-      <<: *app-env
+      <<: [*app-env, *not-mine]
+      PORTFOLIODB_DASHBOARD_PASSWORD: ""
     # Absolute path, not a bare "supercronic": as PID 1 supercronic re-execs
     # itself to reap zombies, and ForkExec cannot resolve argv[0] through PATH
     # — the bare name crash-loops with "Failed to fork exec: no such file or
     # directory" before any job runs.
-    command: ["/usr/local/bin/supercronic", "-passthrough-logs", "/app/docker/crontab"]
+    #
+    # The metrics listener is on the container's own loopback and not published:
+    # it exists for the healthcheck below, which asks supercronic itself whether
+    # it is up rather than inferring it from a process list.
+    command: ["/usr/local/bin/supercronic", "-passthrough-logs", "-prometheus-listen-address", "127.0.0.1:9746", "/app/docker/crontab"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9746/health', timeout=4).status==200 else 1)"]
+      interval: 60s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
     volumes:
       - ./philosophy.md:/app/philosophy.md:ro
       - appcache:/app/cache
@@ -125,7 +217,9 @@ services:
   # crash-loops without them, so a fresh clone must not start it by default.
   #   docker compose --profile tools up -d pgadmin
   pgadmin:
-    image: dpage/pgadmin4:8
+    # The current 9.x line, pinned by digest like postgres above. Tag 8 had not
+    # been rebuilt since 2024-12.
+    image: dpage/pgadmin4:9.19.0@sha256:3591b3d02910dcd817dec6fcaa681c278ba6966945283dd0ea0042731c330c83
     container_name: portfoliodb-pgadmin
     restart: unless-stopped
     profiles: ["tools"]
@@ -134,8 +228,21 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       TZ: ${PORTFOLIODB_TZ:-UTC}
+      # Both needed for the hardening below. Postfix (password-reset mail, which
+      # desktop mode has no use for) is started through sudo, which
+      # no-new-privileges forbids; and port 80 needs a file capability that
+      # no-new-privileges also refuses, so it listens on 8080 instead. Checked
+      # against 9.19.0: with these it starts with an empty capability set.
+      PGADMIN_DISABLE_POSTFIX: "1"
+      PGADMIN_LISTEN_PORT: "8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Not read_only: the entrypoint writes its generated config into the image
+    # filesystem on every start.
     ports:
-      - "127.0.0.1:58080:80"
+      - "127.0.0.1:58080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,6 +279,10 @@ services:
       PORTFOLIODB_MCP_ALLOW_RW_FALLBACK: ${PORTFOLIODB_MCP_ALLOW_RW_FALLBACK:-}
       PORTFOLIODB_MCP_LOG_LEVEL: ${PORTFOLIODB_MCP_LOG_LEVEL:-INFO}
       PORTFOLIODB_BENCHMARK_SYMBOL: ${PORTFOLIODB_BENCHMARK_SYMBOL:-SPY}
+      # The reporting timezone, so the server buckets days the way the
+      # dashboard does. TZ above is the process clock; this is the setting the
+      # code reads when the settings table is out of its reach (audit X-4).
+      PORTFOLIODB_TZ: ${PORTFOLIODB_TZ:-}
       PORTFOLIODB_MARKET_START: ${PORTFOLIODB_MARKET_START:-}
       PORTFOLIODB_MARKET_END: ${PORTFOLIODB_MARKET_END:-}
       PORTFOLIODB_MARKET_WEEK: ${PORTFOLIODB_MARKET_WEEK:-}
