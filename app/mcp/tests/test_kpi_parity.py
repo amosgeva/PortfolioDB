@@ -1,5 +1,11 @@
 """Engine-parity test: MCP KPIs must match the Streamlit dashboard's math.
 
+Updated for the 1.8.0 definitions (docs/methodology.md §12, §14) that the
+dashboard, the Advisor and the reports compute through app/portfolio_kpis.py:
+unrealized % over the PRICED cost basis, and total return over peak net
+invested capital. The oracle below states both by hand, from the fixture, so
+it does not lean on the module the MCP calls.
+
 The dashboard computes its KPI tiles with inline pandas math at lines
 507-579 of streamlit_app.py. The MCP server replicates that math in
 app/mcp/services/kpis.py. This test runs both paths over a deterministic
@@ -69,6 +75,7 @@ CASH_ROWS = [
     ("IBKR",  "200.00", datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)),
 ]
 WATCHLIST_COUNT = 2  # arbitrary
+PEAK_NET_INVESTED = 7482.50  # worked through in _dashboard_kpis
 
 
 # ────────────────────────── canonical (dashboard) implementation ─────────────
@@ -111,7 +118,12 @@ def _dashboard_kpis() -> dict[str, Any]:
         total_value = float(merged["market_value"].sum(skipna=True))
         total_cost = float(merged["open_cost"].sum())
         total_unrl = float(merged["unrealized_pnl"].sum(skipna=True))
-        total_unrl_pct = (total_unrl / total_cost * 100) if total_cost else 0.0
+        # Unrealized % over the cost of the positions that HAVE a price: an
+        # unpriced position (AAPL here) has no unrealized P&L to count, so its
+        # cost cannot be in the denominator either (audit F-12 / Q-2).
+        priced = merged[(merged["qty"] > 0) & merged["last_price"].notna()]
+        priced_cost = float(priced["open_cost"].sum())
+        total_unrl_pct = (total_unrl / priced_cost * 100) if priced_cost else 0.0
         active_count = int((merged["qty"] > 0).sum())
     else:
         total_value = total_cost = total_unrl = 0.0
@@ -129,7 +141,16 @@ def _dashboard_kpis() -> dict[str, Any]:
     merged_cash = sum(cash_latest.values())
 
     aum_total = total_value + merged_cash
-    total_return_pct = ((realized_total + total_unrl) / total_cost * 100) if total_cost else 0.0
+    # Total return over peak net invested capital (audit F-5 / Q-4): the most
+    # money the ledger had committed at any trade date's close. By hand:
+    #   2024-12-01 VOO  +4400.00        -> 4400.00
+    #   2025-01-10 NVDA +601.00         -> 5001.00
+    #   2025-02-15 AAPL +1801.00        -> 6802.00
+    #   2025-04-01 NVDA +260.00         -> 7062.00
+    #   2025-06-05 NVDA +420.50         -> 7482.50   <- peak
+    #   2026-03-20 VOO  -(1440 - 0.50)  -> 6043.00
+    invested = PEAK_NET_INVESTED
+    total_return_pct = ((realized_total + total_unrl) / invested * 100) if invested else 0.0
 
     daily_change_dollar = 0.0
     last_snapshot_delta = 0.0
@@ -288,8 +309,14 @@ def test_mcp_kpis_match_dashboard_math(patched_services):
     # asserted unchanged via PARITY_KEYS). income_total is pinned to 30.0 by
     # the fixture; total_return_with_income_pct folds it into the numerator.
     assert actual["income_total"] == pytest.approx(30.0)
+    # The 1.8.0 fields, stated from the fixture.
+    assert actual["invested_capital"] == pytest.approx(PEAK_NET_INVESTED)
+    assert actual["unpriced_symbols"] == ["AAPL"]
+    assert actual["unpriced_cost_basis"] == pytest.approx(1801.0)
+    assert actual["priced_cost_basis"] + actual["unpriced_cost_basis"] == pytest.approx(actual["cost_basis"])
+    assert actual["total_return_partial"] is True
     expected_twi = (
         (expected["realized_pnl"] + expected["unrealized_pnl"] + 30.0)
-        / expected["cost_basis"] * 100.0
+        / PEAK_NET_INVESTED * 100.0
     )
     assert actual["total_return_with_income_pct"] == pytest.approx(expected_twi)

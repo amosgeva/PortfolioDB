@@ -60,8 +60,9 @@ def tz_name() -> str:
 # the day a non-USD instrument appears there is something to check against.
 REPORTING_CURRENCY = "USD"
 
-# Tracks the `-- PortfolioDB schema vX.Y` header in sql/schema.sql.
-SCHEMA_VERSION = "0.4"
+# Tracks the `-- PortfolioDB schema vX.Y` header in sql/schema.sql. 0.5 is the
+# 1.8.0 schema: migrations 004-006 (bookkeeping, price_alerts, lot_deletions).
+SCHEMA_VERSION = "0.5"
 
 # How long a snapshot run may be in flight before we stop deferring to it.
 #

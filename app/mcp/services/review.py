@@ -36,6 +36,7 @@ from psycopg2 import sql
 from app.mcp import deps
 from app.mcp.deps import get_conn
 from app.mcp.services import analytics as analytics_service
+from app.mcp.services import cash as cash_service
 from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import data_quality as dq_service
@@ -46,6 +47,7 @@ from app.mcp.services import positions as positions_service
 from app.mcp.services import returns as returns_service
 from app.mcp.services.cutoff import Cutoff
 
+import portfolio_kpis
 import xirr as xirr_module
 
 DETAIL_LEVELS = ("summary", "standard", "full")
@@ -153,7 +155,7 @@ def _review(
     totals = positions_service.positions_summary(
         method, account=account, cutoff=cutoff
     )
-    cash, cash_by_account = _cash(cutoff, account)
+    cash, cash_by_account, cash_excluded = _cash(cutoff, account)
     income = income_service.income_summary(
         group_by="none", until=cutoff.trade_date, account=account
     )
@@ -161,7 +163,7 @@ def _review(
         account=account, method=method, cutoff=cutoff
     )
 
-    summary = _summary(totals, cash, cash_by_account, income, fees, positions)
+    summary = _summary(totals, cash, cash_by_account, income, fees, positions, cash_excluded)
     scopes = _scopes(account)
     review: dict[str, Any] = {
         "meta": cutoff_service.meta(
@@ -218,6 +220,7 @@ def _summary(
     income: dict[str, Any],
     fees: dict[str, Any],
     positions: list[dict[str, Any]],
+    cash_excluded: list[dict[str, Any]] = (),
 ) -> dict[str, Any]:
     invested = float(totals["market_value"])
     portfolio_value = invested + cash
@@ -235,6 +238,10 @@ def _summary(
         "cash_by_account": cash_by_account,
         "cash_weight_pct": (cash / portfolio_value * 100.0) if portfolio_value else None,
         "cost_basis": float(totals["cost_basis"]),
+        "priced_cost_basis": float(totals.get("priced_cost_basis", totals["cost_basis"])),
+        "unpriced_cost_basis": float(totals.get("unpriced_cost_basis") or 0.0),
+        "unpriced_symbols": list(totals.get("unpriced_symbols") or []),
+        "invested_capital": totals.get("invested_capital"),
         "realized_pnl": realized,
         "unrealized_pnl": unrealized,
         "income_total": income_total,
@@ -243,6 +250,9 @@ def _summary(
         "fees_total": float(fees["total_fees"]),
         "total_economic_pnl": realized + unrealized + income_total,
         "total_economic_pnl_formula": "realized + unrealized + income (all already net of fees)",
+        # Income and cash are USD-only; anything in another currency is left
+        # out of the totals above and listed here (methodology §14).
+        "excluded_non_usd": list(income.get("excluded_non_usd") or []) + list(cash_excluded),
         "position_count": len(positions),
         "null_reasons": (
             {} if portfolio_value else {"cash_weight_pct": "no_portfolio_value"}
@@ -256,11 +266,17 @@ def _returns(
     twr = returns_service.period_returns(cutoff=cutoff, account=account)
     mwr = _xirr(cutoff, summary, account)
 
-    cost_basis = summary["cost_basis"]
-    return_on_cost = (
-        (summary["realized_pnl"] + summary["unrealized_pnl"] + summary["income_total"])
-        / cost_basis * 100.0
-        if cost_basis else None
+    # Over peak net invested capital of the same (account- and cutoff-
+    # filtered) lots, as on the dashboard: docs/methodology.md §12. The old
+    # denominator was the cost still open, which exploded after a large sale.
+    invested_capital = portfolio_kpis.to_dec(summary.get("invested_capital")) or portfolio_kpis.ZERO
+    d = portfolio_kpis.to_dec
+    total_return = portfolio_kpis.total_return_pct(
+        d(summary["realized_pnl"]), d(summary["unrealized_pnl"]), invested_capital
+    )
+    return_on_cost = portfolio_kpis.total_return_pct(
+        d(summary["realized_pnl"]), d(summary["unrealized_pnl"]), invested_capital,
+        d(summary["income_total"]),
     )
 
     return {
@@ -269,7 +285,11 @@ def _returns(
         "observations": twr["observations"],
         "coverage": twr["coverage"],
         "xirr_investment": mwr,
-        "return_on_cost_pct": return_on_cost,
+        "return_on_cost_pct": portfolio_kpis.as_float(return_on_cost),
+        "total_return_pct": portfolio_kpis.as_float(total_return),
+        "total_return_with_income_pct": portfolio_kpis.as_float(return_on_cost),
+        "invested_capital": portfolio_kpis.as_float(invested_capital),
+        "total_return_partial": bool(summary.get("unpriced_symbols")),
         "simple_value_change": {
             "note": (
                 "Change in portfolio value is not a return: it mixes market "
@@ -280,12 +300,16 @@ def _returns(
         "methodology": {
             "twr": "Holdings reconstructed per snapshot day; daily sub-period returns chained, so contributions are neutralised.",
             "xirr": "Annualised rate discounting trades, income and closing value to zero. Invested capital only.",
-            "return_on_cost": "(realized + unrealized + income) / cost basis. A cumulative ratio, not annualised.",
+            "return_on_cost": "(realized + unrealized + USD income) / peak net invested capital (the most capital the ledger had committed at any trade date's close). A cumulative money ratio, not annualised; same as total_return_with_income_pct.",
             "reference": "docs/methodology.md",
         },
         "coverage_quality": _coverage_quality(cutoff, twr, account),
         "null_reasons": (
-            {} if cost_basis else {"return_on_cost_pct": "no_cost_basis"}
+            {} if return_on_cost is not None else {
+                "return_on_cost_pct": "no_invested_capital",
+                "total_return_pct": "no_invested_capital",
+                "total_return_with_income_pct": "no_invested_capital",
+            }
         ),
     }
 
@@ -483,30 +507,18 @@ def _detail(
 # ────────────────────────── helpers ──────────────────────────
 
 
-def _cash(cutoff: Cutoff, account: str | None) -> tuple[float, list[dict[str, Any]]]:
-    """Cash at the cutoff, per account. Mirrors kpis._cash_totals."""
-    as_of_ts = cutoff.ts
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT DISTINCT ON (account) account, cash, ts
-                FROM cash_snapshots
-                WHERE ts <= %s
-                ORDER BY account, ts DESC
-                """,
-                (as_of_ts,),
-            )
-            rows = cur.fetchall()
-    # cash_snapshots.account is NOT NULL, so '(none)' — lots without an
-    # account — has no cash of its own and matches nothing here.
-    out = [
-        {"account": acct or "(merged)", "cash": float(amount),
-         "ts": ts.isoformat() if ts else None}
-        for acct, amount, ts in rows
-        if account is None or acct == account
-    ]
-    return sum(r["cash"] for r in out), out
+def _cash(
+    cutoff: Cutoff, account: str | None
+) -> tuple[float, list[dict[str, Any]], list[dict[str, Any]]]:
+    """USD cash at the cutoff, per account, and what was left out.
+
+    The shared reader (services/cash.py), the same one kpis uses. A balance in
+    another currency is listed but not added (methodology §14).
+    cash_snapshots.account is NOT NULL, so '(none)' — lots without an account
+    — has no cash of its own and matches nothing here.
+    """
+    info = cash_service.latest_cash(cutoff.ts, account=account)
+    return info["total"], info["by_account"], info["excluded_non_usd"]
 
 
 def _first_trade_date(cutoff: Cutoff, account: str | None = None) -> date | None:

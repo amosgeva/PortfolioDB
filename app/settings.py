@@ -137,6 +137,16 @@ def _refresh_if_stale(force: bool = False) -> None:
         _first_load.set()
 
 
+def refresh() -> None:
+    """Re-read the settings table now, ignoring the TTL.
+
+    For a caller that knows the table just changed (the Settings page after a
+    save it did not make through set_value/unset). Ordered with any read in
+    flight, so the fresh values win.
+    """
+    _refresh_if_stale(force=True)
+
+
 def get(key: str, *, env: str | tuple[str, ...] | None = None, default: str | None = None) -> str | None:
     """Resolve one setting: DB → env var(s), first non-blank wins → default."""
     _refresh_if_stale()

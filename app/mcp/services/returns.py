@@ -28,6 +28,7 @@ from app.mcp.services.cutoff import Cutoff, LOCAL_TZ, tz_name
 import benchmark
 import corporate_actions
 import ledger_inputs
+import portfolio_kpis
 import twr
 
 _BASIS = "time_weighted_return"
@@ -407,9 +408,13 @@ def _fetch_dividends(
     Scoped with the lots: an account's money-weighted or time-weighted return
     built from its own trades and every account's dividends was wrong by the
     other accounts' income (audit Q-3).
+
+    USD only: an amount recorded in another currency is not a dollar amount
+    and is left out of the TWR and XIRR flows, as it is from every income
+    total (docs/methodology.md §14). income_summary lists what was excluded.
     """
     pay_date = cutoff.trade_date if cutoff else None
-    query = sql.SQL("SELECT pay_date, amount, account FROM income WHERE 1=1")
+    query = sql.SQL("SELECT pay_date, amount, account, currency FROM income WHERE 1=1")
     params: list[Any] = []
     query, params = common.add_account_filter(query, params, account)
     if pay_date is not None:
@@ -424,6 +429,7 @@ def _fetch_dividends(
         {"pay_date": r["pay_date"], "amount": float(r["amount"]), "account": r.get("account")}
         for r in recs
         if r.get("pay_date") is not None and r.get("amount") is not None
+        and portfolio_kpis.currency_of(r) == portfolio_kpis.BASE_CURRENCY
     ]
 
 

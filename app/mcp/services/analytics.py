@@ -262,7 +262,9 @@ def _allocation_by_account(
     buckets: dict[str, float] = defaultdict(float)
     total_mv = 0.0
     for acct in sorted(set(accounts)):
-        summary = positions_service.positions_summary("fifo", account=acct, cutoff=cutoff)
+        summary = positions_service.positions_summary(
+            "fifo", account=acct, cutoff=cutoff, include_income=False
+        )
         mv = float(summary.get("market_value") or 0.0)
         if mv <= 0:
             continue

@@ -216,6 +216,7 @@ def fake_db(monkeypatch):
     from app.mcp.resources import reports as reports_resource
     from app.mcp.services import (
         activity as activity_service,
+        cash as cash_service,
         analytics as analytics_service,
         cutoff as cutoff_service,
         data_quality as data_quality_service,
@@ -235,7 +236,7 @@ def fake_db(monkeypatch):
     # Every module that holds its own `get_conn` reference — keep in sync with
     # `grep -rl 'import get_conn' app/mcp`, which the hygiene test enforces.
     for mod in (
-        deps, health_service, activity_service, analytics_service,
+        deps, health_service, activity_service, cash_service, analytics_service,
         cutoff_service, data_quality_service, fees_service,
         fundamentals_service, income_service, kpis_service, pnl_service,
         positions_service, prices_service, returns_service, review_service,

@@ -282,14 +282,18 @@ def unrealized_pnl(
             "unrealized_pct": (upnl / cost * 100.0) if (upnl is not None and cost) else None,
         })
     total = positions_service.positions_summary(
-        method, account=account, as_of=as_of, cutoff=cutoff
+        method, account=account, as_of=as_of, cutoff=cutoff, include_income=False
     )
     return {
         "method": method,
         "rows": rows,
         "total_unrealized": total["unrealized_pnl"],
         "total_cost": total["cost_basis"],
+        "total_priced_cost": total["priced_cost_basis"],
+        "total_unpriced_cost": total["unpriced_cost_basis"],
+        "unpriced_symbols": total["unpriced_symbols"],
         "total_market_value": total["market_value"],
+        # Over the priced cost the unrealized P&L was earned on (methodology §12).
         "total_unrealized_pct": total["unrealized_pct"],
     }
 
@@ -333,6 +337,13 @@ def pnl_summary(
         "unrealized_pnl": s["unrealized_pnl"],
         "unrealized_pct": s["unrealized_pct"],
         "total_return_pct": s["total_return_pct"],
+        "total_return_with_income_pct": s["total_return_with_income_pct"],
+        "invested_capital": s["invested_capital"],
+        "total_return_partial": s["total_return_partial"],
+        "total_return_basis": s["total_return_basis"],
+        "priced_cost_basis": s["priced_cost_basis"],
+        "unpriced_cost_basis": s["unpriced_cost_basis"],
+        "unpriced_symbols": s["unpriced_symbols"],
         "active_symbols": s["active_symbols"],
     }
 

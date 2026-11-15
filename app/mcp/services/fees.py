@@ -61,10 +61,15 @@ def fees_summary(
         ba["fees"] += fee
         ba["count"] += 1 if paid else 0
 
-    cost_basis = float(
-        positions_service.positions_summary(method, account=account, cutoff=cutoff)["cost_basis"]
+    totals = positions_service.positions_summary(
+        method, account=account, cutoff=cutoff, include_income=False
     )
-    fee_drag_pct = (total / cost_basis * 100.0) if cost_basis else 0.0
+    cost_basis = float(totals["cost_basis"])
+    # Fee drag = total fees / peak net invested capital of the same lots
+    # (docs/methodology.md §12): a lifetime ratio over the open cost moved
+    # whenever a position was sold, like the old total return did.
+    invested = float(totals.get("invested_capital") or 0.0)
+    fee_drag_pct = (total / invested * 100.0) if invested else None
 
     return {
         "since": since.isoformat() if since else None,
@@ -73,7 +78,10 @@ def fees_summary(
         "total_fees": total,
         "fee_count": count,
         "cost_basis": cost_basis,
+        "invested_capital": invested,
         "fee_drag_pct": fee_drag_pct,
+        "fee_drag_basis": "total fees / peak net invested capital",
+        "null_reasons": {} if invested else {"fee_drag_pct": "no_invested_capital"},
         "by_symbol": [
             {"symbol": s, "fees": v["fees"], "count": v["count"]}
             for s, v in sorted(

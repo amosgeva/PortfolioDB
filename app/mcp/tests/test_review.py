@@ -151,7 +151,7 @@ def stub(review, monkeypatch):
                            "material_issues": 0, "minor_issues": 0},
                 "material_issues": [], "minor_issues": [],
             })))
-        monkeypatch.setattr(review, "_cash", lambda c, a: (500.0, []))
+        monkeypatch.setattr(review, "_cash", lambda c, a: (500.0, [], []))
         monkeypatch.setattr(review, "_first_trade_date", lambda c, a=None: date(2024, 12, 3))
         return seen
 
@@ -245,7 +245,7 @@ class TestReconciliation:
             "market_value": 0.0, "cost_basis": 0.0, "unrealized_pnl": 0.0,
             "realized_pnl": 0.0, "active_symbols": 0, "null_reasons": {},
         })
-        monkeypatch.setattr(review, "_cash", lambda c, a: (0.0, []))
+        monkeypatch.setattr(review, "_cash", lambda c, a: (0.0, [], []))
         s = review.portfolio_review_snapshot(cutoff=make_cutoff())["summary"]
         assert s["cash_weight_pct"] is None
         assert s["null_reasons"]["cash_weight_pct"] == "no_portfolio_value"

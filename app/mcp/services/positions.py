@@ -24,6 +24,7 @@ from psycopg2 import sql
 from portfolio import compute_avg_cost_merged, compute_fifo_merged
 import corporate_actions
 import ledger_inputs
+import portfolio_kpis
 
 from app.mcp.deps import get_conn, snapshot_memo
 from app.mcp.services import common
@@ -189,6 +190,9 @@ def positions_dataframe(
             [], corporate_actions.fetch_actions(conn), as_of=effective_as_of
         ).actions
     merged = engine(lot_rows)
+    # The total-return denominator, from exactly the lots this frame values
+    # (same account and date filter, restated alike): docs/methodology.md §12.
+    merged.attrs["invested_capital"] = portfolio_kpis.peak_net_invested(lot_rows)
 
     # Bring the cutoff's price into the frame so callers can compute market
     # value without re-querying. None/NaN price is fine — left join keeps the row.
@@ -253,47 +257,79 @@ def positions_summary(
     account: str | None = None,
     as_of: date | None = None,
     cutoff: Cutoff | None = None,
+    include_income: bool = True,
 ) -> dict[str, Any]:
-    """Aggregate totals across positions (used by KPIs and pnl summary)."""
+    """Aggregate totals across positions, by the dashboard's definitions.
+
+    The same definitions the dashboard, the Advisor and the reports compute
+    through app/portfolio_kpis.py (docs/methodology.md §12 and §14):
+
+    * market value and unrealized P&L over **priced** rows only; a held
+      position with no quote is not a loss — its open cost is reported as
+      ``unpriced_cost_basis`` and its symbol in ``unpriced_symbols``;
+    * ``unrealized_pct`` over the **priced** cost basis it was earned on;
+    * ``total_return_pct`` = (realized + unrealized) / peak net invested
+      capital of the same account- and date-filtered lots, and
+      ``total_return_with_income_pct`` adds USD income received by the same
+      date. The old ratio divided by the cost still open, so it exploded after
+      a large sale and read 0% after a full one (audit F-5 / Q-4).
+
+    ``include_income=False`` skips the income read for callers that only need
+    the valuation (allocation buckets, fee drag); the with-income figure is
+    then None.
+    """
     df = positions_dataframe(method, account=account, as_of=as_of, cutoff=cutoff)
-    if df.empty:
-        # Absolute totals are truly zero; the percentages are undefined without
-        # a cost basis, so they are null rather than a misleading 0.0.
-        return {
-            "market_value": 0.0,
-            "cost_basis": 0.0,
-            "unrealized_pnl": 0.0,
-            "unrealized_pct": None,
-            "realized_pnl": 0.0,
-            "active_symbols": 0,
-            "total_return_pct": None,
-            "null_reasons": {
-                "unrealized_pct": "no_cost_basis",
-                "total_return_pct": "no_cost_basis",
-            },
-        }
-    market_value = float(df["market_value"].sum(skipna=True))
-    cost_basis = float(df["open_cost"].sum())
-    unrealized_pnl = float(df["unrealized_pnl"].sum(skipna=True))
-    realized_pnl = float(df["realized_pnl"].sum()) if "realized_pnl" in df.columns else 0.0
-    active = int((df["qty"] > 0).sum())
-    unrealized_pct = (unrealized_pnl / cost_basis * 100.0) if cost_basis else None
-    total_return_pct = (
-        (realized_pnl + unrealized_pnl) / cost_basis * 100.0 if cost_basis else None
+    invested = df.attrs.get("invested_capital", portfolio_kpis.ZERO)
+    rollup = portfolio_kpis.rollup(df.to_dict(orient="records") if not df.empty else [])
+
+    income_total = None
+    income_excluded: list[dict[str, Any]] = []
+    if include_income:
+        from app.mcp.services import income as income_service
+
+        until = as_of if as_of is not None else (cutoff.trade_date if cutoff else None)
+        income_total, income_excluded = income_service.usd_income_total(
+            until=until, account=account
+        )
+
+    total_return = portfolio_kpis.total_return_pct(
+        rollup["realized_pnl"], rollup["unrealized_pnl"], invested
     )
+    total_with_income = (
+        portfolio_kpis.total_return_pct(
+            rollup["realized_pnl"], rollup["unrealized_pnl"], invested,
+            portfolio_kpis.to_dec(income_total) or portfolio_kpis.ZERO,
+        )
+        if income_total is not None else None
+    )
+    f = portfolio_kpis.as_float
+    null_reasons: dict[str, str] = {}
+    if rollup["unrealized_pct"] is None:
+        null_reasons["unrealized_pct"] = (
+            "no_priced_cost_basis" if rollup["cost_basis"] else "no_cost_basis"
+        )
+    if total_return is None:
+        null_reasons["total_return_pct"] = "no_invested_capital"
+        if include_income:
+            null_reasons["total_return_with_income_pct"] = "no_invested_capital"
     return {
-        "market_value": market_value,
-        "cost_basis": cost_basis,
-        "unrealized_pnl": unrealized_pnl,
-        "unrealized_pct": unrealized_pct,
-        "realized_pnl": realized_pnl,
-        "active_symbols": active,
-        "total_return_pct": total_return_pct,
-        "null_reasons": (
-            {}
-            if cost_basis
-            else {"unrealized_pct": "no_cost_basis", "total_return_pct": "no_cost_basis"}
-        ),
+        "market_value": f(rollup["market_value"]),
+        "cost_basis": f(rollup["cost_basis"]),
+        "priced_cost_basis": f(rollup["priced_cost_basis"]),
+        "unpriced_cost_basis": f(rollup["unpriced_cost_basis"]),
+        "unpriced_symbols": rollup["unpriced_symbols"],
+        "unrealized_pnl": f(rollup["unrealized_pnl"]),
+        "unrealized_pct": f(rollup["unrealized_pct"]),
+        "realized_pnl": f(rollup["realized_pnl"]),
+        "active_symbols": int((df["qty"] > 0).sum()) if not df.empty else 0,
+        "invested_capital": f(invested),
+        "total_return_pct": f(total_return),
+        "total_return_with_income_pct": f(total_with_income),
+        "total_return_partial": bool(rollup["unpriced_symbols"]),
+        "total_return_basis": portfolio_kpis.TOTAL_RETURN_BASIS,
+        "income_total": income_total,
+        "income_excluded_non_usd": income_excluded,
+        "null_reasons": null_reasons,
     }
 
 

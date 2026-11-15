@@ -36,6 +36,7 @@ from typing import Any
 from decimal import Decimal
 
 from app.mcp.deps import get_conn
+from app.mcp.services import cash as cash_service
 from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
@@ -64,6 +65,8 @@ CORRECTNESS_CODES = frozenset({
     # A position in another currency is summed at face value: every total
     # that includes it is wrong at any position size.
     "foreign_currency",
+    "foreign_currency_income",
+    "foreign_currency_cash",
 })
 
 # A position at or above this share of market value is material.
@@ -215,6 +218,11 @@ def portfolio_data_quality(
     symbols_out, material, minor = _assemble(
         issues_by_symbol, positions, targeted, materiality_pct
     )
+    # Money recorded in another currency is left out of the USD income and
+    # cash totals (docs/methodology.md §14); say so wherever a reader checks
+    # whether to trust a total. Material at any size: a total is short by it.
+    money = _foreign_money(cutoff)
+    material = money + material
     collector = _collector_status(cutoff, last_run, cash_max_age_days)
 
     candidates = [i["severity"] for i in material]
@@ -720,6 +728,42 @@ def _foreign_currency(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                 }
                 for r in cur.fetchall()
             }
+
+
+def _foreign_money(cutoff: Cutoff) -> list[dict[str, Any]]:
+    """Income and cash recorded in a currency other than USD, at the cutoff.
+
+    Both are excluded from the dollar totals (income, total return with income,
+    cash, AUM) rather than added at face value; these issues are what tells the
+    reader the totals are short by them. Warnings come from
+    portfolio_kpis.currency_warnings, the dashboard's own wording.
+    """
+    import portfolio_kpis
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT symbol, account, amount, currency FROM income "
+                "WHERE pay_date <= %s AND currency IS NOT NULL AND upper(currency) <> %s",
+                (cutoff.trade_date, portfolio_kpis.BASE_CURRENCY),
+            )
+            cols = [d[0] for d in cur.description]
+            income = [dict(zip(cols, r)) for r in cur.fetchall()]
+    cash = [
+        {"account": r["account"], "currency": r["currency"], "cash": r["cash"]}
+        for r in cash_service.latest_cash(cutoff.ts)["by_account"]
+        if not r["included"]
+    ]
+    out: list[dict[str, Any]] = []
+    for w in portfolio_kpis.currency_warnings(income=income, cash=cash):
+        kind = w["kind"]
+        label = ",".join(w.get("symbols") or []) if kind == "income" else f"(cash:{w.get('account')})"
+        detail = {k: v for k, v in w.items() if k not in ("message", "kind")}
+        out.append(dict(
+            _issue(f"foreign_currency_{kind}", "partial", w["message"], **detail),
+            symbol=label or "(income)", weight_pct=0.0,
+        ))
+    return out
 
 
 def _first_trade_dates(cutoff: Cutoff) -> dict[str, date]:

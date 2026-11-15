@@ -16,7 +16,8 @@ def test_fees_summary_totals_and_breakdown(env_token, monkeypatch, fake_db):
     from app.mcp.services import fees, positions as positions_service
 
     monkeypatch.setattr(
-        positions_service, "positions_summary", lambda *a, **kw: {"cost_basis": 1000.0}
+        positions_service, "positions_summary",
+        lambda *a, **kw: {"cost_basis": 1000.0, "invested_capital": 1600.0},
     )
     # One SELECT returns (symbol, account, fees) rows.
     fake_db(responses=[(
@@ -33,7 +34,10 @@ def test_fees_summary_totals_and_breakdown(env_token, monkeypatch, fake_db):
     assert out["total_fees"] == pytest.approx(8.0)
     assert out["fee_count"] == 3            # the 0.0-fee lot is excluded
     assert out["cost_basis"] == 1000.0
-    assert out["fee_drag_pct"] == pytest.approx(0.8)
+    # Fee drag is over peak net invested capital, not the cost still open
+    # (docs/methodology.md §12): 8 / 1600.
+    assert out["invested_capital"] == 1600.0
+    assert out["fee_drag_pct"] == pytest.approx(0.5)
 
     by_sym = {r["symbol"]: r for r in out["by_symbol"]}
     assert by_sym["NVDA"]["fees"] == pytest.approx(4.0)
@@ -50,14 +54,17 @@ def test_fees_summary_empty(env_token, monkeypatch, fake_db):
     from app.mcp.services import fees, positions as positions_service
 
     monkeypatch.setattr(
-        positions_service, "positions_summary", lambda *a, **kw: {"cost_basis": 0.0}
+        positions_service, "positions_summary",
+        lambda *a, **kw: {"cost_basis": 0.0, "invested_capital": 0.0},
     )
     fake_db(responses=[(["symbol", "account", "fees"], [])])
 
     out = fees.fees_summary()
     assert out["total_fees"] == 0.0
     assert out["fee_count"] == 0
-    assert out["fee_drag_pct"] == 0.0       # no division by zero
+    # Undefined, not 0%: nothing was ever invested.
+    assert out["fee_drag_pct"] is None
+    assert out["null_reasons"]["fee_drag_pct"] == "no_invested_capital"
     assert out["by_symbol"] == []
     assert out["by_account"] == []
 

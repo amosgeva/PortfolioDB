@@ -143,7 +143,7 @@ def review_recorder(env_token, fake_db, monkeypatch):
         "overall_status": "complete", "overall_explanation": "", "counts": {},
         "collector": {"status": "complete", "message": ""},
         "material_issues": [], "minor_issues": []}))
-    monkeypatch.setattr(review, "_cash", lambda c, a: (0.0, []))
+    monkeypatch.setattr(review, "_cash", lambda c, a: (0.0, [], []))
     monkeypatch.setattr(review, "_first_trade_date", lambda c, a=None: None)
     return review, seen
 

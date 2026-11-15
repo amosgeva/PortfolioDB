@@ -37,6 +37,7 @@ pytestmark = pytest.mark.slow
 REPO = Path(__file__).resolve().parents[3]
 SYM = "ZZW3A"
 ACCT = "ZZW3-ACCT"
+EUR_ACCT = "ZZW3-EUR"
 
 
 def _run(coro):
@@ -68,7 +69,7 @@ def _wipe(cur):
     cur.execute("DELETE FROM lots WHERE symbol = %s", (SYM,))
     cur.execute("DELETE FROM income WHERE symbol = %s", (SYM,))
     cur.execute("DELETE FROM price_snapshots WHERE symbol = %s", (SYM,))
-    cur.execute("DELETE FROM cash_snapshots WHERE account = %s", (ACCT,))
+    cur.execute("DELETE FROM cash_snapshots WHERE account IN (%s, %s)", (ACCT, EUR_ACCT))
     cur.execute("DELETE FROM instruments WHERE symbol = %s", (SYM,))
     cur.execute("DELETE FROM settings WHERE key IN ('reporting_tz', 'philosophy_md')")
 
@@ -91,6 +92,16 @@ def fixtures(admin):
             "INSERT INTO income(symbol, account, kind, pay_date, amount, currency, source) VALUES "
             "(%s, NULL, 'DIVIDEND', %s, 3, 'USD', 'test'), (%s, %s, 'DIVIDEND', %s, 11, 'USD', 'test')",
             (SYM, today.date() - timedelta(days=10), SYM, ACCT, today.date() - timedelta(days=10)),
+        )
+        # Money in another currency: excluded from USD totals, and listed.
+        cur.execute(
+            "INSERT INTO income(symbol, account, kind, pay_date, amount, currency, source) VALUES "
+            "(%s, %s, 'DIVIDEND', %s, 1000, 'EUR', 'test')",
+            (SYM, ACCT, today.date() - timedelta(days=9)),
+        )
+        cur.execute(
+            "INSERT INTO cash_snapshots(ts, account, cash, currency, note) VALUES "
+            "(%s, %s, 5000, 'EUR', 'euro cash')", (today - timedelta(hours=1), EUR_ACCT),
         )
         cur.execute("INSERT INTO price_snapshots(ts, symbol, last_price, source) VALUES "
                     "(%s, %s, 60, 'test')", (today - timedelta(minutes=1), SYM))
@@ -449,3 +460,56 @@ def test_x9_every_live_table_and_column_is_described():
     stale += [t for t in curated if t not in live and t not in meta_tools.UNDESCRIBED_TABLES]
     assert not undocumented, f"describe these in get_schema: {undocumented}"
     assert not stale, f"get_schema describes what does not exist: {stale}"
+
+
+# ────────────────────────── 1.8.0 KPI definitions, live ──────────────────────────
+
+
+def test_kpis_match_portfolio_kpis_on_the_same_rows(fixtures):
+    """The MCP KPI payload equals app/portfolio_kpis.summary() over the rows
+    the MCP valued and the lots it read — the dashboard's own module."""
+    import db
+    import ledger_inputs
+    import portfolio_kpis
+
+    from app.mcp.services import cutoff as cutoff_service
+    from app.mcp.services import kpis, positions
+
+    c = cutoff_service.resolve()
+    k = kpis.portfolio_kpis("fifo", cutoff=c)
+    rows = positions.positions_dataframe("fifo", cutoff=c).to_dict(orient="records")
+    conn = db.connect(db.load_config())
+    try:
+        lots = ledger_inputs.load(conn, as_of=c.trade_date).lots
+    finally:
+        conn.close()
+    expected = portfolio_kpis.summary(rows, lots, portfolio_kpis.to_dec(k["income_total"]))
+    f = portfolio_kpis.as_float
+    assert k["invested_capital"] == pytest.approx(f(expected["invested_capital"]))
+    assert k["unrealized_pct"] == pytest.approx(f(expected["unrealized_pct"]))
+    assert k["total_return_pct"] == pytest.approx(f(expected["total_return_pct"]))
+    assert k["total_return_with_income_pct"] == pytest.approx(
+        f(expected["total_return_with_income_pct"]))
+    assert k["unpriced_symbols"] == expected["unpriced_symbols"]
+
+
+def test_non_usd_money_is_excluded_everywhere(fixtures):
+    from app.mcp.services import cutoff as cutoff_service
+    from app.mcp.services import data_quality, income, kpis, review
+
+    c = cutoff_service.resolve()
+    k = kpis.portfolio_kpis("fifo", cutoff=c)
+    assert all(r["account"] != EUR_ACCT or r["included"] is False for r in k["cash_by_account"])
+    kinds = {w["kind"] for w in k["excluded_non_usd"]}
+    assert kinds == {"income", "cash"}
+
+    inc = income.income_summary(group_by="none", account=ACCT)
+    assert inc["total_income"] == pytest.approx(11.0)  # the EUR 1,000 is not dollars
+
+    r = review.portfolio_review_snapshot(cutoff=c, account=ACCT, detail_level="summary")
+    assert r["summary"]["income_total"] == pytest.approx(11.0)
+    assert any(w["currency"] == "EUR" for w in r["summary"]["excluded_non_usd"])
+
+    dq = data_quality.portfolio_data_quality(cutoff=c)
+    codes = {i["code"] for i in dq["material_issues"]}
+    assert {"foreign_currency_income", "foreign_currency_cash"} <= codes
