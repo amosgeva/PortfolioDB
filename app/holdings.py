@@ -177,20 +177,28 @@ def holdings_series(
     point. Quantities are computed exactly and handed out as floats, because
     every caller multiplies them by a float price. Symbols whose net quantity
     has gone to zero are dropped, so a closed position stops contributing
-    rather than lingering at 0.
+    rather than lingering at 0. Points with the same holdings share one dict:
+    treat the dicts as read-only.
     """
     tz = _tz_for(points)
     events = list(walk(lots))
     merged: dict[str, Decimal] = defaultdict(lambda: ZERO)
     cursor = 0
+    current: dict[str, float] = {}
     out: list[tuple[Point, dict[str, float]]] = []
     for point in sorted(points, key=lambda p: _as_day(p, tz)):
         day = _as_day(point, tz)
+        changed = False
         while cursor < len(events) and events[cursor][0]["trade_date"] <= day:
             lot, before, after, _dropped = events[cursor]
             merged[lot["symbol"]] += after - before
             cursor += 1
-        out.append((point, {s: float(q) for s, q in merged.items() if q != 0}))
+            changed = True
+        if changed:
+            current = {s: float(q) for s, q in merged.items() if q != 0}
+        # Points between trades share one dict (callers only read it): the
+        # raw-timestamp readers pass ~100k points and a handful of trades.
+        out.append((point, current))
     return out
 
 

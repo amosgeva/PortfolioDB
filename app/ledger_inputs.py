@@ -56,7 +56,8 @@ LOTS_SQL = sql.SQL(
     "SELECT id, symbol, account, side, trade_date, quantity, price, fees "
     "FROM lots WHERE 1=1"
 )
-LOTS_ORDER = sql.SQL(" ORDER BY symbol, COALESCE(account,''), trade_date, id")
+# Same-day BUYs before SELLs, as ledger_core.processing_key (audit F-1).
+LOTS_ORDER = sql.SQL(" ORDER BY symbol, COALESCE(account,''), trade_date, (side = 'SELL'), id")
 
 
 @dataclass(frozen=True)

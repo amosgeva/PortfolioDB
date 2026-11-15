@@ -16,6 +16,7 @@ from fifo import Lot as FifoLot, run_fifo
 from avg_cost import Lot as AvgLot
 import corporate_actions
 import ledger_inputs
+from ledger_core import lot_order_key
 from psycopg2 import sql
 
 from app.mcp.deps import get_conn
@@ -202,7 +203,8 @@ def _all_realized_matches(
             # parallel rather than derived. Keeps
             # gross_realized_pnl - fees == realized_pnl true for this engine too.
             avg_gross = Decimal("0")
-            stream_sorted = sorted(stream, key=lambda l: (l.trade_date, l.id))
+            # The engines' order: date, BUY before SELL that day, id (audit F-1).
+            stream_sorted = sorted(stream, key=lot_order_key)
             for lot in stream_sorted:
                 side = lot.side.upper()
                 if side == "BUY":
