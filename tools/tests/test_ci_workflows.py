@@ -383,7 +383,13 @@ def test_publish_builds_and_scans_the_runtime_target():
     steps = _steps(_publish_job())
     builds = [s for s in steps if "build-push-action" in str(s.get("uses", ""))]
     assert len(builds) == 3
-    assert all(s["with"].get("target") == "runtime" for s in builds), "scanned and pushed builds must be `runtime`"
+    # The stage is detected from the checked-out Dockerfile (QA of #131, F1:
+    # a rebuilt pre-1.8 release has no runtime stage); one value for all three
+    # builds, so the scanned and pushed images are the same stage.
+    assert all(s["with"].get("target") == "${{ steps.target.outputs.target }}" for s in builds)
+    detect = next(s for s in steps if s.get("id") == "target")
+    assert 'echo "target=runtime"' in detect["run"]
+    assert '"$GITHUB_SHA"' in detect["run"], "the workflow's own commit must not fall back to a pip stage"
 
 
 def test_ci_checks_the_lock_on_dev_and_tests_inside_runtime():

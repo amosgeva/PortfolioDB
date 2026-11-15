@@ -29,7 +29,7 @@ never the vendor's.
 | Provider | Default model | Key env var(s) | Base URL |
 |---|---|---|---|
 | `anthropic` (default) | `claude-sonnet-5` | `LLM_API_KEY` or `ANTHROPIC_API_KEY` | — (native SDK) |
-| `openai` | `gpt-5` | `LLM_API_KEY` or `OPENAI_API_KEY` | default |
+| `openai` | `gpt-6.1-sol` (was `gpt-5` before 1.8.0; it retires 2026-12-11) | `LLM_API_KEY` or `OPENAI_API_KEY` | default |
 | `openrouter` | `anthropic/claude-sonnet-5` | `LLM_API_KEY` or `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
 | `ollama` | `llama3.3` | none needed | `http://localhost:11434/v1` |
 | `custom` | (set your own) | `LLM_API_KEY` (if the server wants one) | set your own |

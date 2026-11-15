@@ -82,6 +82,11 @@ needs a schema step says so under **Upgrading**.
   its name, "Build check, lint, tests".
 - The image no longer carries the front end's unbundled sources, jsdom tests,
   fixtures or build script; the dashboard serves only the committed bundle.
+- The weekly rebuild of an existing release builds that release's own
+  Dockerfile stage when it predates the `runtime` stage (1.7.x has a single
+  stage, which still contains pip), and the pip-less `runtime` stage for every
+  ref that has it; every push and tag must have it. The rebuild no longer
+  fails on `--target runtime` against an old Dockerfile.
 - Every change made from the dashboard needs `PORTFOLIODB_DASHBOARD_PASSWORD`:
   adding, selling and deleting lots, the watchlist, cash, price alerts, the
   Settings form, the investor one-pager, and every brief or chat message that
@@ -112,9 +117,13 @@ needs a schema step says so under **Upgrading**.
   in `app/llm.py` dates each default's last check and its review-by date, and
   `tools/check_default_models.py` runs in the weekly security scan, failing on
   a passed review date or when OpenRouter's public model list (or the Ollama
-  registry) drops an ID or schedules its expiry within 45 days. On its first
-  run it reports that OpenRouter lists `openai/gpt-5` — the `openai`
-  provider's default — as expiring on 2026-12-11. See docs/llm-providers.md.
+  registry) drops an ID or schedules its expiry within 45 days. See
+  docs/llm-providers.md.
+- **The `openai` provider's default model is now `gpt-6.1-sol`; `gpt-5`
+  retires 2026-12-11** (OpenRouter's listing, found by the check above). An
+  install that set `LLM_MODEL` (or the model on the Settings page) is
+  unaffected; one on the `openai` provider with no model set moves to
+  `gpt-6.1-sol`, which is in the same output price tier.
 
 ### Fixed
 

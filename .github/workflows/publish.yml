@@ -8,7 +8,10 @@ name: Publish image
 #   * Its commit passed both pull-request gates first: the CI workflow and the
 #     front-end workflow are called below, and nothing is built for the
 #     registry until both are green (audit NEW-2).
-#   * It is the Dockerfile's `runtime` stage, which has no pip (audit O-2).
+#   * It is the Dockerfile's `runtime` stage, which has no pip (audit O-2) —
+#     for every push and tag, and for a rebuild of any ref whose Dockerfile
+#     has that stage. A rebuild of a release from before it builds that
+#     release's own single stage, with a warning (see the target step).
 #   * It was scanned before it was pushed. Both architectures are built without
 #     a layer cache, Trivy scans each for fixable HIGH/CRITICAL findings with the
 #     same policy as security-scan.yml, and only then is the push build run —
@@ -203,6 +206,34 @@ jobs:
           echo "built=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "workflow commit ${GITHUB_SHA}; building $(git rev-parse HEAD)"
 
+      # Which Dockerfile stage to build, decided from the *checked-out* source
+      # (QA of PR #131, F1). Since 1.8.0 app/Dockerfile ends in a pip-less
+      # `runtime` stage and every build names it. But the scheduled rebuild
+      # checks out older refs — the newest release tag, the revision `latest`
+      # points at — and a Dockerfile from before 1.8.0 has one unnamed stage,
+      # so `--target runtime` failed the rebuild outright ("target stage
+      # runtime could not be found"). Such a ref builds its own default stage,
+      # exactly as it was released, and says so. That window closes by itself:
+      # the first release tagged with the runtime stage becomes the newest tag
+      # the rebuild selects. The workflow's own commit (every push and tag)
+      # must have the stage — dropping it would silently ship pip again.
+      - name: Build target for the checked-out Dockerfile
+        id: target
+        run: |
+          set -euo pipefail
+          if grep -Eiq '^FROM[[:space:]].*[[:space:]]AS[[:space:]]+runtime[[:space:]]*$' app/Dockerfile; then
+            echo "target=runtime" >> "$GITHUB_OUTPUT"
+            echo "building the pip-less runtime stage of $(git rev-parse --short HEAD)"
+          elif [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]; then
+            echo "::error::app/Dockerfile at the workflow's own commit has no runtime stage; the published image would carry pip"
+            exit 1
+          else
+            echo "target=" >> "$GITHUB_OUTPUT"
+            msg="$(git rev-parse --short HEAD) predates the runtime stage; rebuilding its own default stage as released (it still contains pip)"
+            echo "::warning::${msg}"
+            echo "- ${msg}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # QEMU only for the arm64 leg: a sizeable share of self-hosters run a
       # Raspberry Pi, an ARM NAS, or Apple silicon, and shipping amd64 only
       # would quietly exclude them.
@@ -264,9 +295,10 @@ jobs:
         with:
           context: .
           file: app/Dockerfile
-          # The pip-less runtime stage (audit O-2), named so the scanned and
-          # the pushed builds cannot pick different stages.
-          target: runtime
+          # The pip-less runtime stage (audit O-2) wherever the checked-out
+          # Dockerfile has one, from the step above, so the scanned and the
+          # pushed builds always pick the same stage. Empty builds the default.
+          target: ${{ steps.target.outputs.target }}
           platforms: linux/amd64
           load: true
           no-cache: true
@@ -282,7 +314,7 @@ jobs:
         with:
           context: .
           file: app/Dockerfile
-          target: runtime
+          target: ${{ steps.target.outputs.target }}
           platforms: linux/arm64
           load: true
           no-cache: true
@@ -327,7 +359,7 @@ jobs:
         with:
           context: .
           file: app/Dockerfile
-          target: runtime
+          target: ${{ steps.target.outputs.target }}
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |

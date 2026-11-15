@@ -66,7 +66,7 @@ PROVIDERS = ("anthropic", "openai", "openrouter", "ollama", "custom")
 
 _DEFAULT_MODEL = {
     "anthropic": "claude-sonnet-5",
-    "openai": "gpt-5",
+    "openai": "gpt-6.1-sol",
     "openrouter": "anthropic/claude-sonnet-5",
     "ollama": "llama3.3",
     "custom": "",
@@ -102,14 +102,14 @@ DEFAULT_MODEL_REVIEW = {
         "listing": ("openrouter", "anthropic/claude-sonnet-5"),
     },
     "openai": {
-        "model": "gpt-5",
+        # Was gpt-5 until 2026-11-15, when OpenRouter listed openai/gpt-5 as
+        # expiring on 2026-12-11. gpt-6.1-sol had no expiry listed and sits in
+        # the same output price tier as gpt-5 and the Anthropic default.
+        "model": "gpt-6.1-sol",
         "reviewed": "2026-11-15",
-        # OpenAI lists gpt-5 as deprecated, and on 2026-11-15 OpenRouter
-        # listed openai/gpt-5 with expiration_date 2026-12-11: the default
-        # needs a successor before then.
-        "review_by": "2026-12-11",
+        "review_by": "2027-05-14",
         "source": "https://developers.openai.com/api/docs/models/all",
-        "listing": ("openrouter", "openai/gpt-5"),
+        "listing": ("openrouter", "openai/gpt-6.1-sol"),
     },
     "openrouter": {
         "model": "anthropic/claude-sonnet-5",
