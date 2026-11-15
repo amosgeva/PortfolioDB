@@ -211,6 +211,13 @@ def period_returns(records: list[dict[str, Any]], today: date) -> dict[str, floa
 
     None means "not available": no observation before the period's start, or
     no capital at work at any point inside it.
+
+    1Y follows the same rule as WTD/MTD/YTD: its base is the last observation
+    at or before the day a year ago, and without one it is None. It used to
+    fall back to the first observation, so a seven-month history printed its
+    since-inception return under a "1Y" label while the other periods said
+    "not available" in the same situation (audit F-14). MAX is the
+    since-inception figure.
     """
     g = growth_curve(records)
     if len(g) < 2:
@@ -239,6 +246,6 @@ def period_returns(records: list[dict[str, Any]], today: date) -> dict[str, floa
         "WTD": pct(base(wk, True)),
         "MTD": pct(base(today.replace(day=1), True)),
         "YTD": pct(base(today.replace(month=1, day=1), True)),
-        "1Y": pct(yr if yr is not None else (first_day, first_g)),
+        "1Y": pct(yr),
         "MAX": pct((first_day, first_g)),
     }

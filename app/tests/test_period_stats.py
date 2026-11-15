@@ -235,9 +235,11 @@ class TestRunningPeriods:
         assert "Jan 2026" not in {m["best"]["label"], m["worst"]["label"]}
 
     def test_weeks_follow_the_same_rule(self):
-        # 2026-01-05 is a Monday. The curve ends on Tuesday 2026-01-27 (ISO
-        # week 5); the following Monday, 2026-02-02, is in week 6.
-        curve = [(date(2026, 1, 5), 1.0)]
+        # 2026-01-07 is a Wednesday (ISO week 2): the curve's base, and the
+        # first return (Tuesday 01-13) is in week 2 too, so week 2 is entered
+        # part-way. The curve ends on Tuesday 2026-01-27 (ISO week 5); the
+        # following Monday, 2026-02-02, is in week 6.
+        curve = [(date(2026, 1, 7), 1.0), (date(2026, 1, 8), 1.0)]
         g = 1.0
         for day, r in [
             (date(2026, 1, 13), 0.10),
@@ -248,8 +250,46 @@ class TestRunningPeriods:
             curve.append((day, g))
         still_running = ps.build(curve, today=date(2026, 1, 30))["week"]
         finished = ps.build(curve, today=date(2026, 2, 2))["week"]
-        assert still_running["complete"] == 1
-        assert finished["complete"] == 2
+        assert still_running["complete"] == 2      # weeks 3 and 4
+        assert finished["complete"] == 3           # and week 5
+
+
+class TestFirstPeriodCoverage:
+    """Audit F-14: the first period used to be partial unconditionally. It is
+    partial only when coverage began inside it."""
+
+    def _curve(self, base_day):
+        curve = [(base_day, 1.0)]
+        g = 1.0
+        for day, r in [
+            (date(2026, 9, 1), 0.01), (date(2026, 9, 15), 0.02),
+            (date(2026, 9, 30), 0.03), (date(2026, 10, 1), -0.01),
+        ]:
+            g *= (1 + r)
+            curve.append((day, g))
+        return curve
+
+    def test_a_base_in_the_previous_month_makes_the_first_month_complete(self):
+        # Base: the close of 31 August. September's returns chain from it to
+        # 30 September, so September is fully covered.
+        m = ps.build(self._curve(date(2026, 8, 31)), today=date(2026, 10, 20))["month"]
+        assert m["complete"] == 1
+        assert m["best"]["label"] == "Sep 2026"
+        assert m["best"]["return_pct"] == pytest.approx((1.01 * 1.02 * 1.03 - 1) * 100)
+
+    def test_a_base_inside_the_first_month_keeps_it_partial(self):
+        # Base: 31 August is replaced by 1 September, so September's first
+        # return is measured from inside it and the month is partial.
+        curve = self._curve(date(2026, 8, 31))
+        curve = [(date(2026, 9, 1), 1.0)] + [(d, g / 1.01) for d, g in curve[2:]]
+        m = ps.build(curve, today=date(2026, 10, 20))["month"]
+        assert m["complete"] == 0
+        assert m["null_reason"] == "no_complete_periods"
+
+    def test_the_first_group_alone_without_a_base_stays_partial(self):
+        dailies = [(date(2026, 9, 1), 0.01), (date(2026, 9, 2), 0.01)]
+        groups = ps._group(dailies, ps._month_key, today=date(2026, 10, 20))
+        assert groups[0]["partial"] is True
 
 
 class TestBuildEnvelope:

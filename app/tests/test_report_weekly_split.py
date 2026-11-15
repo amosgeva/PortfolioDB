@@ -22,13 +22,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import ledger_inputs  # noqa: E402
 import report_weekly_db as weekly  # noqa: E402
+import reporting_tz  # noqa: E402
 from corporate_actions import CorporateAction  # noqa: E402
+
+# The report resolves the zone when it runs (audit R-5), not at import.
+TZ = reporting_tz.tzinfo()
 
 MON, TUE, WED, THU, FRI, SAT = (date(2026, 3, 2) + timedelta(days=i) for i in range(6))
 BEFORE = date(2026, 2, 20)
-NOW = datetime.combine(SAT, time(10, 0)).replace(tzinfo=weekly.IL_TZ)
-START_TS = datetime.combine(MON, time(23, 0)).replace(tzinfo=weekly.IL_TZ)
-END_TS = datetime.combine(FRI, time(23, 0)).replace(tzinfo=weekly.IL_TZ)
+NOW = datetime.combine(SAT, time(10, 0)).replace(tzinfo=TZ)
+START_TS = datetime.combine(MON, time(23, 0)).replace(tzinfo=TZ)
+END_TS = datetime.combine(FRI, time(23, 0)).replace(tzinfo=TZ)
 
 
 def _lot(i, symbol, side, qty, price, day, account="IBKR"):
@@ -68,11 +72,16 @@ class _FixedClock(datetime):
 
 
 class _Conn:
+    closed = False
+
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         return False
+
+    def close(self):
+        self.closed = True
 
 
 def _run(monkeypatch, capsys, lots, cash=(), prices=None):
@@ -106,6 +115,8 @@ def _run(monkeypatch, capsys, lots, cash=(), prices=None):
                 if r["ts"] <= params[0]:
                     latest[r["account"]] = r
             return list(latest.values())
+        if "FROM instruments" in sql_one:
+            return []
         if "FROM lots" in sql_one:
             lo, hi = params
             return [dict(r) for r in lots if lo <= r["trade_date"] <= hi]
@@ -226,7 +237,7 @@ def _cash(*points):
     return [{"account": "IBKR", "cash": Decimal(a), "ts": ts} for ts, a in points]
 
 
-TUE_TS, THU_TS = (datetime.combine(d, time(18, 0)).replace(tzinfo=weekly.IL_TZ) for d in (TUE, THU))
+TUE_TS, THU_TS = (datetime.combine(d, time(18, 0)).replace(tzinfo=TZ) for d in (TUE, THU))
 
 
 class TestContributionIdentity:
@@ -350,9 +361,9 @@ class TestWeekBoundaries:
     often one of those — quoting nothing the ledger holds."""
 
     def test_futures_only_snapshots_are_not_week_boundaries(self, monkeypatch, capsys):
-        mon_futures = datetime.combine(MON, time(18, 0)).replace(tzinfo=weekly.IL_TZ)
-        tue_close = datetime.combine(TUE, time(23, 0)).replace(tzinfo=weekly.IL_TZ)
-        sat_futures = datetime.combine(SAT, time(9, 0)).replace(tzinfo=weekly.IL_TZ)
+        mon_futures = datetime.combine(MON, time(18, 0)).replace(tzinfo=TZ)
+        tue_close = datetime.combine(TUE, time(23, 0)).replace(tzinfo=TZ)
+        sat_futures = datetime.combine(SAT, time(9, 0)).replace(tzinfo=TZ)
         prices = {
             mon_futures: {"ES=F": Decimal("5000")},
             tue_close: {"DDD": Decimal("100"), "ES=F": Decimal("5100")},

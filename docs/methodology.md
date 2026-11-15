@@ -155,6 +155,25 @@ The benchmark is a **price return** from `price_snapshots` and excludes the
 benchmark's own dividends, making it slightly conservative against a
 dividend-inclusive portfolio TWR. Reported as `dividends_included: false`.
 
+**Which benchmark.** `PORTFOLIODB_BENCHMARK_SYMBOL` (default `SPY`, blank means
+unset), optionally named on screen by `PORTFOLIODB_BENCHMARK_LABEL`. One
+resolver, `app/benchmark.py`, serves the dashboard's returns strip and risk
+beta and the MCP's benchmark comparison, so the two can no longer compare
+against different symbols. The symbol must be collected (on the watchlist or a
+holding) to have a series; the dashboard payload says `benchmarkAvailable:
+false` when it has none.
+
+**Periods.** 1D, WTD, MTD and YTD are measured from the last observation
+*before* the period starts; 1Y from the last observation at or before the day
+a year ago. A period whose base was never observed is `null`, never a shorter
+period passed off under its label: before 1.8.0 a short history printed its
+since-inception return as "1Y". `MAX` is the since-inception figure. In the
+period statistics (best/worst week and month), the first week or month counts
+as complete when the curve's first close falls in an *earlier* period, and as
+partial when coverage began inside it. The dashboard's 1Y value *chart* falls
+back to the whole history when there is nothing in the last year, and says so
+in `pvBasis` (`"all_history"`).
+
 ---
 
 ## 5. Holdings basis for historical series
@@ -315,3 +334,129 @@ import one currency, or one account per currency and read them separately
 (see the CSV import guide). Endpoints accept
 a `reporting_currency` input only to reject anything but USD rather than
 pretending to convert.
+
+**What happens to a non-USD record (1.8.0).** Nothing is converted, and nothing
+is summed as dollars without saying so. `portfolio_kpis.currency_warnings()`
+inspects the three places a currency is recorded:
+
+| Where | Treatment | Why |
+| --- | --- | --- |
+| `income.currency` | **Excluded** from income totals, yield on cost, total return with income and the TWR's dividend term; listed. | A face amount in another currency is not a dollar amount. |
+| `cash_snapshots.currency` | **Excluded** from the cash total and from portfolio value; listed, and shown per account as "not in total". | Same. |
+| `instruments.currency` (any symbol ever traded) | **Included unconverted**, and flagged on every surface. | Its quotes are whatever the vendor returned; dropping a holding from the value would hide it, which is worse than a labelled figure. |
+
+The dashboard payload carries the list as `currencyWarnings`; the Advisor
+snapshot as `currency_warnings`; the executive report in its "Read with these
+figures" block; the daily and weekly reports as warning lines.
+
+---
+
+## 12. Portfolio totals and total return
+
+Defined once, in `app/portfolio_kpis.py`, and used by the dashboard payload,
+the Advisor snapshot, the executive report and the daily report.
+
+**Unpriced positions are not losses.** A held position with no quote has an
+unknown market value. It is left out of market value, unrealized P&L and the
+total-return numerator, and its open cost is reported on its own:
+
+| Figure | Definition |
+| --- | --- |
+| market value | Σ qty × latest quote, over **priced** held positions |
+| priced cost basis | Σ open cost, over priced held positions |
+| unpriced cost basis | Σ open cost, over held positions with no quote (listed by symbol) |
+| cost basis | priced + unpriced |
+| unrealized P&L | Σ (qty × quote − open cost), over priced positions = market value − priced cost basis |
+| unrealized % | unrealized P&L / **priced** cost basis |
+
+Before 1.8.0 the dashboard and the Advisor computed unrealized P&L as market
+value minus the *whole* cost basis, so a priced position (cost 100, value 120)
+plus an unpriced one (cost 100) read −80; the figure is +20, with 100 of cost
+unpriced.
+
+**Total return is over invested capital.**
+
+```
+peak net invested = max over trade dates d of
+                    Σ_{lots dated ≤ d} (BUY: qty × price + fees,  SELL: −(qty × price − fees))
+total return %    = (realized + unrealized) / peak net invested × 100
+total return with income % = (realized + unrealized + USD income) / peak net invested × 100
+```
+
+Lots are aggregated per date before the running sum, so the order of a
+same-day buy and sale does not matter, and `qty × price` is unchanged by a
+split restatement. The denominator is the most of the owner's money the ledger
+ever had committed: it does not shrink when a position is sold, recycling sale
+proceeds into the next purchase does not inflate it, and it is the same before
+and after a full liquidation. The pre-1.8.0 ratio divided lifetime P&L by the
+cost still *open*: 1,000 invested, 900 of profit taken and 100 left open read
+900% (it is 90%, plus whatever the 100 has done), and a fully liquidated book
+read 0%. With an unpriced position the figure is marked partial
+(`totalReturnPartial` / `total_return_partial`). It is `null` on a ledger with
+no purchases.
+
+It is a money measure, not a performance measure. For performance, use the
+time-weighted return (section 4); the two answer different questions and are
+not expected to agree.
+
+Two other lifetime ratios moved to the same denominator for the same reason:
+**fee drag** = total fees / peak net invested. **Yield on cost** stays trailing
+twelve months of USD income / cost basis (what the open positions cost), the
+conventional definition.
+
+---
+
+## 13. Prices in the reports
+
+The executive and the daily report follow one rule
+(`portfolio_kpis.portfolio_as_of` / `stale_quotes`):
+
+- **As of** is the newest quote of a *held* symbol. Benchmarks (index futures
+  for the Markets strip), watchlist symbols and symbols sold earlier never
+  decide it; a Sunday quote of any of them used to make the report's day
+  Sunday and its day change Friday's close minus itself, a false $0.00. The
+  daily report's day-start baseline is the first held quote after 16:15; the
+  weekly report's start and end are the first and last snapshots quoting a
+  symbol held at that end of the week. A zero quote is never a price.
+- Each held symbol is valued at its **latest quote at or before** that instant.
+  A quote from an earlier reporting-local day is carried forward and **listed
+  as stale**, and the symbol is left out of the day's change (it has no move
+  today that anyone saw). The daily report used to drop such a symbol from the
+  value without a word.
+- The **previous session** for the day change is the last earlier day on which
+  a held symbol was quoted. The report says which session it is ("on Fri, Nov
+  13"), not "today".
+- A held symbol with no quote at all is **unpriced** (section 12).
+
+This "stale" is a report-level label: a carried-forward quote. The data-quality
+staleness of section 8 (a symbol a completed collector run did not price) is a
+different, per-run check.
+
+The weekly report's **weekly change** is the change in securities plus entered
+cash. It is not a return: deposits, withdrawals and trades are all in it, and
+cash is typed in by hand. The report prints the flow-adjusted market P&L (the
+sum of the per-symbol contributions) beside it and names every account whose
+cash was last entered before the week began.
+
+---
+
+## 14. What every surface must compute the same way
+
+The KPI parity promise covers the dashboard, the Advisor, the reports and the
+MCP. As of 1.8.0 the first three call `portfolio_kpis`; the MCP mirrors these
+definitions:
+
+| MCP field | Must equal |
+| --- | --- |
+| `positions_summary` / `portfolio_kpis`: `market_value`, `unrealized_pnl` | priced rows only (already so) |
+| `unrealized_pct` | unrealized / **priced** cost basis (was / total cost basis) |
+| `cost_basis` | total open cost; plus `priced_cost_basis`, `unpriced_cost_basis`, `unpriced_symbols` |
+| `total_return_pct`, `total_return_with_income_pct`, review `return_on_cost_pct` | section 12, over `peak_net_invested` of the same lots the figure was computed from (cutoff- and account-filtered alike) |
+| `fee_drag_pct` | total fees / peak net invested |
+| income totals, `yield_on_cost`, TWR dividends, XIRR income | USD income only; others listed |
+| cash totals | USD balances only; others listed |
+| benchmark symbol | `benchmark.benchmark_symbol()` |
+| 1Y period return | `twr.period_returns` (null without a year of history) |
+
+The simplest mirror is to call `portfolio_kpis.summary(rows, lot_rows, income)`
+on the rows already built.

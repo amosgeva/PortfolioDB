@@ -38,12 +38,26 @@ def test_contribution_is_not_a_return():
     # The D3 doubling must be neutralised: MAX = two +10% legs chained = 21%.
     assert out["MAX"] == pytest.approx(21.0)
     assert out["1D"] == pytest.approx(10.0)        # D3 -> D4
-    # 1Y has no observation within a year before -> falls back to inception.
-    assert out["1Y"] == pytest.approx(21.0)
+    # 1Y has no observation a year back -> not available, like WTD/MTD/YTD.
+    # It used to fall back to inception and print MAX under a 1Y label (F-14).
+    assert out["1Y"] is None
     # No history before this Mon/the 1st/Jan-1 -> those bases don't exist.
     assert out["WTD"] is None
     assert out["MTD"] is None
     assert out["YTD"] is None
+
+
+def test_1y_reads_from_the_observation_a_year_back():
+    """With more than a year of history 1Y is measured from the last close at
+    or before the day a year ago, and differs from MAX (audit F-14)."""
+    start, year_ago, today = date(2024, 6, 3), date(2025, 1, 8), date(2026, 1, 8)
+    lots = [{"symbol": "AAA", "side": "BUY", "trade_date": start, "quantity": 10.0,
+             "price": 100.0, "fees": 0.0}]
+    prices = {start: {"AAA": 100.0}, year_ago: {"AAA": 125.0},
+              date(2025, 7, 1): {"AAA": 140.0}, today: {"AAA": 150.0}}
+    out = twr.period_returns(twr.build_daily_records(lots, prices, []), today=today)
+    assert out["MAX"] == pytest.approx(50.0)        # 100 -> 150
+    assert out["1Y"] == pytest.approx(20.0)         # 125 -> 150
 
 
 def test_dividend_counts_as_return():

@@ -14,7 +14,6 @@ series metrics, so "as of" means "stop the chain here", not "read this instant".
 from __future__ import annotations
 
 import math
-import os
 from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -24,12 +23,13 @@ from zoneinfo import ZoneInfo
 from app.mcp.deps import get_conn
 from app.mcp.services.cutoff import Cutoff, REPORTING_TZ
 
+import benchmark
 import corporate_actions
 import twr
 
 LOCAL_TZ = ZoneInfo(REPORTING_TZ)
 _BASIS = "time_weighted_return"
-DEFAULT_BENCHMARK = "SPY"
+DEFAULT_BENCHMARK = benchmark.DEFAULT_BENCHMARK
 PERIODS = twr.PERIODS
 
 # Trading days per year, for annualising daily volatility.
@@ -126,7 +126,9 @@ def benchmark_comparison(
     """
     if period not in PERIODS:
         raise ValueError(f"period must be one of {PERIODS}")
-    symbol = (symbol or os.getenv("PORTFOLIODB_BENCHMARK_SYMBOL", DEFAULT_BENCHMARK)).upper()
+    # One resolution for every surface (app/benchmark.py): the dashboard
+    # computes against the same symbol (audit U-3).
+    symbol = benchmark.benchmark_symbol(symbol)
     today = today or (cutoff.trade_date if cutoff else datetime.now(LOCAL_TZ).date())
 
     price_by_day = _price_by_day(cutoff)

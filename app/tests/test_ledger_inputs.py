@@ -368,7 +368,9 @@ class TestExecutiveReport:
         _patch_ledger(monkeypatch, exec_report)
         monkeypatch.setattr(exec_report, "_fetch_latest_prices",
                             lambda conn: {"AAA": {"last_price": 55.0, "ts": _ts(D5)}, "BBB": {"last_price": 40.0, "ts": _ts(D5)}})
-        monkeypatch.setattr(exec_report, "_fetch_cash", lambda conn: {})
+        monkeypatch.setattr(exec_report, "_fetch_cash", lambda conn: [])
+        monkeypatch.setattr(exec_report, "_fetch_income", lambda conn: [])
+        monkeypatch.setattr(exec_report, "_fetch_instruments", lambda conn: [])
         monkeypatch.setattr(exec_report, "_fetch_eod_by_day",
                             lambda conn: {D1: {"AAA": 100.0, "BBB": 10.0}, D3: {"AAA": 50.0, "BBB": 40.0}, D5: {"AAA": 55.0, "BBB": 40.0}})
         monkeypatch.setattr(exec_report, "_fetch_latest_brief", lambda conn: None)
@@ -401,7 +403,9 @@ class TestExecutiveReport:
         _patch_ledger(monkeypatch, exec_report)
         monkeypatch.setattr(exec_report, "_fetch_latest_prices",
                             lambda conn: {"AAA": {"last_price": 100.0, "ts": _ts(D2)}, "BBB": {"last_price": 10.0, "ts": _ts(D2)}})
-        monkeypatch.setattr(exec_report, "_fetch_cash", lambda conn: {})
+        monkeypatch.setattr(exec_report, "_fetch_cash", lambda conn: [])
+        monkeypatch.setattr(exec_report, "_fetch_income", lambda conn: [])
+        monkeypatch.setattr(exec_report, "_fetch_instruments", lambda conn: [])
         monkeypatch.setattr(exec_report, "_fetch_eod_by_day", lambda conn: {D1: {"AAA": 100.0, "BBB": 10.0}})
         monkeypatch.setattr(exec_report, "_fetch_latest_brief", lambda conn: None)
         monkeypatch.setattr(exec_report, "_fetch_fd_metrics", lambda conn: {})
@@ -426,15 +430,23 @@ class TestPositionsCli:
         monkeypatch.setattr(positions, "load_config", lambda: {})
 
         class _Conn:
+            closed = False
+
             def __enter__(self):
                 return self
 
             def __exit__(self, *a):
                 return False
 
-        monkeypatch.setattr(positions, "connect", lambda cfg: _Conn())
+            def close(self):
+                self.closed = True
+
+        conn = _Conn()
+        monkeypatch.setattr(positions, "connect", lambda cfg: conn)
         with caplog.at_level(logging.INFO, logger="positions"):
             positions.print_positions("AAA")
+        # R-6: the CLI closes its connection instead of leaving it to the GC.
+        assert conn.closed
         merged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("AAA")]
         assert any("qty=20" in line and "avg_cost=$50.0000" in line for line in merged), merged
 

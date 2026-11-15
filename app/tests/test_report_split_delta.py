@@ -34,17 +34,18 @@ def report(monkeypatch):
     class _Conn:
         def __enter__(self): return self
         def __exit__(self, *a): return False
+        def close(self): pass
 
     monkeypatch.setattr(rep, "utf8_stdout", lambda: None)
     monkeypatch.setattr(rep, "load_config", lambda: {})
     monkeypatch.setattr(rep, "connect", lambda cfg: _Conn())
     monkeypatch.setattr(rep, "collect_fresh_prices", lambda: None)
     monkeypatch.setattr(rep, "fetch_all", lambda conn, q, p=None: [])        # income rows
-    monkeypatch.setattr(rep, "get_snapshot", lambda conn, mode: rep.Snapshot(
+    monkeypatch.setattr(rep, "get_snapshot", lambda conn, mode, **kw: rep.Snapshot(
         ts=T_NOW, prices={"AAA": {"symbol": "AAA", "ts": T_NOW, "last_price": Decimal("50"),
                                   "bid": None, "ask": None, "source": "test"}}))
     monkeypatch.setattr(rep, "get_prev_snapshot_map", lambda conn, ts: {"AAA": (T_PREV, 100.0)})
-    monkeypatch.setattr(rep, "get_day_start_snapshot_map", lambda conn, ts: (T_PREV, {"AAA": 100.0}))
+    monkeypatch.setattr(rep, "get_day_start_snapshot_map", lambda conn, ts, **kw: (T_PREV, {"AAA": 100.0}))
 
     def run(actions, argv=("--mode", "eod")):
         monkeypatch.setattr(rep.ledger_inputs, "load", lambda conn, **kw: ledger_inputs.prepare(LOTS, actions))
