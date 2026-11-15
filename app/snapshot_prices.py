@@ -9,10 +9,26 @@ Usage:
   python snapshot_prices.py
 
 Notes:
-- yfinance bid/ask is best-effort; sometimes None.
+- yfinance bid/ask is best-effort; sometimes None, and outside regular hours
+  often 0.0, which is stored as NULL (a zero bid is not a quote).
+- A non-positive or non-finite last price is refused (the symbol counts as
+  failed): one stored zero used to zero every value and return computed from
+  it for good (audit F-15). The database refuses it too.
 - Vendor-reported splits are recorded into `corporate_actions` as they appear,
-  with prices adjusted but LOTS NOT — whether the broker credited the extra
-  shares is not something a price vendor knows. Rows land `reviewed=FALSE`.
+  PENDING REVIEW (`reviewed=FALSE`). A pending row changes no figure — not
+  prices, not lots — until the operator confirms it with
+  `python check_splits.py --approve SYMBOL:YYYY-MM-DD` and says whether the
+  broker credited the shares (audit F-3). A split already recorded within a
+  week of the vendor's date is not recorded again (F-16).
+- One run at a time: holdings runs take a PostgreSQL advisory lock (benchmark
+  runs another), so a manual run and the scheduled one cannot overlap, and
+  only a run holding the lock reaps 'running' rows — which, since every live
+  run holds it, can only be dead ones (audit E-5). Each run also has a
+  deadline (PORTFOLIODB_COLLECTOR_DEADLINE_S, default 240 s, inside the
+  five-minute tick); symbols it does not reach are reported, not hung on.
+- Each symbol is written under its own savepoint and committed on its own, so
+  a database error on one symbol — its price or its split record — cannot
+  abort the run or leave it marked 'running' (audit E-1, Q-7).
 - `volume` is the cumulative session count at snapshot time, not a daily total.
   It is recorded only so liquidity history starts accumulating; nothing reads it
   yet. Any future average-daily-volume metric must use the LAST snapshot per
@@ -27,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import time
 import traceback
@@ -38,9 +55,12 @@ import yfinance as yf
 
 import psycopg2
 
+import corporate_actions
+import ledger_inputs
+import ledger_writes
 import market_overview
 import market_window
-from db import connect, execute, fetch_all, load_config
+from db import connect, execute, fetch_all, load_config, run
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -51,9 +71,37 @@ log = logging.getLogger(__name__)
 # "partial" run is worse noise than a slightly late catch.
 QUOTE_MAX_AGE_MIN = int(os.environ.get("PORTFOLIODB_QUOTE_MAX_AGE_MIN", "60"))
 
+# Whole-run budget. The holdings job ticks every five minutes; a run that is
+# still fetching after four has stopped being useful, and stopping it keeps the
+# next tick from finding the lock held. yfinance's own HTTP timeout (30 s) bounds
+# a single request, not a run of forty symbols with retries.
+RUN_DEADLINE_S = float(os.environ.get("PORTFOLIODB_COLLECTOR_DEADLINE_S", "240"))
+
+# Session-level advisory locks: (namespace, kind). Released when the
+# connection closes, including when the process dies, so a crash never leaves
+# one behind.
+LOCK_NAMESPACE = 7_210_402
+LOCK_HOLDINGS = 1
+LOCK_BENCHMARKS = 2
+
 
 class StaleQuote(RuntimeError):
     """Yahoo reported a live session but returned an earlier session's price."""
+
+
+class BadQuote(RuntimeError):
+    """The vendor returned a price that cannot be one: zero, negative, NaN."""
+
+
+def _positive(value) -> float | None:
+    """A finite, strictly positive float, or None."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) and f > 0 else None
 
 
 @dataclass(frozen=True)
@@ -85,11 +133,17 @@ def get_quote(symbol: str) -> Quote:
     """
     info = yf.Ticker(symbol).info
 
-    last_price = info.get("regularMarketPrice")
-    if last_price is None:
-        last_price = info.get("currentPrice")
-    if last_price is None:
+    candidates = [info.get("regularMarketPrice"), info.get("currentPrice")]
+    if all(c is None for c in candidates):
         raise RuntimeError(f"No price for {symbol}")
+    # The first usable price wins; a 0 regularMarketPrice next to a real
+    # currentPrice is the vendor's fault, not the market's.
+    last_price = next((p for p in map(_positive, candidates) if p is not None), None)
+    if last_price is None:
+        raise BadQuote(
+            f"vendor price for {symbol} is not a price: "
+            f"regularMarketPrice={candidates[0]!r}, currentPrice={candidates[1]!r}"
+        )
 
     epoch = info.get("regularMarketTime")
     market_time = (
@@ -116,13 +170,25 @@ def get_quote(symbol: str) -> Quote:
         else None
     )
 
+    vol = None
+    if volume is not None:
+        try:
+            vol = float(volume)
+        except (TypeError, ValueError):
+            vol = None
+        if vol is not None and (not math.isfinite(vol) or vol < 0):
+            vol = None
+
     return Quote(
-        last_price=float(last_price),
-        bid=float(bid) if bid is not None else None,
-        ask=float(ask) if ask is not None else None,
+        last_price=last_price,
+        # Outside regular hours Yahoo reports bid/ask as 0.0 for many symbols.
+        # A zero bid is "no quote", and stored as one it read as a real price
+        # and made any spread computed from it garbage.
+        bid=_positive(bid),
+        ask=_positive(ask),
         market_time=market_time,
         market_state=info.get("marketState"),
-        volume=float(volume) if volume is not None else None,
+        volume=vol,
         split_factor=info.get("lastSplitFactor"),
         split_date=split_date,
     )
@@ -168,13 +234,14 @@ def benchmark_market_closed(market_state: str | None) -> bool:
     return (market_state or "").upper() != "REGULAR"
 
 
-def get_quote_with_retry(symbol: str, attempts: int = 3) -> Quote:
+def get_quote_with_retry(symbol: str, attempts: int = 3, *, deadline: float | None = None) -> Quote:
     """get_quote with exponential backoff — a transient yfinance blip should
     not drop the symbol from the whole run.
 
     Staleness is checked by the caller, not here: a stale upstream feed is not
     a transient blip, and retrying it would just burn the backoff on every
-    symbol of every run.
+    symbol of every run. A retry that would sleep past ``deadline`` (a
+    ``time.monotonic()`` instant) is not attempted: the run's budget is spent.
     """
     for attempt in range(1, attempts + 1):
         try:
@@ -183,6 +250,8 @@ def get_quote_with_retry(symbol: str, attempts: int = 3) -> Quote:
             if attempt == attempts:
                 raise
             wait = 2 ** attempt  # 2s, 4s
+            if deadline is not None and time.monotonic() + wait >= deadline:
+                raise
             log.info(f"{symbol}: quote attempt {attempt} failed; retrying in {wait}s")
             time.sleep(wait)
 
@@ -230,17 +299,23 @@ def ledger_floor_date(conn) -> date | None:
 def record_split(conn, symbol: str, quote: Quote, floor: date | None) -> str | None:
     """Record a vendor-reported split, if it is new and still relevant.
 
-    Returns a short description when a row is inserted, else None.
+    Returns a short description when a row is inserted, else None. Does not
+    commit: the caller's per-symbol transaction does.
 
-    **`adjust_lots` is deliberately FALSE.** Whether the broker credited the
-    extra shares is not something the price vendor knows, and the recorded
-    quantity may already be in post-split units. Defaulting it TRUE would
-    silently rewrite cost basis on the strength of a guess. `adjust_prices` is
-    TRUE because the quote series demonstrably *is* rebased at the ex-date —
-    that is what makes TWR read a 2:1 split as -50% if left alone.
+    **The row is recorded PENDING REVIEW and changes nothing until confirmed**
+    (``reviewed = FALSE``; see corporate_actions.effective_actions). It used to
+    take effect at once with prices adjusted and lots not, so a 2:1 split
+    halved every position's value until someone noticed (audit F-3). A price
+    vendor cannot know whether the broker credited the shares, so a human
+    decides, with ``check_splits.py --approve``. The proposal is the common
+    case — prices and lots adjusted together (``adjust_lots = TRUE``) — so an
+    approval that skips the question still applies both sides.
 
-    `reviewed` stays FALSE so the row surfaces for confirmation rather than
-    quietly taking effect unexamined.
+    Not recorded when an action of the same symbol, kind and ratio is already
+    on file within ``corporate_actions.DUPLICATE_WINDOW_DAYS`` of the vendor's
+    date: that is the same split under another date (manual vs vendor), and
+    two records of one split were applied twice (audit F-16). The database
+    trigger refuses such a pair as well.
     """
     ratio = parse_split_factor(quote.split_factor)
     if ratio is None or quote.split_date is None:
@@ -251,27 +326,34 @@ def record_split(conn, symbol: str, quote: Quote, floor: date | None) -> str | N
         return None   # predates anything this database can be affected by
 
     kind = "SPLIT" if ratio > 1 else "REVERSE_SPLIT"
+    window = corporate_actions.DUPLICATE_WINDOW_DAYS
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO corporate_actions
               (symbol, kind, ex_date, ratio, adjust_prices, adjust_lots,
                source, reviewed, notes)
-            VALUES (%s, %s, %s, %s, TRUE, FALSE, 'yfinance', FALSE, %s)
+            SELECT %s, %s, %s, %s, TRUE, TRUE, 'yfinance', FALSE, %s
+            WHERE NOT EXISTS (
+              SELECT 1 FROM corporate_actions
+              WHERE symbol = %s AND kind = %s AND ratio = %s
+                AND ex_date BETWEEN %s::date - %s AND %s::date + %s
+            )
             ON CONFLICT (symbol, kind, ex_date) DO NOTHING
             RETURNING id
             """,
             (
                 symbol, kind, quote.split_date, ratio,
                 f"Auto-recorded from yfinance lastSplitFactor={quote.split_factor!r}. "
-                f"Prices are adjusted; LOTS ARE NOT — confirm whether the broker "
-                f"credited the extra shares, then set adjust_lots and reviewed. "
-                f"Set ex_ts to the ex-date's session open if raw-timestamp series "
-                f"matter for this symbol.",
+                f"PENDING REVIEW — this row changes no figure until confirmed. Run "
+                f"check_splits.py --approve {symbol}:{quote.split_date} with "
+                f"--shares-credited (the broker added the shares; the usual case) or "
+                f"--quantities-already-post-split. Set ex_ts to the ex-date's session "
+                f"open if raw-timestamp series matter for this symbol.",
+                symbol, kind, ratio, quote.split_date, window, quote.split_date, window,
             ),
         )
         inserted = cur.fetchone()
-    conn.commit()
     if inserted:
         return f"{symbol} {kind} {ratio} on {quote.split_date}"
     return None
@@ -308,12 +390,32 @@ def _finish_run(conn, run_id: int | None, status: str, total: int, ok: int, fail
     )
 
 
-def _reap_stale_runs(conn) -> None:
-    """Close out 'running' rows left behind by a hard-killed process.
+def _try_lock(conn, kind: int) -> bool:
+    """Take this run's session-level advisory lock, without waiting."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s, %s)", (LOCK_NAMESPACE, kind))
+        got = bool(cur.fetchone()[0])
+    conn.commit()  # the lock is session-level; do not hold a transaction open
+    return got
 
-    A run normally finishes in seconds; anything still 'running' after 10
-    minutes belongs to a process that died without reaching _finish_run
-    (reboot, task kill), so mark it failed rather than leaving it dangling.
+
+def _session_limits(conn) -> None:
+    """Bound every statement, so a stuck lock or query cannot outlive the run."""
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = '60s'")
+        cur.execute("SET lock_timeout = '10s'")
+    conn.commit()
+
+
+def _reap_dead_runs(conn) -> None:
+    """Close out 'running' rows left behind by a process that died.
+
+    Called only while holding the holdings lock. Every live holdings run holds
+    that lock for its whole life, so any 'running' row seen now belongs to a
+    process that is gone (reboot, kill, OOM) — whatever its age. The old rule,
+    "older than ten minutes", reaped a legitimately slow run from under it
+    whenever a manual or benchmark run started (audit E-5), and left a dead
+    one alone for ten minutes.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -321,19 +423,61 @@ def _reap_stale_runs(conn) -> None:
             UPDATE snapshot_runs
             SET ts_end = now(),
                 status = 'failed',
-                error = 'stale: process died before finishing (reaped at startup)'
+                error = 'stale: process died before finishing (reaped by the next run)'
             WHERE status = 'running'
-              AND ts_start < now() - interval '10 minutes'
             RETURNING id
             """,
         )
         reaped = [row[0] for row in cur.fetchall()]
     conn.commit()
     if reaped:
-        log.warning(f"Reaped stale running snapshot_runs: {reaped}")
+        log.warning(f"Reaped dead running snapshot_runs: {reaped}")
 
 
-def main():
+def _fail_run(conn, cfg, run_id: int | None, error: str) -> None:
+    """Mark the run failed even when its own connection is unusable.
+
+    The old handler issued the UPDATE on a connection whose transaction a
+    failed statement had already aborted, so the update failed too and the
+    run stayed 'running' until reaped (audit E-1). Roll back first; if the
+    connection itself is gone, use a fresh one.
+    """
+    if run_id is None:
+        return
+    try:
+        conn.rollback()
+        _finish_run(conn, run_id, "failed", 0, 0, 0, error)
+        return
+    except Exception as e:
+        log.error("could not mark run %s failed on its own connection: %s", run_id, e)
+    try:
+        fresh = connect(cfg)
+        try:
+            _finish_run(fresh, run_id, "failed", 0, 0, 0, error)
+        finally:
+            fresh.close()
+    except Exception as e:
+        log.error("could not mark run %s failed at all (the next run reaps it): %s", run_id, e)
+
+
+def held_or_watched_symbols(conn) -> list[str]:
+    """What a holdings run collects: every symbol with an open position, by
+    the engines' rules (``ledger_inputs.open_symbols``), plus the watchlist.
+
+    This was a SQL sum of signed quantities, which disagreed with the engines
+    whenever a sale was truncated or recorded under the wrong account (audit
+    R-1): a position the dashboard showed as open could go uncollected.
+    """
+    held = sorted(ledger_inputs.open_symbols(conn))
+    rows = fetch_all(
+        conn,
+        "SELECT symbol FROM instruments WHERE watchlist = TRUE OR symbol = ANY(%s) ORDER BY symbol",
+        (held,),
+    )
+    return [r["symbol"] for r in rows]
+
+
+def _parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Collect one price snapshot.")
     ap.add_argument(
         "--ignore-window",
@@ -350,7 +494,11 @@ def main():
             "collecting them."
         ),
     )
-    args = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def main(argv=None):
+    args = _parse_args(argv)
 
     # The window guard lives here rather than in the caller, so every entry
     # point obeys it: the container scheduler runs this on a plain cron tick,
@@ -370,152 +518,170 @@ def main():
 
     cfg = load_config()
     ts = datetime.now(timezone.utc)
+    # A plain connection, closed in `finally` — `with connect()` neither closes
+    # it nor, therefore, releases the advisory lock until garbage collection.
+    conn = connect(cfg)
+    try:
+        return _collect(conn, cfg, args, ts)
+    finally:
+        conn.close()
 
-    with connect(cfg) as conn:
-        _reap_stale_runs(conn)
-        # A benchmark run deliberately records NO row in snapshot_runs. That table
-        # means one thing — "an attempt to collect the portfolio's prices" — and
-        # three readers depend on it meaning exactly that: cutoff.py steps the
-        # cutoff back behind any in-flight run, data_quality.py judges freshness
-        # against runs rather than clock age, and health.py reports the last one.
-        # Benchmarks collect round the clock, so recording them would pin the
-        # cutoff behind a futures fetch and tell Data Health your holdings are
-        # fresh when they have not been collected since Friday. The strip carries
-        # its own as-of timestamp, which is the staleness signal that belongs to it.
-        run_id = None if args.benchmarks else _start_run(conn, ts)
 
-        try:
-            if args.benchmarks:
-                # sync_flags makes instruments.benchmark match the setting, so the
-                # setting stays the only place the symbol set is edited.
-                try:
-                    symbols = market_overview.sync_flags(conn)
-                except psycopg2.errors.UndefinedColumn:
-                    # Upgraded the image but skipped the schema step. A raw
-                    # psycopg2 traceback in a cron log is a poor way to learn that
-                    # — the fix is one documented command.
-                    conn.rollback()
-                    log.error(
-                        "instruments.benchmark is missing — the market-overview "
-                        "migration has not been applied. Run: docker compose run "
-                        "--rm dashboard python app/apply_schema.py  (idempotent). "
-                        "Nothing else is affected; the Markets strip stays empty "
-                        "until then."
-                    )
-                    return 1
-                if not symbols:
-                    log.info("No market-overview symbols configured — nothing collected.")
-                    _finish_run(conn, run_id, "ok", 0, 0, 0, None)
-                    return
-                log.info("Collecting %d benchmark symbol(s): %s", len(symbols), ", ".join(symbols))
-            else:
-                symbols = fetch_all(
-                conn,
-                """
-                WITH pos AS (
-                  SELECT symbol,
-                         SUM(CASE WHEN side='BUY' THEN quantity ELSE -quantity END) AS qty
-                  FROM lots
-                  GROUP BY symbol
+def _collect(conn, cfg, args, ts: datetime):
+    _session_limits(conn)
+    kind = LOCK_BENCHMARKS if args.benchmarks else LOCK_HOLDINGS
+    if not _try_lock(conn, kind):
+        log.warning(
+            "Another %s collector run is in progress (it holds the lock) — not "
+            "starting a second one.", "benchmark" if args.benchmarks else "holdings",
+        )
+        return
+    deadline = time.monotonic() + RUN_DEADLINE_S
+
+    # A benchmark run deliberately records NO row in snapshot_runs, and never
+    # reaps. That table means one thing — "an attempt to collect the portfolio's
+    # prices" — and three readers depend on it meaning exactly that: cutoff.py
+    # steps the cutoff back behind any in-flight run, data_quality.py judges
+    # freshness against runs rather than clock age, and health.py reports the
+    # last one. Benchmarks collect round the clock, so recording them would pin
+    # the cutoff behind a futures fetch and tell Data Health your holdings are
+    # fresh when they have not been collected since Friday. The strip carries
+    # its own as-of timestamp, which is the staleness signal that belongs to it.
+    if not args.benchmarks:
+        _reap_dead_runs(conn)
+    run_id = None if args.benchmarks else _start_run(conn, ts)
+
+    try:
+        if args.benchmarks:
+            # sync_flags makes instruments.benchmark match the setting, so the
+            # setting stays the only place the symbol set is edited.
+            try:
+                symbols = market_overview.sync_flags(conn)
+            except psycopg2.errors.UndefinedColumn:
+                # Upgraded the image but skipped the schema step. A raw
+                # psycopg2 traceback in a cron log is a poor way to learn that
+                # — the fix is one documented command.
+                conn.rollback()
+                log.error(
+                    "instruments.benchmark is missing — the market-overview "
+                    "migration has not been applied. Run: docker compose run "
+                    "--rm dashboard python app/apply_schema.py  (idempotent). "
+                    "Nothing else is affected; the Markets strip stays empty "
+                    "until then."
                 )
-                SELECT i.symbol
-                FROM instruments i
-                LEFT JOIN pos p ON p.symbol = i.symbol
-                WHERE COALESCE(p.qty, 0) > 0
-                   OR i.watchlist = TRUE
-                ORDER BY i.symbol
-                """,
-                )
-                symbols = [r["symbol"] for r in symbols]
-
+                return 1
             if not symbols:
-                log.warning("No symbols found. Add lots first.")
-                _finish_run(conn, run_id, "ok", 0, 0, 0, None)
+                log.info("No market-overview symbols configured — nothing collected.")
                 return
+            log.info("Collecting %d benchmark symbol(s): %s", len(symbols), ", ".join(symbols))
+        else:
+            symbols = held_or_watched_symbols(conn)
 
-            inserted = 0
-            failed = []
-            stale = []
-            splits_found = []
-            # Splits older than the ledger cannot affect anything here.
-            floor = ledger_floor_date(conn)
+        if not symbols:
+            log.warning("No symbols found. Add lots first.")
+            _finish_run(conn, run_id, "ok", 0, 0, 0, None)
+            return
 
-            for sym in symbols:
-                try:
-                    quote = get_quote_with_retry(sym)
-                    if args.benchmarks and benchmark_market_closed(quote.market_state):
-                        log.info(
-                            "%s: market %s — nothing new to record",
-                            sym, (quote.market_state or "unknown").lower(),
-                        )
-                        continue
-                    check_fresh(quote, ts)
-                except StaleQuote as e:
-                    # Don't persist it: writing an earlier session's close under
-                    # today's ts is what makes the dashboard look quietly fresh
-                    # while showing yesterday's numbers.
-                    stale.append((sym, str(e)))
-                    log.warning(f"{sym}: skipping stale quote — {e}")
+        inserted = 0
+        failed = []
+        stale = []
+        splits_found = []
+        # Splits older than the ledger cannot affect anything here.
+        floor = ledger_floor_date(conn)
+        conn.commit()  # end the read transaction before the network calls
+
+        for sym in symbols:
+            if time.monotonic() >= deadline:
+                failed.append((sym, f"not reached: the run's {RUN_DEADLINE_S:.0f}s deadline passed"))
+                continue
+            try:
+                quote = get_quote_with_retry(sym, deadline=deadline)
+                if args.benchmarks and benchmark_market_closed(quote.market_state):
+                    log.info(
+                        "%s: market %s — nothing new to record",
+                        sym, (quote.market_state or "unknown").lower(),
+                    )
                     continue
-                except Exception as e:
-                    failed.append((sym, str(e)))
-                    continue
+                check_fresh(quote, ts)
+            except StaleQuote as e:
+                # Don't persist it: writing an earlier session's close under
+                # today's ts is what makes the dashboard look quietly fresh
+                # while showing yesterday's numbers.
+                stale.append((sym, str(e)))
+                log.warning(f"{sym}: skipping stale quote — {e}")
+                continue
+            except Exception as e:
+                failed.append((sym, str(e)))
+                continue
 
-                execute(
-                    conn,
-                    """
-                    INSERT INTO price_snapshots(ts, symbol, last_price, bid, ask, source, session, volume)
-                    VALUES (%s, %s, %s, %s, %s, 'yfinance', %s, %s)
-                    ON CONFLICT DO NOTHING
-                    """,
-                    (ts, sym, quote.last_price, quote.bid, quote.ask,
-                     quote.market_state, quote.volume),
-                )
-                inserted += 1
+            # One symbol, one transaction. The savepoint keeps a rejected row
+            # from aborting the transaction, and the commit makes each stored
+            # price durable on its own.
+            try:
+                with ledger_writes.savepoint(conn, "pdb_symbol"):
+                    run(
+                        conn,
+                        """
+                        INSERT INTO price_snapshots(ts, symbol, last_price, bid, ask, source, session, volume)
+                        VALUES (%s, %s, %s, %s, %s, 'yfinance', %s, %s)
+                        ON CONFLICT DO NOTHING
+                        """,
+                        (ts, sym, quote.last_price, quote.bid, quote.ask,
+                         quote.market_state, quote.volume),
+                    )
+            except psycopg2.Error as e:
+                failed.append((sym, f"not stored: {str(e).strip().splitlines()[0]}"))
+                conn.commit()
+                continue
+            inserted += 1
 
-                # Best-effort: a vendor hiccup here must not fail the price run,
-                # which is the collector's actual job.
-                try:
+            # Best-effort, under its own savepoint: a failed split record must
+            # not take the price down with it, nor poison the transaction the
+            # next symbol runs in (audit Q-7).
+            try:
+                with ledger_writes.savepoint(conn, "pdb_split"):
                     recorded = record_split(conn, sym, quote, floor)
-                    if recorded:
-                        splits_found.append(recorded)
-                except Exception as e:
-                    log.warning(f"{sym}: could not record split — {e}")
+                if recorded:
+                    splits_found.append(recorded)
+            except psycopg2.Error as e:
+                log.warning(f"{sym}: could not record split — {e}")
+            conn.commit()
 
-            total = len(symbols)
-            problems = stale + failed
-            if not problems:
-                status = "ok"
-                error_text = None
-            else:
-                status = "failed" if inserted == 0 else "partial"
-                error_text = "; ".join(
-                    [f"stale: {s}: {e}" for s, e in stale[:10]]
-                    + [f"{s}: {e}" for s, e in failed[:10]]
-                )
+        total = len(symbols)
+        problems = stale + failed
+        if not problems:
+            status = "ok"
+            error_text = None
+        else:
+            status = "failed" if inserted == 0 else "partial"
+            error_text = "; ".join(
+                [f"stale: {s}: {e}" for s, e in stale[:10]]
+                + [f"{s}: {e}" for s, e in failed[:10]]
+            )
 
-            _finish_run(conn, run_id, status, total, inserted, len(problems), error_text)
+        _finish_run(conn, run_id, status, total, inserted, len(problems), error_text)
 
-            log.info(f"OK snapshots inserted: {inserted}/{total} at {ts.isoformat()}")
-            if splits_found:
-                log.warning(
-                    "NEW CORPORATE ACTION(S) recorded — prices adjusted, lots NOT. "
-                    "Confirm whether shares were credited, then set adjust_lots:"
-                )
-                for line in splits_found:
-                    log.warning(f"  {line}")
-            if stale:
-                log.warning(f"Stale upstream quotes skipped ({len(stale)}/{total}):")
-                for sym, err in stale:
-                    log.warning(f"  {sym}: {err}")
-            if failed:
-                log.warning("Failed:")
-                for sym, err in failed:
-                    log.warning(f"  {sym}: {err}")
-        except Exception:
-            err_text = traceback.format_exc()
-            _finish_run(conn, run_id, "failed", 0, 0, 0, err_text)
-            raise
+        log.info(f"OK snapshots inserted: {inserted}/{total} at {ts.isoformat()}")
+        if splits_found:
+            log.warning(
+                "NEW CORPORATE ACTION(S) recorded, PENDING REVIEW — they change no "
+                "figure until approved. Confirm each against the broker, then run "
+                "check_splits.py --approve SYMBOL:YYYY-MM-DD --shares-credited "
+                "(or --quantities-already-post-split):"
+            )
+            for line in splits_found:
+                log.warning(f"  {line}")
+        if stale:
+            log.warning(f"Stale upstream quotes skipped ({len(stale)}/{total}):")
+            for sym, err in stale:
+                log.warning(f"  {sym}: {err}")
+        if failed:
+            log.warning("Failed:")
+            for sym, err in failed:
+                log.warning(f"  {sym}: {err}")
+    except Exception:
+        _fail_run(conn, cfg, run_id, traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":

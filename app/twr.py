@@ -38,6 +38,20 @@ only of such days reports None rather than a fictitious 0%. Income that
 arrives while nothing is held (a dividend paid after the position was sold)
 is credited against the last capital base that earned it.
 
+Two kinds of missing price (1.8.0):
+
+* **A new symbol with no quote yet** is valued at its own trade price until
+  the first quote arrives. The purchase is a flow on the day it is bucketed
+  to; valuing the position at nothing that day turned the purchase into a
+  false loss and the first quote into a false gain (audit F-7) — wrong best
+  and worst days, streaks and period boundaries, at unchanged prices. The
+  trade price is a real observation of the price on the trade date.
+* **A non-positive quote** is no quote (F-15). One stored zero made a day's
+  market value 0, the growth factor 0, and every later figure 0 for good.
+  Non-positive prices are dropped before valuation, and ``growth_curve``
+  never multiplies by a factor that is not positive: such a day is carried
+  through unchanged and its flows roll into the next day with capital at work.
+
 Inputs are plain structures so the MCP service, the Streamlit dashboard, and
 the reports can all feed it from their own DB connections.
 """
@@ -70,6 +84,11 @@ def build_daily_records(
     value of holdings held that day, inflow = BUY cost (fees included),
     outflow = SELL proceeds (fees deducted), flow = inflow − outflow for
     readers that only want the net, div = income.
+
+    Lots may carry ``account`` and ``id``; they are what the holdings walk
+    needs to match the engines exactly (per-account truncation, same-day
+    order). A symbol with no quote yet is valued at its trade price (see the
+    module docstring).
     """
     days = sorted(price_by_day.keys())
     if not days:
@@ -102,11 +121,13 @@ def build_daily_records(
             continue
         div_by_day[d] += dv["amount"]
 
+    priced = _with_trade_prices(lots, price_by_day, days, _bucket)
+
     # Holdings reconstruction lives in `holdings` so the drawdown and value-history
     # readers share this exact logic instead of re-deriving it (they used to hold
     # today's quantities constant, which back-projects current positions).
     valued = holdings.value_series(
-        lots, [(d, price_by_day[d]) for d in days], carry_forward=True
+        lots, [(d, priced[d]) for d in days], carry_forward=True
     )
     return [
         {
@@ -119,6 +140,37 @@ def build_daily_records(
         }
         for d, mv in valued
     ]
+
+
+def _with_trade_prices(lots, price_by_day, days, bucket) -> dict[date, dict[str, float]]:
+    """``price_by_day`` with non-positive quotes removed and, for a symbol not
+    yet quoted, its trade price on the day the trade is bucketed to.
+
+    A trade price is used only before the symbol's first real quote: once
+    quoted, the series is the vendor's. Lots must be in the same (restated)
+    units as the prices, which ``ledger_inputs`` guarantees.
+    """
+    out: dict[date, dict[str, float]] = {
+        d: {s: p for s, p in price_by_day[d].items() if p is not None and p > 0}
+        for d in days
+    }
+    first_quote: dict[str, date] = {}
+    for d in days:
+        for sym in out[d]:
+            first_quote.setdefault(sym, d)
+    for lot in sorted(lots, key=lambda l: l["trade_date"]):
+        price = lot.get("price")
+        if price is None or float(price) <= 0:
+            continue
+        d = bucket(lot["trade_date"])
+        if d is None:
+            continue
+        sym = lot["symbol"]
+        first = first_quote.get(sym)
+        if first is not None and first <= d:
+            continue
+        out[d][sym] = float(price)
+    return out
 
 
 def benchmark_records(
@@ -164,6 +216,8 @@ def growth_curve(records: list[dict[str, Any]]) -> list[tuple[date, float]]:
     g = 1.0
     prev_mv: float | None = None
     last_base: float | None = None
+    # Flows of a day that could not be valued, carried into the next one.
+    carry_in = carry_out = carry_div = 0.0
     for rec in records:
         mv = rec["mv"]
         if prev_mv is None:
@@ -172,13 +226,25 @@ def growth_curve(records: list[dict[str, Any]]) -> list[tuple[date, float]]:
                 out.append((rec["day"], g))
             continue
         inflow, outflow = _flows(rec)
-        div = rec.get("div", 0.0)
+        inflow += carry_in
+        outflow += carry_out
+        div = rec.get("div", 0.0) + carry_div
         denom = prev_mv + inflow
         if denom > 0:
-            g *= (mv + div + outflow) / denom
+            factor = (mv + div + outflow) / denom
+            if factor <= 0:
+                # Capital at work and nothing to show for it, not even sale
+                # proceeds: a valuation fault (a zero quote), not a −100% day.
+                # Multiplying by it would zero the curve for good (F-15).
+                # Carry the day through and let its flows count tomorrow.
+                carry_in, carry_out, carry_div = inflow, outflow, div
+                out.append((rec["day"], g))
+                continue
+            g *= factor
             last_base = denom
         elif div and last_base:
             g *= 1.0 + div / last_base
+        carry_in = carry_out = carry_div = 0.0
         out.append((rec["day"], g))
         prev_mv = mv
     return out

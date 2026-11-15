@@ -185,7 +185,7 @@ jobs:
         working-directory: app
         env:
           PORTFOLIODB_TESTS_REQUIRE_DB: '1'
-        run: python -m pytest tests/test_dedupe_guards.py tests/test_fd_store.py -q -rs
+        run: python -m pytest tests/test_dedupe_guards.py tests/test_fd_store.py tests/test_ledger_sql.py -q -rs
 
       - name: SQL integration tests (MCP data-quality detectors, from the root)
         env:

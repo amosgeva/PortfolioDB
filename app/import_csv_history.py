@@ -21,13 +21,28 @@ Assumptions:
 - We treat EACH CSV file as one snapshot timestamp.
 
 De-dupe:
-- Lots: unique index (symbol, account, side, trade_date, quantity, price)
+- Lots: unique index (symbol, account, side, trade_date, quantity, price). A row
+  that matches a lot already in the ledger is not written, and is listed by
+  line ("already recorded") — re-importing a file is safe and says so. Two
+  identical rows in the SAME file are a different matter: usually two fills
+  at one price, and the index would silently keep only one. Such a file is
+  refused, naming both lines; --combine-identical-fills records them as one
+  lot with the summed quantity and fees, which FIFO treats identically.
 - Snapshots: PK (symbol, ts)
 
+Validation (every row, before anything is written):
+- Symbol: symbol_paths.normalize_symbol — the same rule the database enforces.
+- USD only: a symbol with a non-US exchange suffix (.TA, .L, .HK …) is refused
+  unless --allow-non-usd, because the ledger has no FX conversion.
+- Numbers: finite, right sign, at most 8 decimals (ledger_numbers).
+- Date/Time: an unrecognised timezone token is an error, not New York.
+- Messages cite the physical CSV line (a quoted field spanning lines reports
+  the line it ends on).
+
 Account mapping:
-- Each lot's account comes from the CSV Comment column when it mentions one of
-  --tagged-accounts (case-insensitive substring match); otherwise it falls back
-  to --default-account.
+- Each lot's account comes from the CSV Comment column when it names one of
+  --tagged-accounts as a whole word (case-insensitive: "IRA" matches "Roth IRA"
+  but not "SMALLIRA"); otherwise it falls back to --default-account.
 
 Usage:
   set PORTFOLIODB_PASSWORD=...
@@ -43,6 +58,8 @@ import csv
 import glob
 import math
 import os
+import re
+import warnings
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -52,6 +69,7 @@ from dateutil import parser as dtparser
 
 import ledger_numbers
 import oversell
+import symbol_paths
 from db import connect, load_config, run
 
 
@@ -71,13 +89,23 @@ _TZ_TOKENS = {
 }
 
 
+def _mentions(comment: str, tag: str) -> bool:
+    """Whether ``comment`` names ``tag`` as a whole word, case-insensitively.
+
+    A substring test used to put "SMALLIRA rollover" in the IRA account
+    (audit E-6). Word boundaries are "not a letter or digit", so "IBKR-core"
+    and "(IBKR)" still match IBKR.
+    """
+    pattern = r"(?<![A-Za-z0-9])" + re.escape(tag.strip()) + r"(?![A-Za-z0-9])"
+    return re.search(pattern, comment, flags=re.IGNORECASE) is not None
+
+
 def infer_account(comment: str | None, default_account: str, tagged_accounts: list[str]) -> str:
-    """Pick the lot's account: a tagged account mentioned in the CSV comment
-    wins; otherwise the --default-account."""
+    """Pick the lot's account: the first tagged account the CSV comment names
+    as a whole word wins; otherwise the --default-account."""
     if comment:
-        c = comment.strip().upper()
         for tag in tagged_accounts:
-            if tag.upper() in c:
+            if tag.strip() and _mentions(comment, tag):
                 return tag
     return default_account
 
@@ -93,8 +121,20 @@ def parse_snapshot_ts(date_str: str, time_str: str) -> datetime:
     # time_str: 16:00 EST
     # time_str: 15:59 EDT
     s = f"{date_str.strip()} {time_str.strip()}"
-    # Handle timezone tokens like 'EST'/'EDT' explicitly.
-    dt = dtparser.parse(s, tzinfos=_TZ_TOKENS)
+    # Handle timezone tokens like 'EST'/'EDT' explicitly. Any other alphabetic
+    # token dateutil does not know is an error: it used to warn, drop the
+    # token and fall through to New York below, so "16:00 CET" was stored six
+    # hours off without a word (audit E-6). UTC/GMT/Z and numeric offsets are
+    # understood by dateutil itself.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", dtparser.UnknownTimezoneWarning)
+        try:
+            dt = dtparser.parse(s, tzinfos=_TZ_TOKENS)
+        except dtparser.UnknownTimezoneWarning as e:
+            raise ValueError(
+                f"unrecognised timezone in {time_str.strip()!r} ({e}). Use EST, EDT, UTC, "
+                "a numeric offset such as -05:00, or no token (read as New York time)."
+            ) from None
 
     # If tzinfo missing, assume New York time. `.replace()` is the zoneinfo
     # equivalent of pytz's .localize(): ZoneInfo works out EST vs EDT from the
@@ -162,7 +202,9 @@ def parse_quantity(raw: str) -> Decimal:
 
 def to_float(val: str | None) -> float | None:
     """A price for a snapshot, or None when the cell is blank, not a number,
-    or not finite — a NaN 'Current Price' is no price, not a price of NaN."""
+    not finite, or not positive — a NaN 'Current Price' is no price, not a
+    price of NaN, and a zero is no price either: stored, it zeroed every value
+    and return computed from it (audit F-15; the database now refuses it)."""
     if val is None:
         return None
     v = str(val).strip()
@@ -172,7 +214,7 @@ def to_float(val: str | None) -> float | None:
         f = float(v)
     except Exception:
         return None
-    return f if math.isfinite(f) else None
+    return f if math.isfinite(f) and f > 0 else None
 
 
 # Every write below runs INSIDE the caller's transaction (db.run, never
@@ -264,18 +306,24 @@ def contained_matches(base_dir: Path, pattern: str) -> tuple[list[str], int]:
     return sorted(files), escaped
 
 
-def _snapshot_ts(rows: list[dict]) -> datetime | None:
+def _snapshot_ts(rows: list[dict], lines: list[int] | None = None, fp: str = "") -> datetime | None:
     """UTC timestamp of the file, taken from the first row carrying Date + Time.
 
-    None when no row has both or that pair does not parse: the file's lots are
-    still imported, only its price snapshot is skipped.
+    None when no row has both: the file's lots are still imported, only its
+    price snapshot is skipped. A Date + Time that does not parse — including
+    an unknown timezone token — raises ValueError naming the line, because
+    guessing the instant would store every price under the wrong time.
     """
-    for r in rows:
+    for i, r in enumerate(rows):
         if r.get('Date') and r.get('Time'):
+            line = lines[i] if lines else i + 2
             try:
                 return parse_snapshot_ts(r['Date'], r['Time'])
-            except Exception:
-                return None
+            except Exception as e:
+                raise ValueError(
+                    f"{os.path.basename(fp)}:{line} | Date/Time {r['Date']!r} {r['Time']!r} "
+                    f"cannot be read: {e}"
+                ) from None
     return None
 
 
@@ -308,7 +356,7 @@ EXIT_FAILED = 1
 EXIT_PARTIAL = 2
 
 COUNT_KEYS = ("attempted", "inserted", "duplicate", "rejected", "sells", "oversells",
-              "snaps_inserted", "snaps_duplicate")
+              "snaps_inserted", "snaps_duplicate", "combined")
 
 
 def _empty_counts() -> dict[str, int]:
@@ -337,6 +385,12 @@ def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | No
             "Trade Date, Purchase Price or Quantity is a trade and needs all three; "
             "leave all three blank for a quote-only row."
         )
+    if symbol_paths.foreign_listing_suffix(sym) and not getattr(args, "allow_non_usd", False):
+        raise ValueError(
+            f"{sym} is a non-US listing (.{symbol_paths.foreign_listing_suffix(sym)}); the "
+            "ledger is USD-only and would sum its local-currency price as dollars. Record "
+            "it at a USD price, or pass --allow-non-usd if you accept that."
+        )
     comm_raw = (r.get('Commission') or '').strip()
     comment = r.get('Comment')
     return {
@@ -355,23 +409,53 @@ def _parse_lot(r: dict, sym: str, args, tagged_accounts: list[str]) -> dict | No
 _CONTENT_COLUMNS = ('Trade Date', 'Purchase Price', 'Quantity', 'Current Price')
 
 
-def _validate_file(rows: list[dict], fp: str, args, tagged_accounts: list[str]) -> tuple[list[dict], list[tuple[str, float]], int]:
+def _lot_key(lot: dict) -> tuple:
+    """The lots_dedupe_idx key. Decimal equality, so 10 and 10.00 collide here
+    exactly as they do in the index."""
+    return (lot["symbol"], lot["account"] or "", lot["side"], lot["trade_date"],
+            lot["quantity"], lot["price"])
+
+
+def _validate_file(rows: list[dict], fp: str, args, tagged_accounts: list[str],
+                   lines: list[int] | None = None) -> tuple[list[dict], list[tuple[str, float]], int]:
     """Parse every row before anything is written.
 
     Returns (lots, snapshots as (symbol, price), rejected count). Each
-    rejected row is printed with its line number and reason.
+    rejected row is printed with its CSV line number and reason. Each lot
+    carries its ``line`` so later messages can cite it too.
     """
     lots: list[dict] = []
     snaps: list[tuple[str, float]] = []
     rejected = 0
-    for line_no, r in enumerate(rows, start=2):   # line 1 is the header
-        sym = (r.get('Symbol') or '').strip().upper()
+    first_line_of: dict[tuple, dict] = {}
+    for idx, r in enumerate(rows):
+        line_no = lines[idx] if lines else idx + 2   # line 1 is the header
+        raw_sym = (r.get('Symbol') or '').strip()
+        sym = raw_sym.upper()
         try:
             if not sym:
                 if not any((r.get(k) or '').strip() for k in _CONTENT_COLUMNS):
                     continue             # a wholly blank line, not a row
                 raise ValueError("no Symbol on a row that carries trade or price data")
+            sym = symbol_paths.normalize_symbol(raw_sym)
             lot = _parse_lot(r, sym, args, tagged_accounts)
+            if lot is not None:
+                lot["line"] = line_no
+                earlier = first_line_of.get(_lot_key(lot))
+                if earlier is not None:
+                    if not getattr(args, "combine_identical_fills", False):
+                        raise ValueError(
+                            f"identical to line {earlier['line']} (same symbol, account, side, "
+                            "date, quantity and price). The ledger keeps one of two identical "
+                            "lots, so the second would be silently lost. If these are two fills "
+                            "at one price, combine them into one row with the summed quantity "
+                            "and commission, or pass --combine-identical-fills."
+                        )
+                    earlier["combine_into"].append(lot)
+                    lot = None           # folded into the earlier row below
+                else:
+                    lot["combine_into"] = []
+                    first_line_of[_lot_key(lot)] = lot
         except Exception as e:
             print(
                 f"ERROR {os.path.basename(fp)}:{line_no} | {sym or '(no symbol)'} | "
@@ -386,6 +470,17 @@ def _validate_file(rows: list[dict], fp: str, args, tagged_accounts: list[str]) 
         cp = to_float(r.get('Current Price'))
         if cp is not None:
             snaps.append((sym, cp))
+    for lot in lots:
+        extra = lot.pop("combine_into")
+        if extra:
+            lot["combined_lines"] = [x["line"] for x in extra]
+            lot["quantity"] = sum((x["quantity"] for x in extra), lot["quantity"])
+            lot["fees"] = sum((x["fees"] for x in extra), lot["fees"])
+            print(
+                f"{os.path.basename(fp)}:{lot['line']} | {lot['symbol']}: combined with identical "
+                f"line(s) {', '.join(map(str, lot['combined_lines']))} into one lot of "
+                f"{lot['quantity']} (--combine-identical-fills)"
+            )
     return lots, snaps, rejected
 
 
@@ -400,7 +495,7 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
     counts = _empty_counts()
     base = os.path.basename(fp)
 
-    def _row(i: int, work) -> bool:
+    def _row(i: int, work, where: str) -> bool:
         if not args.continue_on_error:
             work()
             return True
@@ -409,7 +504,7 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
             work()
         except Exception as e:
             run(conn, f"ROLLBACK TO SAVEPOINT row_{i}")
-            print(f"ERROR {base} | row {i + 1} rejected by the database: {str(e).strip().splitlines()[0]}")
+            print(f"ERROR {base}:{where} rejected by the database: {str(e).strip().splitlines()[0]}")
             return False
         run(conn, f"RELEASE SAVEPOINT row_{i}")
         return True
@@ -434,10 +529,20 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
                                lot["quantity"], lot["price"], lot["fees"], lot["notes"],
                                side=lot["side"])
                 counts["inserted" if n else "duplicate"] += 1
+                if n and lot.get("combined_lines"):
+                    counts["combined"] += len(lot["combined_lines"])
+                if not n:
+                    # Said per row, with its line: "already present" as a bare
+                    # count hid which trades were not written (audit D-1).
+                    print(
+                        f"{base}:{lot.get('line', '?')} | {lot['symbol']} {lot['side']} "
+                        f"{lot['quantity']} @ {lot['price']} on {lot['trade_date']}"
+                        f" ({lot['account'] or 'no account'}): already recorded, not written again"
+                    )
                 if n and lot["side"] == "SELL":
                     counts["sells"] += 1
 
-            if not _row(i, _insert):
+            if not _row(i, _insert, f"{lot.get('line', i + 2)} | {lot['symbol']}"):
                 counts["rejected"] += 1
 
         if ts_utc is not None:
@@ -447,7 +552,7 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
                     n = insert_snapshot(conn, ts_utc, sym, cp)
                     counts["snaps_inserted" if n else "snaps_duplicate"] += 1
 
-                if not _row(len(lots) + j, _snap):
+                if not _row(len(lots) + j, _snap, f"snapshot {sym}"):
                     counts["rejected"] += 1
         conn.commit()
     except Exception as e:
@@ -470,16 +575,29 @@ def _import_file(conn, fp: str, args, tagged_accounts: list[str]) -> dict[str, i
     Returns the file's counts, or None when the file had no rows and was
     skipped without being counted. See the transaction policy above.
     """
+    rows: list[dict] = []
+    lines: list[int] = []
     with open(fp, newline='', encoding='utf-8-sig') as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+            # The physical line the record ended on — not its index in the
+            # list, which blank lines and multi-line fields throw off (E-6).
+            lines.append(reader.line_num)
     if not rows:
         return None
     base = os.path.basename(fp)
 
-    ts_utc = _snapshot_ts(rows)
-    lots, snaps, rejected = _validate_file(rows, fp, args, tagged_accounts)
     counts = _empty_counts()
-    counts["rejected"] = rejected
+    try:
+        ts_utc = _snapshot_ts(rows, lines, fp)
+    except ValueError as e:
+        print(f"ERROR {e}")
+        ts_utc = None
+        counts["rejected"] += 1
+    lots, snaps, rejected = _validate_file(rows, fp, args, tagged_accounts, lines)
+    counts["rejected"] += rejected
+    rejected = counts["rejected"]
 
     if rejected and not args.continue_on_error:
         print(
@@ -522,6 +640,13 @@ def main() -> int:
     ap.add_argument("--continue-on-error", action="store_true",
                     help="Import the rows that pass and skip the ones that do not (exit 2 if any "
                          "were skipped). Default: a file with a bad row is not written at all.")
+    ap.add_argument("--combine-identical-fills", action="store_true",
+                    help="Record identical rows in one file (same symbol, account, side, date, "
+                         "quantity and price — typically two fills at one price) as one lot with "
+                         "the summed quantity and commission. Default: such a file is refused.")
+    ap.add_argument("--allow-non-usd", action="store_true",
+                    help="Import non-US listings (.TA, .L, .HK …) anyway. The ledger is USD-only "
+                         "and will sum their prices as dollars.")
     args = ap.parse_args()
     tagged_accounts = [t.strip() for t in args.tagged_accounts.split(",") if t.strip()]
 
@@ -567,7 +692,9 @@ def main() -> int:
     print(f"Files processed: {totals['files']}")
     print(f"Lots attempted: {totals['attempted']} — {totals['inserted']} inserted "
           f"({totals['inserted'] - totals['sells']} BUY, {totals['sells']} SELL), "
-          f"{totals['duplicate']} already present")
+          f"{totals['duplicate']} already recorded (listed above, not written again)")
+    if totals["combined"]:
+        print(f"Identical rows combined into an earlier lot: {totals['combined']}")
     print(f"Snapshots: {totals['snaps_inserted']} inserted, {totals['snaps_duplicate']} already present")
     print(f"Rows rejected: {totals['rejected']}")
     if args.dry_run:

@@ -94,6 +94,99 @@ needs a schema step says so under **Upgrading**.
 - The positions CLI, both text reports and the Advisor close their
   connections instead of leaving them to the garbage collector (audit R-6).
 
+**Upgrading (ledger core)**
+
+- Run the schema step: `docker compose run --rm dashboard python app/apply_schema.py`.
+  It adds migrations `004_symbol_check.sql` and `005_corporate_actions_ratio_finite.sql`,
+  the `lot_open_quantities()` function, the `corporate_actions_in_effect` view and the
+  near-duplicate trigger, and from now on records which migrations it applied.
+  The new constraints are added so that old data cannot fail the upgrade: if an existing
+  symbol does not look like one, or an old collector stored a zero price, the step prints
+  a WARNING naming the rows and keeps going; fix them and run it again.
+- **Splits the collector recorded and nobody reviewed now change nothing until approved.**
+  Until now such a row adjusted prices but not lots. After upgrading, `apply_schema.py`
+  lists any pending ones; approve each with
+  `python app/check_splits.py --approve SYMBOL:YYYY-MM-DD --shares-credited` (or
+  `--quantities-already-post-split` if the lots before the split were entered in new
+  units). Splits you entered by hand are unaffected.
+- `add_lot.py` / `sell_lot.py` now exit 1 when the lot was a duplicate and nothing was
+  written, and 2 when a non-US listing is refused (`--allow-non-usd` to record it
+  anyway). Scripts that ignored the exit code are unaffected; scripts that relied on
+  "OK" being printed for a duplicate were relying on a false report.
+
+### Fixed
+
+- **A same-day sale stored before its purchase is matched, not dropped.** Within a trade
+  date every BUY is now processed before any SELL, in both engines and every reader. A CSV
+  that listed the sale first used to leave a phantom open position and lose the realized
+  P&L while the holdings readers counted zero.
+- **One net quantity.** "What is held" was computed eight ways and none truncated an
+  oversell or matched per account the way the engines do. There is now one
+  implementation (`holdings.net_quantities`, and `lot_open_quantities()` in SQL, held
+  equal by a database test); the collector, both reports, the dashboard's value history,
+  the logo fetcher, both enrichment scripts and the MCP symbol lists use it. A position
+  open by the engines' rules can no longer go uncollected.
+- **The oversell warning checks the account you typed.** A sale entered with no account
+  was checked against every account's shares and passed, then dropped by FIFO. It also
+  uses exact decimals (`0.7 + 0.1` then selling `0.8` no longer warns) and catches a
+  backdated sale that would starve a later one. `oversell.check_sell()` is the public
+  API.
+- **Auto-recorded splits are no longer half-applied** (see Upgrading), and **one split
+  recorded under two dates is applied once** instead of compounding; the database now
+  refuses the second record.
+- `check_splits.py` actually runs the vendor cross-check its documentation promised, and
+  `--no-vendor-check` does what it says.
+- **Dividend backfill counts the position at the close before the ex-date**, not at the
+  end of it: shares bought on the ex-date are no longer counted, shares sold on it are.
+- **TWR with a newly bought, not yet quoted symbol** values it at its trade price until
+  the first quote, instead of reading unchanged prices as a loss and then a gain.
+- **A zero price can no longer zero the return curve.** The collector refuses a zero,
+  negative or NaN price, stores Yahoo's out-of-hours `0.0` bid/ask as NULL, the importer
+  skips a zero "Current Price", the database refuses `last_price <= 0`, and the TWR
+  never multiplies by a non-positive factor.
+- **A wrapped collector window** (e.g. 22:30–05:00) now collects the after-midnight tail
+  of Friday's session and not of Sunday's.
+- **The collector:** one bad symbol (a database error on its price or on its split
+  record) no longer aborts the run or leaves it marked "running"; a run holds an
+  advisory lock, so a manual run and the scheduled one cannot overlap, and only dead runs
+  are reaped; a whole-run deadline (`PORTFOLIODB_COLLECTOR_DEADLINE_S`, default 240 s)
+  ends a run that has stopped being useful.
+- `enrich_instruments.py` no longer overwrites good sector/country data with
+  "Other"/"Unknown" when yfinance fails or is throttling.
+- `corporate_actions.fetch_actions` no longer rolls back the caller's transaction when
+  the table is missing.
+- CSV importer: messages cite the real CSV line; an unknown timezone token is an error
+  instead of being read as New York time; `--tagged-accounts` match whole words
+  ("SMALLIRA" no longer lands in "IRA").
+- Values with more than 8 decimal places are refused instead of silently rounded.
+- `make watchlist ARGS="NVDA AMD"` works (it passes symbols positionally).
+
+### Security
+
+- **What a symbol may contain is enforced everywhere**: every writer (CLIs, CSV importer,
+  watchlist, income, enrichment, the market-overview setting) validates it with
+  `symbol_paths.normalize_symbol`, and the database refuses anything else
+  (`instruments_symbol_format`). A crafted CSV could previously store markup as a
+  symbol.
+- The Financial Datasets cache path only accepts real symbols (`--symbols ../../x` wrote
+  outside the cache).
+
+### Changed
+
+- **Duplicates are reported, never claimed as recorded.** `add_lot.py` and
+  `sell_lot.py` say "DUPLICATE — NOT RECORDED" and exit 1; `add_income.py` likewise. The
+  CSV importer lists every row already in the ledger by line, and refuses a file with
+  two identical rows (usually two fills at one price, which the dedupe index would merge)
+  unless `--combine-identical-fills` records them as one lot.
+- **USD-only scope enforced at write time:** non-US listings (`.TA`, `.L`, `.HK` …) and
+  instruments registered in another currency are refused by `add_lot.py`, `sell_lot.py`
+  and the importer unless `--allow-non-usd`; income in another currency is refused.
+- `apply_schema.py` keeps a `schema_migrations` table (filename, checksum, applied_at),
+  applies each migration once, and reports a migration whose text changed after it was
+  applied. Applying the files by hand with psql still works.
+- `fifo.Lot` and `avg_cost.Lot` are one class (`ledger_core.Lot`), with one Decimal
+  helper; `corporate_actions` and `holdings` no longer read settings at import.
+
 ## [1.7.7] — 2026-11-15
 
 A maintenance release, a month after 1.7.6. The image scan had started failing

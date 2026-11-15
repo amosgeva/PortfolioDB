@@ -39,11 +39,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Any, Iterable, Mapping
 
 from psycopg2 import sql
 
 import corporate_actions
+import holdings
 from corporate_actions import CorporateAction
 from db import fetch_all
 
@@ -130,7 +132,10 @@ def prepare(
     defect in the 1.7.1 re-audit, F03). The rule lives here so every caller
     that filters lots by date filters actions by the same date.
     """
-    acts = tuple(actions)
+    # Effective first (pending reviews out, a doubly recorded split once),
+    # then the date filter: of two records of one split the trusted one's
+    # date decides whether it has happened yet.
+    acts = tuple(corporate_actions.effective_actions(actions))
     if as_of is not None:
         acts = tuple(a for a in acts if a.ex_date <= as_of)
     lots = corporate_actions.adjust_lot_rows([dict(r) for r in lot_rows], acts)
@@ -184,3 +189,16 @@ def load(
     rows = fetch_all(conn, query, tuple(params))
     actions = corporate_actions.fetch_actions(conn)
     return prepare(rows, actions, as_of=None if units == "current" else as_of)
+
+
+def open_quantities(conn, *, as_of: date | None = None) -> dict[str, Decimal]:
+    """Open quantity per symbol, by the engines' rules, from the prepared
+    ledger — ``holdings.open_quantities`` over ``load()``. The one answer to
+    "what is held?" for every Python reader that is not already holding lots
+    (the collector, add-lot, the logo fetcher, both enrichment scripts)."""
+    return holdings.open_quantities(load(conn, as_of=as_of).lots)
+
+
+def open_symbols(conn, *, as_of: date | None = None) -> set[str]:
+    """Symbols with a positive open quantity (see ``open_quantities``)."""
+    return {s for s, q in open_quantities(conn, as_of=as_of).items() if q > 0}

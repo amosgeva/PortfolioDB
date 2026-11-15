@@ -82,19 +82,39 @@ class TestRecordSplit:
         sp.record_split(conn, "X", self._quote("1:10"), date(2024, 1, 1))
         assert conn.executed[0][1][1] == "REVERSE_SPLIT"
 
-    def test_adjusts_prices_but_never_lots(self):
-        """The vendor knows the quote series was rebased. It cannot know whether
-        the broker credited shares, so defaulting adjust_lots TRUE would rewrite
-        cost basis on a guess."""
+    def test_recorded_pending_review_proposing_both_sides(self):
+        """Audit F-3. The row used to land prices=TRUE, lots=FALSE and take
+        effect at once: the half-applied state. Now it lands unreviewed — and
+        an unreviewed vendor row applies to nothing (see
+        corporate_actions.effective_actions) — proposing the consistent
+        default, prices and lots together, for the human to confirm."""
         conn = self._Conn()
         sp.record_split(conn, "X", self._quote(), date(2024, 1, 1))
         sql = conn.executed[0][0]
-        assert "TRUE, FALSE, 'yfinance', FALSE" in sql
+        assert "TRUE, TRUE, 'yfinance', FALSE" in sql
 
-    def test_notes_say_lots_are_not_adjusted(self):
+    def test_notes_say_it_is_pending_and_how_to_approve(self):
         conn = self._Conn()
         sp.record_split(conn, "X", self._quote(), date(2024, 1, 1))
-        assert "LOTS ARE NOT" in conn.executed[0][1][4]
+        notes = conn.executed[0][1][4]
+        assert "PENDING REVIEW" in notes and "--approve X:2026-05-06" in notes
+
+    def test_a_near_duplicate_of_a_recorded_split_is_not_inserted(self):
+        """Audit F-16: the same split under a date a day or two away is the
+        same event. The insert is guarded by NOT EXISTS over the window."""
+        conn = self._Conn()
+        sp.record_split(conn, "X", self._quote(), date(2024, 1, 1))
+        sql, params = conn.executed[0]
+        assert "WHERE NOT EXISTS" in sql and "ex_date BETWEEN" in sql
+        import corporate_actions
+        assert params[-1] == corporate_actions.DUPLICATE_WINDOW_DAYS
+
+    def test_does_not_commit_the_callers_transaction(self):
+        """The collector commits per symbol, after the price row; committing
+        here would split one symbol's work across two transactions."""
+        conn = self._Conn()
+        sp.record_split(conn, "X", self._quote(), date(2024, 1, 1))
+        assert not conn.committed
 
     def test_skips_a_split_predating_the_ledger(self):
         """A split before both the first trade and the first price cannot affect
