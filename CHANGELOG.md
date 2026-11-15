@@ -482,6 +482,14 @@ needs a schema step says so under **Upgrading**.
 
 ### MCP server — correctness (W3)
 
+- **A stale pre-split quote is restated.** With an approved split and no quote
+  since its ex-date, the MCP valued the restated shares at the unadjusted
+  pre-split quote (10 shares bought at 100 before a 2:1 read 20 × 100 = 2,000
+  instead of 1,000): the quote's timestamp reached the restatement as a string
+  and it was skipped. `get_latest_price(s)` also return
+  `split_adjusted_last_price`, and `pre_trade_check` prices in it. The
+  dashboard and Advisor were not affected.
+
 - **Account scoping**: an account-scoped review computes every section for
   that account (TWR, XIRR from that account's lots *and income*, benchmark,
   drawdown, volatility, concentration, allocation, scenarios); data quality
