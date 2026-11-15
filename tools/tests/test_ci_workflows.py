@@ -242,7 +242,9 @@ def test_dependabot_proposes_weekly_frontend_toolchain_updates_grouped():
     comes on its own, where config formats and rule semantics change."""
     npm = _dependabot_updates().get("npm")
     assert npm, "Dependabot does not watch package.json / package-lock.json"
-    assert npm["directory"] == "/" and (ROOT / "package.json").exists() and (ROOT / "package-lock.json").exists()
+    assert npm["directory"] == "/"
+    assert (ROOT / "package.json").exists()
+    assert (ROOT / "package-lock.json").exists()
     assert npm["schedule"]["interval"] == "weekly"
     groups = list((npm.get("groups") or {}).values())
     assert any(set(g.get("update-types", [])) == {"minor", "patch"} and g.get("patterns") == ["*"] for g in groups), (
@@ -284,7 +286,8 @@ def test_called_workflows_key_concurrency_on_the_calling_workflow(name):
     alone, publish's call and the workflow's own push run on main would share a
     group, and cancel-in-progress would cancel one of them."""
     group = _workflows()[name]["concurrency"]["group"]
-    assert "${{ github.workflow }}" in group and "${{ github.ref }}" in group, group
+    assert "${{ github.workflow }}" in group, group
+    assert "${{ github.ref }}" in group, group
 
 
 def _needs(job: dict) -> set[str]:
@@ -368,7 +371,8 @@ def test_the_runtime_stage_is_last_and_removes_pip():
     """The last stage is the default target, so a bare `docker build` (the
     security scan's) gets the runtime too."""
     stages = _stages()
-    assert stages[-1] == "runtime" and "dev" in stages, stages
+    assert stages[-1] == "runtime", stages
+    assert "dev" in stages, stages
     text = DOCKERFILE.read_text(encoding="utf-8")
     runtime = text[text.index("AS runtime"):]
     assert "pip uninstall --yes pip" in runtime
@@ -385,11 +389,13 @@ def test_publish_builds_and_scans_the_runtime_target():
 def test_ci_checks_the_lock_on_dev_and_tests_inside_runtime():
     job = _workflows()["ci.yml"]["jobs"]["image"]
     run = _run_text(job)
-    assert "--target runtime" in run and "--target dev" in run
+    assert "--target runtime" in run
+    assert "--target dev" in run
     assert "portfoliodb-ci-dev:${{ github.sha }} pip freeze --all" in run, "the lock is compared on the dev target"
     assert 'python -c "import pip"' in run, "CI must prove the runtime image has no pip"
     tests = next(s for s in _steps(job) if s.get("name", "").startswith("Test suites inside the runtime image"))
-    assert "portfoliodb-ci:${{ github.sha }}" in tests["run"] and "$HARDENED" in tests["run"]
+    assert "portfoliodb-ci:${{ github.sha }}" in tests["run"]
+    assert "$HARDENED" in tests["run"]
     assert "pip install --user" not in tests["run"].split("portfoliodb-ci:${{ github.sha }}")[-1], (
         "the runtime image has no pip; pytest comes from the dev target, mounted read-only"
     )
@@ -397,7 +403,8 @@ def test_ci_checks_the_lock_on_dev_and_tests_inside_runtime():
 
 def test_ci_starts_both_schedulers_and_tests_both_crontabs():
     run = _run_text(_workflows()["ci.yml"]["jobs"]["image"])
-    assert "/app/docker/crontab-llm" in run and "probe ci-scheduler-llm" in run
+    assert "/app/docker/crontab-llm" in run
+    assert "probe ci-scheduler-llm" in run
     assert "supercronic -test" in run
 
 

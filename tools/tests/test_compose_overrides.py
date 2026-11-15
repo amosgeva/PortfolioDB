@@ -488,8 +488,10 @@ def test_the_crontabs_split_collection_from_keyed_jobs():
     every job in exactly one of them."""
     collector = _cron_commands(ROOT / "docker" / "crontab")
     keyed = _cron_commands(ROOT / "docker" / "crontab-llm")
-    assert collector and all("snapshot_prices.py" in c for c in collector), collector
-    assert keyed and not any("snapshot_prices.py" in c for c in keyed), keyed
+    assert collector, "docker/crontab has no jobs"
+    assert keyed, "docker/crontab-llm has no jobs"
+    assert all("snapshot_prices.py" in c for c in collector), collector
+    assert not any("snapshot_prices.py" in c for c in keyed), keyed
     assert any("advisor.py brief" in c for c in keyed)
     assert any("fd_weekly_enrichment.py" in c for c in keyed)
     assert not any("advisor.py" in c or "fd_weekly_enrichment" in c for c in collector)
@@ -522,7 +524,8 @@ def test_the_devtools_service_is_the_dev_stage_hardened_and_keyless(dev_model):
     assert svc["build"]["target"] == "dev"
     assert svc.get("profiles") == ["devtools"], "`make dev-up` must never start it"
     assert not svc.get("env_file"), "the test runner needs none of .env's secrets"
-    assert svc.get("read_only") is True and svc.get("cap_drop") == ["ALL"]
+    assert svc.get("read_only") is True
+    assert svc.get("cap_drop") == ["ALL"]
     assert "no-new-privileges:true" in (svc.get("security_opt") or [])
     assert svc["image"] != dev_model["services"]["dashboard"]["image"], (
         "the dev stage must not overwrite the image the stack runs"

@@ -81,7 +81,7 @@ def offline_problems(defaults: dict, review: dict, today: date) -> list[str]:
         except (KeyError, TypeError, ValueError):
             found.append(f"{provider}: needs ISO `reviewed` and `review_by` dates")
             continue
-        if not reviewed < due or due - reviewed > MAX_REVIEW_INTERVAL:
+        if reviewed >= due or due - reviewed > MAX_REVIEW_INTERVAL:
             found.append(f"{provider}: review_by must be after reviewed and at most 180 days later")
         if due < today:
             found.append(
@@ -97,12 +97,16 @@ def offline_problems(defaults: dict, review: dict, today: date) -> list[str]:
 def _https(method: str, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
     """One HTTPS request. http.client rather than urlopen: the scheme is fixed
     by construction (no file:// or custom handler can be reached), redirects
-    are not followed, and TLS is verified with the default context."""
+    are not followed, and the certificate and host name are verified."""
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or not parts.hostname:
         raise ValueError(f"refusing a non-https listing URL: {url!r}")
-    conn = http.client.HTTPSConnection(parts.hostname, parts.port or 443, timeout=30,
-                                       context=ssl.create_default_context())
+    # create_default_context() already verifies; stated explicitly so no
+    # reader (or analyser) has to know that.
+    tls = ssl.create_default_context()
+    tls.check_hostname = True
+    tls.verify_mode = ssl.CERT_REQUIRED
+    conn = http.client.HTTPSConnection(parts.hostname, parts.port or 443, timeout=30, context=tls)
     try:
         path = parts.path + (f"?{parts.query}" if parts.query else "")
         conn.request(method, path, headers={"User-Agent": _UA, **headers})
@@ -142,7 +146,7 @@ def online_problems(
     ollama: Callable[[str], bool] = fetch_ollama,
 ) -> list[str]:
     """Each entry's `listing` checked against its public catalogue."""
-    found = []
+    found: list[str] = []
     horizon = today + timedelta(days=horizon_days)
     catalogue: dict[str, dict] | None = None
     for provider, entry in sorted(review.items()):
@@ -150,28 +154,32 @@ def online_problems(
         if kind == "openrouter":
             if catalogue is None:
                 catalogue = openrouter()
-            model = catalogue.get(ident)
-            if model is None:
-                found.append(f"{provider}: OpenRouter no longer lists {ident!r}")
-                continue
-            expires = model.get("expiration_date")
-            if expires:
-                try:
-                    when = date.fromisoformat(str(expires)[:10])
-                except ValueError:
-                    found.append(f"{provider}: OpenRouter lists {ident!r} with an unreadable expiration {expires!r}")
-                    continue
-                if when <= horizon:
-                    found.append(
-                        f"{provider}: OpenRouter lists {ident!r} as expiring on {when.isoformat()}; "
-                        "choose a successor default in app/llm.py"
-                    )
+            problem = _openrouter_problem(catalogue, ident, horizon)
         elif kind == "ollama":
-            if not ollama(ident):
-                found.append(f"{provider}: the Ollama registry has no {ident!r}")
+            problem = None if ollama(ident) else f"the Ollama registry has no {ident!r}"
         else:
-            found.append(f"{provider}: no public listing to check (set `listing`)")
+            problem = "no public listing to check (set `listing`)"
+        if problem:
+            found.append(f"{provider}: {problem}")
     return found
+
+
+def _openrouter_problem(catalogue: dict[str, dict], ident: str, horizon: date) -> str | None:
+    """Why `ident` is not safe as a default per OpenRouter's list, or None."""
+    model = catalogue.get(ident)
+    if model is None:
+        return f"OpenRouter no longer lists {ident!r}"
+    expires = model.get("expiration_date")
+    if not expires:
+        return None
+    try:
+        when = date.fromisoformat(str(expires)[:10])
+    except ValueError:
+        return f"OpenRouter lists {ident!r} with an unreadable expiration {expires!r}"
+    if when <= horizon:
+        return (f"OpenRouter lists {ident!r} as expiring on {when.isoformat()}; "
+                "choose a successor default in app/llm.py")
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -52,13 +52,11 @@ def test_every_entry_is_dated_sourced_and_checkable(provider):
     assert ident
 
 
-def test_the_registry_in_app_llm_is_the_one_the_app_imports():
+def test_the_registry_in_app_llm_is_the_one_the_app_imports(monkeypatch):
     """The checker reads the file with ast; the module must agree with it."""
-    sys.path.insert(0, str(ROOT / "app"))
-    try:
-        import llm
-    finally:
-        sys.path.remove(str(ROOT / "app"))
+    monkeypatch.syspath_prepend(str(ROOT / "app"))
+    import llm
+
     assert llm._DEFAULT_MODEL == DEFAULTS
     assert llm.DEFAULT_MODEL_REVIEW == REVIEW
 
@@ -169,4 +167,5 @@ def test_the_weekly_scan_runs_the_online_check_and_tracks_its_failure():
 
 def test_the_provider_doc_describes_the_check():
     text = (ROOT / "docs" / "llm-providers.md").read_text(encoding="utf-8")
-    assert "check_default_models.py" in text and "DEFAULT_MODEL_REVIEW" in text
+    assert "check_default_models.py" in text
+    assert "DEFAULT_MODEL_REVIEW" in text

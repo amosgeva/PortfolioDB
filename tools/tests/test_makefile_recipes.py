@@ -135,7 +135,8 @@ def test_make_test_builds_the_working_tree_and_never_reaches_the_database(sandbo
     assert "docker-compose.dev.yml" in run, "the run must use the image just built"
     for call in (build, run):
         assert call[call.index("--profile") + 1] == "devtools", "devtools sits behind a profile"
-    assert "run" in run and "devtools" in run
+    assert "run" in run
+    assert "devtools" in run
     assert "--no-deps" in run, "make test must not start (or need) the stack's postgres"
     assert run[run.index("-e") + 1] == "PORTFOLIODB_PASSWORD=", (
         "a blank password is what makes every database-backed test skip"
