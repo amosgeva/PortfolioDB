@@ -117,10 +117,11 @@ def savepoint(conn, name: str):
     importer use it so one bad row cannot abort everything around it."""
     ident = sql.Identifier(name)
     run(conn, sql.SQL("SAVEPOINT {}").format(ident))
+    ok = False
     try:
         yield
-    except BaseException:
-        run(conn, sql.SQL("ROLLBACK TO SAVEPOINT {}").format(ident))
+        ok = True
+    finally:
+        if not ok:
+            run(conn, sql.SQL("ROLLBACK TO SAVEPOINT {}").format(ident))
         run(conn, sql.SQL("RELEASE SAVEPOINT {}").format(ident))
-        raise
-    run(conn, sql.SQL("RELEASE SAVEPOINT {}").format(ident))

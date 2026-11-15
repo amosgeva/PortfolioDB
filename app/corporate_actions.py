@@ -248,8 +248,8 @@ def fetch_recorded_actions(conn) -> list[CorporateAction]:
             if guarded:
                 try:
                     cur.execute("ROLLBACK TO SAVEPOINT pdb_fetch_actions")
-                except Exception:  # the connection itself is gone; keep the first error
-                    pass
+                except Exception as cleanup:  # the connection itself is gone; keep the first error
+                    log.debug("savepoint rollback after a failed read also failed: %s", cleanup)
             raise
         if guarded:
             cur.execute("RELEASE SAVEPOINT pdb_fetch_actions")

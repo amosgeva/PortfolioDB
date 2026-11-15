@@ -132,6 +132,88 @@ def _connect():
     )
 
 
+def _execute_file(conn, path: Path) -> None:
+    """Run one SQL file from the shipped ``sql/`` tree.
+
+    The text executed is the file's, by design: this is the schema applier.
+    Only files under ``SQL_DIR`` are ever passed (``base_files`` /
+    ``migration_files`` glob that directory, which is baked into the image);
+    nothing here takes a path or SQL from a user, so this is not an injection
+    sink. Checked anyway, so a future caller cannot point it elsewhere.
+    """
+    resolved = path.resolve()
+    if SQL_DIR.resolve() not in resolved.parents:
+        raise ValueError(f"refusing to apply {path}: not under {SQL_DIR}")
+    with conn.cursor() as cur:
+        cur.execute(resolved.read_text(encoding="utf-8"))  # NOSONAR — shipped schema file, see docstring
+
+
+def _record(conn, path: Path, cs: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO schema_migrations (filename, checksum, applied_at)
+            VALUES (%s, %s, now())
+            ON CONFLICT (filename) DO UPDATE
+              SET checksum = EXCLUDED.checksum, applied_at = EXCLUDED.applied_at
+            """,
+            (path.name, cs),
+        )
+
+
+def _warn_changed(path: Path, old_cs: str, at, cs: str) -> None:
+    print(
+        f"\nWARNING: {_rel(path)} HAS CHANGED since it was applied on {at:%Y-%m-%d %H:%M}.\n"
+        f"  recorded sha256 {old_cs}\n"
+        f"  current  sha256 {cs}\n"
+        "  A shipped migration should never change. It is applied again now (the\n"
+        "  files are idempotent) - review what changed and why.\n",
+        file=sys.stderr,
+    )
+
+
+def _dry_run(conn) -> int:
+    for f in base_files():
+        print(f"would apply {_rel(f)} (always applied)")
+    try:
+        applied = applied_migrations(conn)
+    except psycopg2.Error:
+        applied = {}
+    for f, state, _cs in plan(migration_files(), applied):
+        print(f"{'would apply' if state != 'applied' else 'up to date '} {_rel(f)} [{state}]")
+    return 0
+
+
+def _apply_migrations(conn) -> dict[str, int]:
+    applied = applied_migrations(conn)
+    counts = {"new": 0, "changed": 0, "applied": 0}
+    for f, state, cs in plan(migration_files(), applied):
+        counts[state] += 1
+        if state == "applied":
+            print(f"up to date {_rel(f)} (applied {applied[f.name][1]:%Y-%m-%d %H:%M})")
+            continue
+        if state == "changed":
+            _warn_changed(f, applied[f.name][0], applied[f.name][1], cs)
+        _execute_file(conn, f)
+        _record(conn, f, cs)
+        print(f"applied {_rel(f)}" + (" (re-applied: changed)" if state == "changed" else ""))
+        _drain_notices(conn)
+    return counts
+
+
+def _print_pending(conn) -> None:
+    pending = pending_reviews(conn)
+    if not pending:
+        return
+    print(
+        f"\n{len(pending)} corporate action(s) recorded by the collector are PENDING REVIEW "
+        "and change no figure until approved:"
+    )
+    for sym, day, ratio in pending:
+        print(f"  {sym} {day} ratio {ratio}")
+    print("Review them with: python app/check_splits.py")
+
+
 def run(conn, *, dry_run: bool = False) -> int:
     """Apply everything on an open connection. Returns the exit status."""
     # Autocommit because the files carry their own BEGIN/COMMIT; wrapping them
@@ -141,68 +223,19 @@ def run(conn, *, dry_run: bool = False) -> int:
         cur.execute("SELECT pg_advisory_lock(%s, %s)", LOCK_KEY)
     try:
         if dry_run:
-            for f in base_files():
-                print(f"would apply {_rel(f)} (always applied)")
-            try:
-                applied = applied_migrations(conn)
-            except psycopg2.Error:
-                applied = {}
-            for f, state, _cs in plan(migration_files(), applied):
-                print(f"{'would apply' if state != 'applied' else 'up to date '} {_rel(f)} [{state}]")
-            return 0
-
+            return _dry_run(conn)
         for f in base_files():
-            with conn.cursor() as cur:
-                cur.execute(f.read_text(encoding="utf-8"))
+            _execute_file(conn, f)
             print(f"applied {_rel(f)}")
             _drain_notices(conn)
-
-        applied = applied_migrations(conn)
-        counts = {"new": 0, "changed": 0, "applied": 0}
-        for f, state, cs in plan(migration_files(), applied):
-            counts[state] += 1
-            if state == "applied":
-                print(f"up to date {_rel(f)} (applied {applied[f.name][1]:%Y-%m-%d %H:%M})")
-                continue
-            if state == "changed":
-                old_cs, at = applied[f.name]
-                print(
-                    f"\nWARNING: {_rel(f)} HAS CHANGED since it was applied on {at:%Y-%m-%d %H:%M}.\n"
-                    f"  recorded sha256 {old_cs}\n"
-                    f"  current  sha256 {cs}\n"
-                    "  A shipped migration should never change. It is applied again now (the\n"
-                    "  files are idempotent) - review what changed and why.\n",
-                    file=sys.stderr,
-                )
-            with conn.cursor() as cur:
-                cur.execute(f.read_text(encoding="utf-8"))
-                cur.execute(
-                    """
-                    INSERT INTO schema_migrations (filename, checksum, applied_at)
-                    VALUES (%s, %s, now())
-                    ON CONFLICT (filename) DO UPDATE
-                      SET checksum = EXCLUDED.checksum, applied_at = EXCLUDED.applied_at
-                    """,
-                    (f.name, cs),
-                )
-            print(f"applied {_rel(f)}" + (" (re-applied: changed)" if state == "changed" else ""))
-            _drain_notices(conn)
-
+        counts = _apply_migrations(conn)
         print(
             f"Schema refreshed; migrations: {counts['new']} applied, "
             f"{counts['applied']} already up to date"
             + (f", {counts['changed']} CHANGED (see above)" if counts["changed"] else "")
             + ". Safe to run again."
         )
-        pending = pending_reviews(conn)
-        if pending:
-            print(
-                f"\n{len(pending)} corporate action(s) recorded by the collector are PENDING REVIEW "
-                "and change no figure until approved:"
-            )
-            for sym, day, ratio in pending:
-                print(f"  {sym} {day} ratio {ratio}")
-            print("Review them with: python app/check_splits.py")
+        _print_pending(conn)
         return 0
     finally:
         with conn.cursor() as cur:

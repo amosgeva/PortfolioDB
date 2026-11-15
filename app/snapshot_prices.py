@@ -448,16 +448,16 @@ def _fail_run(conn, cfg, run_id: int | None, error: str) -> None:
         conn.rollback()
         _finish_run(conn, run_id, "failed", 0, 0, 0, error)
         return
-    except Exception as e:
-        log.error("could not mark run %s failed on its own connection: %s", run_id, e)
+    except Exception:
+        log.exception("could not mark run %s failed on its own connection", run_id)
     try:
         fresh = connect(cfg)
         try:
             _finish_run(fresh, run_id, "failed", 0, 0, 0, error)
         finally:
             fresh.close()
-    except Exception as e:
-        log.error("could not mark run %s failed at all (the next run reaps it): %s", run_id, e)
+    except Exception:
+        log.exception("could not mark run %s failed at all (the next run reaps it)", run_id)
 
 
 def held_or_watched_symbols(conn) -> list[str]:

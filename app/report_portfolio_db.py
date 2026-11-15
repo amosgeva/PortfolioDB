@@ -27,7 +27,6 @@ import pandas as pd
 import ledger_inputs
 import portfolio_kpis as kpis
 from db import connect, fetch_all, load_config
-from ledger_core import to_decimal as _dec  # the one Decimal helper (audit R-4)
 from portfolio import compute_fifo_merged, compute_avg_cost_merged
 from reporting_utils import local_tz, money as fmt_money, utf8_stdout
 

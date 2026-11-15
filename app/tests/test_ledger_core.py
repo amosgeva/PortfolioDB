@@ -156,7 +156,8 @@ class TestOneLotOneHelper:
     def test_one_decimal_helper(self):
         import positions
         import report_portfolio_db
-        assert portfolio.to_decimal is positions.to_decimal is report_portfolio_db._dec is ledger_core.to_decimal
+        assert portfolio.to_decimal is positions.to_decimal is ledger_core.to_decimal
+        assert not hasattr(report_portfolio_db, "_dec"), "its unused private copy is gone"
         assert ledger_core.to_decimal(0.1) == Decimal("0.1")
 
 
