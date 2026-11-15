@@ -43,7 +43,8 @@ import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 
-PASSWORD_ENV = "PORTFOLIODB_DASHBOARD_PASSWORD"
+# The variable's name, not a credential (same marker as mcp/auth.py's env names).
+PASSWORD_ENV = "PORTFOLIODB_DASHBOARD_PASSWORD"  # nosec B105  # nosemgrep
 
 FREE_ATTEMPTS = 5          # per client, before the first lockout
 GLOBAL_FREE_ATTEMPTS = 25  # across all clients, before everyone waits
