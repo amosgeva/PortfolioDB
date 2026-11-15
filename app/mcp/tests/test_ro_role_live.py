@@ -85,7 +85,9 @@ def test_rerunning_the_script_narrows_an_existing_install(monkeypatch):
                 "ALTER DEFAULT PRIVILEGES FOR ROLE portfoliouser IN SCHEMA public "
                 "GRANT SELECT ON TABLES TO portfoliodb_ro"
             )
-        monkeypatch.setattr(sys, "argv", ["create_ro_role.py", "--password", ro_pw])
+        # `--password=` form: a password from an older install can start with
+        # '-', which argparse would otherwise read as an option.
+        monkeypatch.setattr(sys, "argv", ["create_ro_role.py", f"--password={ro_pw}"])
         assert create_ro_role.main() == 0
         with admin.cursor() as cur:
             cur.execute(
