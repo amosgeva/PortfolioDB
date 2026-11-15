@@ -129,6 +129,44 @@ class TestCollectorQuotes:
         assert calls == ["X"]
 
 
+class TestInFlightDeadline:
+    """QA of PR #125, F-17: a call already in progress ran past the budget, was
+    stored, and the run ended 'ok'. The wait is now bounded by the budget."""
+
+    def test_a_slow_quote_is_abandoned_at_the_deadline(self, monkeypatch):
+        import threading
+        release = threading.Event()
+
+        def slow(symbol):
+            release.wait(5)
+            return "late"
+
+        monkeypatch.setattr(sp, "get_quote", slow)
+        started = time.monotonic()
+        try:
+            with pytest.raises(sp.DeadlineExceeded, match="in flight"):
+                sp.fetch_within_deadline("X", time.monotonic() + 0.1)
+            assert time.monotonic() - started < 1.0
+        finally:
+            release.set()
+
+    def test_a_quote_inside_the_budget_is_returned(self, monkeypatch):
+        monkeypatch.setattr(sp, "get_quote", lambda symbol: "quote")
+        assert sp.fetch_within_deadline("X", time.monotonic() + 5) == "quote"
+
+    def test_vendor_errors_still_reach_the_caller(self, monkeypatch):
+        def broken(symbol):
+            raise sp.BadQuote("vendor price for X is not a price")
+        monkeypatch.setattr(sp, "get_quote", broken)
+        with pytest.raises(sp.BadQuote):
+            sp.fetch_within_deadline("X", time.monotonic() + 5)
+
+    def test_a_spent_budget_starts_nothing(self, monkeypatch):
+        monkeypatch.setattr(sp, "get_quote", lambda symbol: pytest.fail("must not be called"))
+        with pytest.raises(sp.DeadlineExceeded, match="not reached"):
+            sp.fetch_within_deadline("X", time.monotonic() - 1)
+
+
 class TestEnrichmentNeverClobbers:
     def _ticker(self, monkeypatch, info=None, exc=None):
         class T:

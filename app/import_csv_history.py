@@ -32,8 +32,10 @@ De-dupe:
 
 Validation (every row, before anything is written):
 - Symbol: symbol_paths.normalize_symbol — the same rule the database enforces.
-- USD only: a symbol with a non-US exchange suffix (.TA, .L, .HK …) is refused
-  unless --allow-non-usd, because the ledger has no FX conversion.
+- USD only: a symbol with a non-US exchange suffix (.TA, .L, .HK …), or one
+  registered in instruments with another currency, is refused unless
+  --allow-non-usd, because the ledger has no FX conversion. (The registered
+  currency is checked inside the file's transaction, at write time.)
 - Numbers: finite, right sign, at most 8 decimals (ledger_numbers).
 - Date/Time: an unrecognised timezone token is an error, not New York.
 - Messages cite the physical CSV line (a quoted field spanning lines reports
@@ -68,6 +70,7 @@ from zoneinfo import ZoneInfo
 from dateutil import parser as dtparser
 
 import ledger_numbers
+import ledger_writes
 import oversell
 import symbol_paths
 from db import connect, load_config, run
@@ -494,6 +497,7 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
     """
     counts = _empty_counts()
     base = os.path.basename(fp)
+    scope_checked: dict[str, str | None] = {}
 
     def _row(i: int, work, where: str) -> bool:
         if not args.continue_on_error:
@@ -514,6 +518,17 @@ def _write_file(conn, lots: list[dict], snaps: list[tuple[str, float]], ts_utc: 
             counts["attempted"] += 1
 
             def _insert(lot=lot):
+                # The same USD-scope rule as add_lot/sell_lot, against the
+                # database: an instrument registered in another currency is
+                # refused like a non-US suffix (QA of PR #125: the importer
+                # checked the suffix only). Raising here rolls the file back in
+                # atomic mode and rejects the row under --continue-on-error.
+                if not getattr(args, "allow_non_usd", False):
+                    sym = lot["symbol"]
+                    if sym not in scope_checked:
+                        scope_checked[sym] = ledger_writes.currency_scope_problem(conn, sym)
+                    if scope_checked[sym]:
+                        raise ValueError(ledger_writes.usd_scope_refusal(scope_checked[sym]))
                 if lot["side"] == "SELL":
                     # Against the ledger as it stands inside this transaction,
                     # so earlier rows of the same file count. Warns, never

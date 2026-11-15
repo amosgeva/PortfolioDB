@@ -504,6 +504,44 @@ def test_the_deadline_ends_the_run_and_reports_what_was_skipped(conn, monkeypatc
     conn.commit()
 
 
+def test_a_quote_still_in_flight_at_the_deadline_is_not_stored(conn, monkeypatch):
+    """QA of PR #125 (qa_deadline_probe): one quote taking 0.2 s against a
+    0.05 s budget was stored and the run finished 'ok'. Now the late quote is
+    abandoned, nothing is stored for it, and the run does not claim success."""
+    import threading
+
+    with conn.cursor() as cur:
+        _instr(cur, SYMS[0], SYMS[1])
+        _lot(cur, SYMS[0], "BUY", date(2026, 1, 5), 1)
+        _lot(cur, SYMS[1], "BUY", date(2026, 1, 5), 1)
+    conn.commit()
+    real = sp.held_or_watched_symbols
+    monkeypatch.setattr(sp, "held_or_watched_symbols", lambda c: [s for s in real(c) if s.startswith(PREFIX)])
+    release = threading.Event()
+
+    def quote(symbol):
+        if symbol == SYMS[1]:
+            release.wait(5)                     # slower than the whole budget
+        return sp.Quote(last_price=10.0, bid=None, ask=None, market_time=None, market_state="REGULAR")
+
+    monkeypatch.setattr(sp, "get_quote", quote)
+    monkeypatch.setattr(sp, "RUN_DEADLINE_S", 0.5)
+    started = time.monotonic()
+    try:
+        sp.main(["--ignore-window"])
+    finally:
+        release.set()
+    assert time.monotonic() - started < 3.0
+    run_id, status, total, ok, failed, error = _last_run(conn)
+    assert (status, total, ok, failed) == ("partial", 2, 1, 1)
+    assert SYMS[1] in error and "in flight" in error
+    with conn.cursor() as cur:
+        cur.execute("SELECT symbol FROM price_snapshots WHERE symbol LIKE %s", (f"{PREFIX}%",))
+        assert [r[0] for r in cur.fetchall()] == [SYMS[0]]
+        cur.execute("DELETE FROM snapshot_runs WHERE id = %s", (run_id,))
+    conn.commit()
+
+
 # ── writers through main() (N-2/D-1, E-6) ─────────────────────────
 
 
@@ -544,6 +582,27 @@ def test_the_importer_end_to_end(conn, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "trades.csv:2 |" in out and "trades.csv:3 |" in out and "already recorded" in out
     assert _count(conn, A) == 2
+
+
+def test_the_importer_refuses_an_instrument_registered_in_another_currency(conn, tmp_path, monkeypatch, capsys):
+    """QA of PR #125, F-11: QAEUR registered with currency 'EUR' imported with
+    exit 0. Now the file is refused (atomic) unless --allow-non-usd."""
+    eur = SYMS[1]
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO instruments(symbol, currency) VALUES (%s, 'EUR')", (eur,))
+    conn.commit()
+    (tmp_path / "eur.csv").write_text(
+        "Symbol,Trade Date,Purchase Price,Quantity\n"
+        f"{SYMS[0]},20261110,50,2\n"
+        f"{eur},20261110,100,1\n", encoding="utf-8")
+    argv = ["x", "--dir", str(tmp_path), "--default-account", "A"]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert import_csv_history.main() == import_csv_history.EXIT_FAILED
+    assert _count(conn, eur) == 0 and _count(conn, SYMS[0]) == 0, "the whole file rolled back"
+    assert "registered as trading in EUR" in capsys.readouterr().out
+    monkeypatch.setattr(sys, "argv", argv + ["--allow-non-usd"])
+    assert import_csv_history.main() == import_csv_history.EXIT_OK
+    assert _count(conn, eur) == 1 and _count(conn, SYMS[0]) == 1
 
 
 def test_enrichment_never_replaces_a_real_value_with_a_placeholder(conn, monkeypatch):

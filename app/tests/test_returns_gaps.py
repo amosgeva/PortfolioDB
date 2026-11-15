@@ -56,6 +56,52 @@ class TestUnpricedNewSymbol:
         assert records[1]["mv"] == pytest.approx(100.0 + 2 * 100.0)
 
 
+class TestFillPriceIsOrderIndependent:
+    """QA of PR #125: the fallback took the last lot's price, so the same ledger
+    gave 220 on one surface (rows BUY-before-SELL) and 200 on another (rows as
+    stored), and MAX TWR 8.18% against 12.00%. The observation is now the
+    quantity-weighted price of the latest trade date's fills."""
+
+    # QAOLD quoted all along; QANEW unquoted until D3. On D2 a SELL of 1 at 120
+    # (stored first) and a BUY of 2 at 100, same account; plus a later D2 BUY
+    # at 90 in another account.
+    LOTS = [
+        lot("OLD", D1, i=1),
+        lot("NEW", D2, qty=1.0, price=120.0, side="SELL", i=2),
+        lot("NEW", D2, qty=2.0, price=100.0, i=3),
+        dict(lot("NEW", D2, qty=1.0, price=90.0, i=4), account="B"),
+    ]
+    PRICES = {D1: {"OLD": 100.0}, D2: {"OLD": 100.0}, D3: {"OLD": 100.0, "NEW": 110.0}}
+
+    def _curve(self, lots):
+        records = twr.build_daily_records(lots, self.PRICES, [])
+        return [r["mv"] for r in records], [g for _, g in twr.growth_curve(records)]
+
+    def test_every_order_and_every_reader_shape_gives_one_answer(self):
+        import itertools
+        expected = None
+        for perm in itertools.permutations(self.LOTS):
+            for strip in (False, True):     # the MCP loader selects no id/account
+                lots = [{k: v for k, v in l.items() if not strip or k not in ("id",)} for l in perm]
+                got = self._curve(lots)
+                expected = expected or got
+                assert got == expected, (perm, strip)
+
+    def test_the_day_is_valued_at_the_quantity_weighted_fill_price(self):
+        mv, _ = self._curve(self.LOTS)
+        # NEW held after D2: account A 2 − 1 = 1, account B 1 → 2 shares, at
+        # (120·1 + 100·2 + 90·1) / 4 = 102.5.
+        assert mv[1] == pytest.approx(100.0 + 2 * 102.5)
+
+    def test_only_the_latest_trade_date_in_a_bucket_counts(self):
+        """Trades on D2 and D3 with no D2 snapshot both land on D3's snapshot;
+        the D3 fill is the more recent observation."""
+        lots = [lot("OLD", D1, i=1), lot("NEW", D2, price=80.0, i=2), lot("NEW", D3, price=95.0, i=3)]
+        prices = {D1: {"OLD": 100.0}, D3: {"OLD": 100.0}, D4: {"OLD": 100.0, "NEW": 95.0}}
+        records = twr.build_daily_records(lots, prices, [])
+        assert records[1]["mv"] == pytest.approx(100.0 + 2 * 95.0)
+
+
 class TestZeroQuote:
     def test_a_zero_market_value_day_does_not_zero_the_curve(self):
         recs = [dict(day=D1, mv=100.0, flow=0.0), dict(day=D2, mv=0.0, flow=0.0), dict(day=D3, mv=100.0, flow=0.0)]

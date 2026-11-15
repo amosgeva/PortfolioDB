@@ -59,9 +59,11 @@ the reports can all feed it from their own DB connections.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 import holdings
+from ledger_core import to_decimal
 
 PERIODS = ("1D", "WTD", "MTD", "YTD", "1Y", "MAX")
 
@@ -144,9 +146,20 @@ def build_daily_records(
 
 def _with_trade_prices(lots, price_by_day, days, bucket) -> dict[date, dict[str, float]]:
     """``price_by_day`` with non-positive quotes removed and, for a symbol not
-    yet quoted, its trade price on the day the trade is bucketed to.
+    yet quoted, a price observed from its own fills.
 
-    A trade price is used only before the symbol's first real quote: once
+    **The observation for a snapshot day is the quantity-weighted average
+    price of the symbol's fills on the latest trade date bucketed to that
+    day** — buys and sells alike, every account. It is a function of the set
+    of lots, not of their order, so every reader gets the same figure however
+    its query happened to return the rows (QA of PR #125: the first version
+    took "the last lot", which was a SELL on one surface and a BUY on another
+    for the same ledger, and the dashboard and the MCP disagreed). The latest
+    trade date wins within a bucket because it is the most recent
+    observation; weighting by quantity makes a large fill count for more than
+    a token one, as a volume-weighted price does.
+
+    A fill price is used only before the symbol's first real quote: once
     quoted, the series is the vendor's. Lots must be in the same (restated)
     units as the prices, which ``ledger_inputs`` guarantees.
     """
@@ -158,9 +171,13 @@ def _with_trade_prices(lots, price_by_day, days, bucket) -> dict[date, dict[str,
     for d in days:
         for sym in out[d]:
             first_quote.setdefault(sym, d)
-    for lot in sorted(lots, key=lambda l: l["trade_date"]):
-        price = lot.get("price")
-        if price is None or float(price) <= 0:
+
+    # (symbol, snapshot day) -> (latest trade date, Σ qty × price, Σ qty)
+    fills: dict[tuple[str, date], tuple[date, Decimal, Decimal]] = {}
+    for lot in lots:
+        price = to_decimal(lot.get("price") or 0)
+        qty = to_decimal(lot.get("quantity") or 0)
+        if price <= 0 or qty <= 0:
             continue
         d = bucket(lot["trade_date"])
         if d is None:
@@ -169,7 +186,14 @@ def _with_trade_prices(lots, price_by_day, days, bucket) -> dict[date, dict[str,
         first = first_quote.get(sym)
         if first is not None and first <= d:
             continue
-        out[d][sym] = float(price)
+        key = (sym, d)
+        seen = fills.get(key)
+        if seen is None or lot["trade_date"] > seen[0]:
+            fills[key] = (lot["trade_date"], qty * price, qty)
+        elif lot["trade_date"] == seen[0]:
+            fills[key] = (seen[0], seen[1] + qty * price, seen[2] + qty)
+    for (sym, d), (_day, notional, qty) in fills.items():
+        out[d][sym] = float(notional / qty)
     return out
 
 

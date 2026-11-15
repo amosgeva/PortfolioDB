@@ -162,8 +162,12 @@ arrives after a position was sold is credited against the last capital that
 earned it.
 
 Missing and broken prices: a symbol bought before its first quote is valued
-at its trade price until the quote arrives (the purchase is a real price
-observation; valuing it at nothing read as a loss and then a gain). A price
+at its own fill price until the quote arrives (a fill is a real price
+observation; valuing it at nothing read as a loss and then a gain). The fill
+price for a snapshot day is the quantity-weighted average price of the
+symbol's fills — buys and sells, every account — on the latest trade date
+bucketed to that day. It depends only on which lots exist, not on the order a
+query returns them, so every surface values the day alike. A price
 that is not positive is no price — the collector, the importer and the
 database refuse one — and the growth factor is never multiplied by a
 non-positive number: such a day carries through unchanged and its flows count

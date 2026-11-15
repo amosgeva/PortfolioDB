@@ -138,8 +138,11 @@ needs a schema step says so under **Upgrading**.
   `--no-vendor-check` does what it says.
 - **Dividend backfill counts the position at the close before the ex-date**, not at the
   end of it: shares bought on the ex-date are no longer counted, shares sold on it are.
-- **TWR with a newly bought, not yet quoted symbol** values it at its trade price until
-  the first quote, instead of reading unchanged prices as a loss and then a gain.
+- **TWR with a newly bought, not yet quoted symbol** values it at its own fill price
+  until the first quote, instead of reading unchanged prices as a loss and then a gain.
+  The fill price for a day is the quantity-weighted average of that symbol's fills on
+  the latest trade date before the snapshot, so it does not depend on the order a
+  reader's query returns the lots in: the dashboard and the MCP give the same figure.
 - **A zero price can no longer zero the return curve.** The collector refuses a zero,
   negative or NaN price, stores Yahoo's out-of-hours `0.0` bid/ask as NULL, the importer
   skips a zero "Current Price", the database refuses `last_price <= 0`, and the TWR
@@ -150,7 +153,8 @@ needs a schema step says so under **Upgrading**.
   record) no longer aborts the run or leaves it marked "running"; a run holds an
   advisory lock, so a manual run and the scheduled one cannot overlap, and only dead runs
   are reaped; a whole-run deadline (`PORTFOLIODB_COLLECTOR_DEADLINE_S`, default 240 s)
-  ends a run that has stopped being useful.
+  bounds the vendor calls themselves — a quote still in flight when it passes is
+  abandoned and not stored, and the run is recorded as partial, not ok.
 - `enrich_instruments.py` no longer overwrites good sector/country data with
   "Other"/"Unknown" when yfinance fails or is throttling.
 - `corporate_actions.fetch_actions` no longer rolls back the caller's transaction when
@@ -179,7 +183,8 @@ needs a schema step says so under **Upgrading**.
   two identical rows (usually two fills at one price, which the dedupe index would merge)
   unless `--combine-identical-fills` records them as one lot.
 - **USD-only scope enforced at write time:** non-US listings (`.TA`, `.L`, `.HK` …) and
-  instruments registered in another currency are refused by `add_lot.py`, `sell_lot.py`
+  instruments registered in another currency (checked in the database, inside the
+  import's transaction) are refused by `add_lot.py`, `sell_lot.py`
   and the importer unless `--allow-non-usd`; income in another currency is refused.
 - `apply_schema.py` keeps a `schema_migrations` table (filename, checksum, applied_at),
   applies each migration once, and reports a migration whose text changed after it was

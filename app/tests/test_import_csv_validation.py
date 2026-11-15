@@ -57,6 +57,9 @@ def db(monkeypatch):
 
     monkeypatch.setattr(imp, "run", fake_run)
     monkeypatch.setattr(imp.oversell, "oversell_warning", lambda *a, **k: None)
+    # The registered-currency check reads instruments through a real cursor;
+    # test_ledger_sql.py covers it against PostgreSQL.
+    monkeypatch.setattr(imp.ledger_writes, "currency_scope_problem", lambda conn, sym: None)
     return log
 
 
@@ -227,6 +230,41 @@ def test_a_non_us_listing_is_rejected(tmp_path, db, capsys):
     counts = imp._import_file(FakeConn(), _csv(tmp_path, body), _args(), [])
     assert counts["rejected"] == 1 and db == []
     assert "non-US listing" in capsys.readouterr().out
+
+
+class TestRegisteredCurrency:
+    """QA of PR #125: an instrument registered with currency='EUR' imported
+    without a word; only the suffix was checked."""
+
+    BODY = ("AAA,20260213,BUY,100.00,10,1.00,,2026/05/20,16:00 EDT,110.00\n"
+            "EURO,20260213,BUY,100.00,1,0,,2026/05/20,16:00 EDT,101\n")
+
+    @pytest.fixture
+    def eur(self, monkeypatch):
+        calls = []
+
+        def scope(conn, sym):
+            calls.append(sym)
+            return "EURO is registered as trading in EUR" if sym == "EURO" else None
+
+        monkeypatch.setattr(imp.ledger_writes, "currency_scope_problem", scope)
+        return calls
+
+    def test_atomic_mode_rolls_the_file_back(self, tmp_path, db, eur, capsys):
+        conn = FakeConn()
+        counts = imp._import_file(conn, _csv(tmp_path, self.BODY), _args(), [])
+        assert counts["inserted"] == 0 and counts["rejected"] == 1
+        assert (conn.commits, conn.rollbacks) == (0, 1)
+        assert "registered as trading in EUR" in capsys.readouterr().out
+
+    def test_continue_mode_rejects_just_that_row(self, tmp_path, db, eur):
+        counts = imp._import_file(FakeConn(), _csv(tmp_path, self.BODY), _args(continue_on_error=True), [])
+        assert counts["inserted"] == 1 and counts["rejected"] == 1
+        assert [p[0] for p in _lots(db)] == ["AAA"]
+
+    def test_the_override_skips_the_check(self, tmp_path, db, eur):
+        counts = imp._import_file(FakeConn(), _csv(tmp_path, self.BODY), _args(allow_non_usd=True), [])
+        assert counts["inserted"] == 2 and eur == []
 
 
 def test_allow_non_usd_imports_it(tmp_path, db):

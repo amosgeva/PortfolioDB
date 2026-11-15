@@ -25,7 +25,9 @@ Notes:
   only a run holding the lock reaps 'running' rows — which, since every live
   run holds it, can only be dead ones (audit E-5). Each run also has a
   deadline (PORTFOLIODB_COLLECTOR_DEADLINE_S, default 240 s, inside the
-  five-minute tick); symbols it does not reach are reported, not hung on.
+  five-minute tick) that bounds the vendor calls themselves: a quote still in
+  flight when it passes is abandoned and not stored, and symbols not reached
+  are reported; either makes the run 'partial' (or 'failed').
 - Each symbol is written under its own savepoint and committed on its own, so
   a database error on one symbol — its price or its split record — cannot
   abort the run or leave it marked 'running' (audit E-1, Q-7).
@@ -45,6 +47,7 @@ import argparse
 import logging
 import math
 import os
+import threading
 import time
 import traceback
 from dataclasses import dataclass
@@ -91,6 +94,10 @@ class StaleQuote(RuntimeError):
 
 class BadQuote(RuntimeError):
     """The vendor returned a price that cannot be one: zero, negative, NaN."""
+
+
+class DeadlineExceeded(RuntimeError):
+    """The run's budget ran out before this symbol's quote came back."""
 
 
 def _positive(value) -> float | None:
@@ -254,6 +261,40 @@ def get_quote_with_retry(symbol: str, attempts: int = 3, *, deadline: float | No
                 raise
             log.info(f"{symbol}: quote attempt {attempt} failed; retrying in {wait}s")
             time.sleep(wait)
+
+
+def fetch_within_deadline(symbol: str, deadline: float) -> Quote:
+    """``get_quote_with_retry`` bounded by the run's remaining budget.
+
+    The vendor call runs on a daemon thread and is waited for only until
+    ``deadline`` (a ``time.monotonic()`` instant). If it is still in flight
+    then, DeadlineExceeded is raised and its result, whenever it arrives, is
+    discarded: nothing late is stored. The thread is a daemon so a hung call
+    cannot keep the process alive after the run has ended. (QA of PR #125: the
+    budget used to be checked only between symbols, so one slow call ran past
+    it, was stored, and the run still finished 'ok'.)
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise DeadlineExceeded(f"not reached: the run's {RUN_DEADLINE_S:g}s deadline passed")
+    box: dict[str, object] = {}
+
+    def work() -> None:
+        try:
+            box["quote"] = get_quote_with_retry(symbol, deadline=deadline)
+        except BaseException as e:  # handed to the caller below
+            box["error"] = e
+
+    worker = threading.Thread(target=work, name=f"quote-{symbol}", daemon=True)
+    worker.start()
+    worker.join(remaining)
+    if worker.is_alive():
+        raise DeadlineExceeded(
+            f"quote still in flight when the run's {RUN_DEADLINE_S:g}s deadline passed; not stored"
+        )
+    if "error" in box:
+        raise box["error"]  # type: ignore[misc]
+    return box["quote"]  # type: ignore[return-value]
 
 
 # ────────────────────────── split recording ──────────────────────────
@@ -591,11 +632,8 @@ def _collect(conn, cfg, args, ts: datetime):
         conn.commit()  # end the read transaction before the network calls
 
         for sym in symbols:
-            if time.monotonic() >= deadline:
-                failed.append((sym, f"not reached: the run's {RUN_DEADLINE_S:.0f}s deadline passed"))
-                continue
             try:
-                quote = get_quote_with_retry(sym, deadline=deadline)
+                quote = fetch_within_deadline(sym, deadline)
                 if args.benchmarks and benchmark_market_closed(quote.market_state):
                     log.info(
                         "%s: market %s — nothing new to record",
