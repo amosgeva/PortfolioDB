@@ -17,6 +17,7 @@ figures.
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -282,7 +283,7 @@ class TestPricedAndUnpricedParity:
         assert got == pytest.approx(EXPECTED, abs=0.01)
         assert t["unpriced_symbols"] == ["BBB"]
         bbb = exec_totals.positions.set_index("symbol").loc["BBB"]
-        assert bbb["unrealized_pct"] != bbb["unrealized_pct"], "unknown, not +0.00%"
+        assert math.isnan(bbb["unrealized_pct"]), "unknown, not +0.00%"
 
     def test_the_rendered_report_names_the_unpriced_position(self, exec_totals):
         import exec_report_render as render
