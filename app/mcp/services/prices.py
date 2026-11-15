@@ -8,23 +8,41 @@ window functions to stay aligned with what the user already sees.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
+from psycopg2 import sql
+
 from app.mcp.deps import get_conn
+from app.mcp.deps import consistent_read
 from app.mcp.services import common
-from app.mcp.services.cutoff import REPORTING_TZ
+from app.mcp.services.cutoff import LOCAL_TZ, tz_name
 
 # Import deps first (above): it puts app/ on sys.path so these top-level modules
 # resolve however the tests are invoked.
 import corporate_actions
+import ledger_inputs
 import holdings as holdings_module
+from db import fetch_all
 
 # Windows accepted by get_price_change / get_top_movers.
 VALID_WINDOWS = ("1d", "1w", "1m", "3m", "6m", "ytd", "1y", "all")
 
+# The parity contract's lot query in processing order, as one composition of
+# its two constant fragments.
+_VALUE_LOTS_QUERY = sql.Composed([ledger_inputs.LOTS_SQL, ledger_inputs.LOTS_ORDER])
+
 # How historical series value the portfolio.
 HOLDINGS_BASES = ("historical", "current_constant")
+
+# Caps on what a caller can make one request return (audit M-5). History is
+# refused past these with a message saying how to narrow the request, rather
+# than truncated: a silently shortened series reads as the whole one.
+MAX_MOVERS = 100
+MAX_SYMBOLS = 500
+MAX_HISTORY_ROWS = 10_000
+MAX_VALUE_SERIES_ROWS = 250_000
+MAX_VALUE_POINTS = 10_000
 
 
 # ────────────────────────── latest snapshot ──────────────────────────
@@ -44,7 +62,7 @@ def latest_price(
                 """
                 SELECT symbol, ts, last_price, bid, ask, source
                 FROM price_snapshots
-                WHERE symbol = %s
+                WHERE last_price > 0 AND symbol = %s
                   AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY ts DESC
                 LIMIT 1
@@ -68,7 +86,7 @@ def latest_prices(
     keeps the previous behaviour of reading the genuinely-latest row, so
     callers that have not been given a cutoff are unaffected.
     """
-    syms = [s.upper() for s in symbols] if symbols else None
+    syms = common.check_symbols(symbols, MAX_SYMBOLS) if symbols else None
     with get_conn() as conn:
         with conn.cursor() as cur:
             # DISTINCT ON rather than a join against MAX(ts): one scan, and the
@@ -78,7 +96,7 @@ def latest_prices(
                 SELECT DISTINCT ON (symbol)
                        symbol, ts, last_price, bid, ask, source
                 FROM price_snapshots
-                WHERE (%s::text[] IS NULL OR symbol = ANY(%s))
+                WHERE last_price > 0 AND (%s::text[] IS NULL OR symbol = ANY(%s))
                   AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY symbol, ts DESC
                 """,
@@ -129,7 +147,7 @@ def second_latest_price_map(
                   SELECT symbol, ts, last_price,
                          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
                   FROM price_snapshots
-                  WHERE (%s::timestamptz IS NULL OR ts <= %s)
+                  WHERE last_price > 0 AND (%s::timestamptz IS NULL OR ts <= %s)
                 )
                 SELECT symbol, ts, last_price
                 FROM ranked
@@ -166,13 +184,14 @@ def prev_day_eod_price_map(
                   SELECT symbol, price_snapshots.ts, last_price,
                          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY price_snapshots.ts DESC) AS rn
                   FROM price_snapshots, ref
-                  WHERE price_snapshots.ts < ref.day_start
+                  WHERE price_snapshots.last_price > 0
+                    AND price_snapshots.ts < ref.day_start
                 )
                 SELECT symbol, ts, last_price
                 FROM prev
                 WHERE rn = 1
                 """,
-                (as_of_ts, REPORTING_TZ, REPORTING_TZ),
+                (as_of_ts, tz_name(), tz_name()),
             )
             rows = cur.fetchall()
     return _adjusted_price_map(rows, actions)
@@ -212,7 +231,8 @@ def price_history(
     if resample not in ("raw", "daily"):
         raise ValueError(f"Unknown resample '{resample}'. Use 'raw' or 'daily'.")
     sym = symbol.upper()
-    until = until or date.today()
+    until = until or datetime.now(LOCAL_TZ).date()
+    lo, hi = _local_day_bounds(since, until)
     with get_conn() as conn:
         actions = [
             a for a in corporate_actions.fetch_actions(conn) if a.symbol.upper() == sym
@@ -225,26 +245,33 @@ def price_history(
                         date_trunc('day', ts AT TIME ZONE %s) AS day_local,
                         ts, last_price, bid, ask
                     FROM price_snapshots
-                    WHERE symbol = %s
-                      AND ts >= %s AND ts <= %s
+                    WHERE last_price > 0 AND symbol = %s
+                      AND ts >= %s AND ts < %s
                     ORDER BY date_trunc('day', ts AT TIME ZONE %s),
                              ts DESC
+                    LIMIT %s
                     """,
-                    (REPORTING_TZ, REPORTING_TZ, sym, since, until + timedelta(days=1), REPORTING_TZ),
+                    (tz_name(), tz_name(), sym, lo, hi, tz_name(), MAX_HISTORY_ROWS + 1),
                 )
             else:  # resample == "raw"
                 cur.execute(
                     """
                     SELECT ts, last_price, bid, ask
                     FROM price_snapshots
-                    WHERE symbol = %s
-                      AND ts >= %s AND ts <= %s
+                    WHERE last_price > 0 AND symbol = %s
+                      AND ts >= %s AND ts < %s
                     ORDER BY ts
+                    LIMIT %s
                     """,
-                    (sym, since, until + timedelta(days=1)),
+                    (sym, lo, hi, MAX_HISTORY_ROWS + 1),
                 )
             cols = [d[0] for d in cur.description]
             rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    if len(rows) > MAX_HISTORY_ROWS:
+        raise ValueError(
+            f"{sym} has more than {MAX_HISTORY_ROWS} snapshots between {since} and "
+            f"{until}; narrow the window or use resample='daily'."
+        )
 
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -290,7 +317,7 @@ def price_change(symbol: str, window: str = "1d") -> dict[str, Any] | None:
             # Latest snapshot
             cur.execute(
                 "SELECT ts, last_price FROM price_snapshots "
-                "WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                "WHERE last_price > 0 AND symbol = %s ORDER BY ts DESC LIMIT 1",
                 (sym,),
             )
             latest = cur.fetchone()
@@ -301,13 +328,13 @@ def price_change(symbol: str, window: str = "1d") -> dict[str, Any] | None:
                 # 'all' — use the very first snapshot
                 cur.execute(
                     "SELECT ts, last_price FROM price_snapshots "
-                    "WHERE symbol = %s ORDER BY ts ASC LIMIT 1",
+                    "WHERE last_price > 0 AND symbol = %s ORDER BY ts ASC LIMIT 1",
                     (sym,),
                 )
             else:
                 cur.execute(
                     "SELECT ts, last_price FROM price_snapshots "
-                    "WHERE symbol = %s AND ts >= %s ORDER BY ts ASC LIMIT 1",
+                    "WHERE last_price > 0 AND symbol = %s AND ts >= %s ORDER BY ts ASC LIMIT 1",
                     (sym, since),
                 )
             base = cur.fetchone()
@@ -353,6 +380,7 @@ def top_movers(
         raise ValueError("window must be 'snapshot' or '1d'")
     if direction not in ("both", "up", "down"):
         raise ValueError("direction must be 'both', 'up', or 'down'")
+    common.check_limit("limit", limit, MAX_MOVERS)
 
     # Import lazily — positions imports prices, this would cycle.
     from app.mcp.services import positions as positions_service
@@ -381,18 +409,26 @@ def top_movers(
             "delta_pct": delta_pct,
         })
 
-    movers.sort(key=lambda r: r["delta_usd"], reverse=True)
+    # A gainer went up and a loser went down. Slicing both ends of one sorted
+    # list put the same symbols in both lists whenever fewer than 2×limit
+    # moved, and labelled a rise a loss (audit X-7; the dashboard fixed the
+    # same slicing in app.js). A flat symbol is in neither.
+    gainers = sorted((m for m in movers if m["delta_usd"] > 0),
+                     key=lambda r: r["delta_usd"], reverse=True)
+    losers = sorted((m for m in movers if m["delta_usd"] < 0),
+                    key=lambda r: r["delta_usd"])
     out: dict[str, list[dict[str, Any]]] = {"window": window, "gainers": [], "losers": []}
     if direction in ("both", "up"):
-        out["gainers"] = movers[:limit]
+        out["gainers"] = gainers[:limit]
     if direction in ("both", "down"):
-        out["losers"] = list(reversed(movers[-limit:])) if movers else []
+        out["losers"] = losers[:limit]
     return out
 
 
 # ────────────────────────── portfolio value history ──────────────────────────
 
 
+@consistent_read
 def portfolio_value_history(
     since: date,
     until: date | None = None,
@@ -420,7 +456,8 @@ def portfolio_value_history(
         raise ValueError("freq must be 'snapshot' or 'daily'")
     if holdings_basis not in HOLDINGS_BASES:
         raise ValueError(f"holdings_basis must be one of {HOLDINGS_BASES}")
-    until = until or date.today()
+    until = until or datetime.now(LOCAL_TZ).date()
+    lo, hi = _local_day_bounds(since, until)
 
     with get_conn() as conn:
         actions = corporate_actions.fetch_actions(conn)
@@ -436,12 +473,18 @@ def portfolio_value_history(
                 """
                 SELECT ts, symbol, last_price
                 FROM price_snapshots
-                WHERE ts >= %s AND ts <= %s AND symbol = ANY(%s)
+                WHERE last_price > 0 AND ts >= %s AND ts < %s AND symbol = ANY(%s)
                 ORDER BY ts
+                LIMIT %s
                 """,
-                (since, until + timedelta(days=1), symbols),
+                (lo, hi, symbols, MAX_VALUE_SERIES_ROWS + 1),
             )
             rows = cur.fetchall()
+    if len(rows) > MAX_VALUE_SERIES_ROWS:
+        raise ValueError(
+            f"More than {MAX_VALUE_SERIES_ROWS} price observations between {since} and "
+            f"{until}; narrow the window."
+        )
 
     points = corporate_actions.adjust_price_points(
         ((ts, sym, float(price)) for ts, sym, price in rows), actions
@@ -470,13 +513,18 @@ def portfolio_value_history(
     if freq == "daily":
         # Keep the latest entry per reporting-timezone day.
         from zoneinfo import ZoneInfo
-        jer = ZoneInfo(REPORTING_TZ)
+        jer = ZoneInfo(tz_name())
         by_day: dict[date, dict[str, Any]] = {}
         for item in series:
             ts = datetime.fromisoformat(item["ts"])
             day = ts.astimezone(jer).date()
             by_day[day] = item  # later overwrites — series already sorted ascending
         series = [by_day[d] for d in sorted(by_day)]
+    if len(series) > MAX_VALUE_POINTS:
+        raise ValueError(
+            f"{len(series)} points between {since} and {until} exceeds {MAX_VALUE_POINTS}; "
+            "use freq='daily' or a narrower window."
+        )
     return series
 
 
@@ -488,24 +536,18 @@ def _value_lots(
 ) -> list[dict[str, Any]]:
     """Lot rows for holdings reconstruction, restated into post-split units.
 
-    Only the fields `holdings` needs — this is a valuation input, not a P&L
-    one, so price and fees are irrelevant here.
+    The parity contract's own query (ledger_inputs.LOTS_SQL in LOTS_ORDER), so
+    each row carries ``id`` and ``account``: the holdings walk matches per
+    (symbol, account) and truncates an oversell within its own account, as the
+    engines do, instead of netting one account's sale against another's.
+
+    Restated with exactly ``actions`` — the set the caller restates its prices
+    with. Re-reading the actions here (as ``ledger_inputs.load`` would) let a
+    split approved between the two reads put lots and prices in different
+    units (QA of PR #126).
     """
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT symbol, side, trade_date, quantity, price FROM lots ORDER BY trade_date, id"
-        )
-        rows = [
-            {
-                "symbol": r[0],
-                "side": r[1],
-                "trade_date": r[2],
-                "quantity": r[3],
-                "price": r[4],
-            }
-            for r in cur.fetchall()
-        ]
-    adjusted = corporate_actions.adjust_lot_rows(rows, actions)
+    rows = fetch_all(conn, _VALUE_LOTS_QUERY)
+    adjusted = ledger_inputs.prepare(rows, actions).lots
     for r in adjusted:
         r["quantity"] = float(r["quantity"])
     return adjusted
@@ -524,6 +566,21 @@ def _current_quantities() -> dict[str, float]:
 # Shared with analytics — see common.window_start. Kept under the module-local
 # name so callers and tests keep working.
 _window_start = common.window_start
+
+
+def _local_day_bounds(since: date, until: date) -> tuple[datetime, datetime]:
+    """[since 00:00, until+1 00:00) as instants in the reporting timezone.
+
+    The tools document since/until as inclusive reporting-timezone dates. A
+    bare date bound against a timestamptz is midnight in the *server's* zone
+    instead, which moves the window by the zone offset.
+    """
+    if since > until:
+        raise ValueError(f"since ({since}) is after until ({until})")
+    return (
+        datetime.combine(since, time.min, tzinfo=LOCAL_TZ),
+        datetime.combine(until + timedelta(days=1), time.min, tzinfo=LOCAL_TZ),
+    )
 
 
 def _price_record(r: dict[str, Any]) -> dict[str, Any]:

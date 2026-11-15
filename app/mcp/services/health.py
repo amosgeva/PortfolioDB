@@ -28,7 +28,7 @@ from psycopg2 import sql
 
 from app.mcp.services import common
 
-from app.mcp.deps import get_conn, ping_db_detail
+from app.mcp.deps import explain_db_error, get_conn, ping_db_detail
 
 log = logging.getLogger(__name__)
 
@@ -119,9 +119,10 @@ def fd_freshness() -> dict[str, Any]:
                     }
             except Exception as e:
                 # Table may not exist yet (FD enrichment not run). That's
-                # informational, not an error — report and move on.
+                # informational, not an error — report and move on, in words
+                # rather than the driver's text (audit M-7).
                 conn.rollback()
-                out[tbl] = {"error": str(e)}
+                out[tbl] = {"error": explain_db_error(e)}
     return out
 
 
@@ -141,7 +142,9 @@ def server_health() -> dict[str, Any]:
             "symbols_total": snap.get("symbols_total"),
             "symbols_ok": snap.get("symbols_ok"),
             "symbols_failed": snap.get("symbols_failed"),
-            "error": snap.get("error"),
+            # Written verbatim by the collector from yfinance's exceptions:
+            # useful to a human, and free text to a model (audit M-6).
+            "error": common.untrusted(snap.get("error")),
         }
 
     return {

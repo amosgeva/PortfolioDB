@@ -11,6 +11,8 @@ import pytest
 
 from app.mcp.auth import StaticBearerVerifier, build_verifier, load_token
 
+STRONG = "Zx81-generated-by-make-init-0123456789ab"
+
 
 def test_load_token_raises_when_missing(monkeypatch):
     monkeypatch.delenv("PORTFOLIODB_MCP_TOKEN", raising=False)
@@ -25,8 +27,8 @@ def test_load_token_raises_when_missing(monkeypatch):
 
 
 def test_load_token_reads_env(monkeypatch):
-    monkeypatch.setenv("PORTFOLIODB_MCP_TOKEN", "  hello-world  ")
-    assert load_token() == "hello-world"
+    monkeypatch.setenv("PORTFOLIODB_MCP_TOKEN", "  " + STRONG + "  ")
+    assert load_token() == STRONG
 
 
 def test_verifier_rejects_missing_token():

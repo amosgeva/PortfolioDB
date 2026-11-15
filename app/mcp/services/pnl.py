@@ -20,6 +20,7 @@ from ledger_core import lot_order_key
 from psycopg2 import sql
 
 from app.mcp.deps import get_conn
+from app.mcp.services import common
 from app.mcp.services import cutoff as cutoff_service
 from app.mcp.services import positions as positions_service
 from app.mcp.services.common import is_nan
@@ -48,8 +49,7 @@ def realized_pnl(
     """
     if group_by not in ("none", "symbol", "account", "month"):
         raise ValueError("group_by must be 'none', 'symbol', 'account', or 'month'")
-    if method not in ("fifo", "avg", "avg_cost"):
-        raise ValueError("method must be 'fifo' or 'avg'")
+    method = common.normalize_method(method)
 
     matches = _all_realized_matches(method=method, account=account)
     if since is not None:
@@ -115,17 +115,13 @@ def _all_realized_matches(
     account: str | None = None,
 ) -> list[dict[str, Any]]:
     """Replay the engine over every (symbol, account) and emit match lines."""
+    method = common.normalize_method(method)
     # Compose from psycopg2.sql fragments rather than concatenating a raw
     # string; the only user value (account) remains bound via %s.
-    query = sql.SQL(
-        "SELECT id, symbol, account, side, trade_date, quantity, price, fees "
-        "FROM lots WHERE 1=1"
-    )
+    query = ledger_inputs.LOTS_SQL
     params: list[Any] = []
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
-    query += sql.SQL(" ORDER BY symbol, COALESCE(account,''), trade_date, id")
+    query, params = common.add_account_filter(query, params, account)
+    query += ledger_inputs.LOTS_ORDER
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -288,14 +284,18 @@ def unrealized_pnl(
             "unrealized_pct": (upnl / cost * 100.0) if (upnl is not None and cost) else None,
         })
     total = positions_service.positions_summary(
-        method, account=account, as_of=as_of, cutoff=cutoff
+        method, account=account, as_of=as_of, cutoff=cutoff, include_income=False
     )
     return {
         "method": method,
         "rows": rows,
         "total_unrealized": total["unrealized_pnl"],
         "total_cost": total["cost_basis"],
+        "total_priced_cost": total["priced_cost_basis"],
+        "total_unpriced_cost": total["unpriced_cost_basis"],
+        "unpriced_symbols": total["unpriced_symbols"],
         "total_market_value": total["market_value"],
+        # Over the priced cost the unrealized P&L was earned on (methodology §12).
         "total_unrealized_pct": total["unrealized_pct"],
     }
 
@@ -339,6 +339,13 @@ def pnl_summary(
         "unrealized_pnl": s["unrealized_pnl"],
         "unrealized_pct": s["unrealized_pct"],
         "total_return_pct": s["total_return_pct"],
+        "total_return_with_income_pct": s["total_return_with_income_pct"],
+        "invested_capital": s["invested_capital"],
+        "total_return_partial": s["total_return_partial"],
+        "total_return_basis": s["total_return_basis"],
+        "priced_cost_basis": s["priced_cost_basis"],
+        "unpriced_cost_basis": s["unpriced_cost_basis"],
+        "unpriced_symbols": s["unpriced_symbols"],
         "active_symbols": s["active_symbols"],
     }
 
@@ -429,8 +436,7 @@ def trade_quality(
     """
     if group_by not in TRADE_GROUP_BY:
         raise ValueError(f"group_by must be one of {TRADE_GROUP_BY}")
-    if method not in ("fifo", "avg", "avg_cost"):
-        raise ValueError("method must be 'fifo' or 'avg'")
+    method = common.normalize_method(method)
 
     effective_until = until if until is not None else (
         cutoff.trade_date if cutoff else None
@@ -652,9 +658,7 @@ def _traded_notional(
     if until is not None:
         query += sql.SQL(" AND trade_date <= %s")
         params.append(until)
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     query += sql.SQL(" GROUP BY side")
 
     with get_conn() as conn:

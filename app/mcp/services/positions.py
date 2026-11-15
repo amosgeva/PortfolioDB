@@ -11,6 +11,7 @@ Streamlit dashboard.
 
 from __future__ import annotations
 
+import threading
 import time
 
 from datetime import date, datetime
@@ -23,8 +24,10 @@ from psycopg2 import sql
 from portfolio import compute_avg_cost_merged, compute_fifo_merged
 import corporate_actions
 import ledger_inputs
+import portfolio_kpis
 
-from app.mcp.deps import get_conn
+from app.mcp import deps
+from app.mcp.deps import get_conn, snapshot_memo
 from app.mcp.services import common
 from app.mcp.services import prices as prices_service
 from app.mcp.services.cutoff import Cutoff
@@ -38,26 +41,23 @@ def _fetch_lots(
     account: str | None = None,
     symbol: str | None = None,
     as_of: date | None = None,
+    actions: list | None = None,
 ) -> list[dict[str, Any]]:
-    """Pull lot rows in the column order portfolio.compute_*_merged expects."""
-    # Compose from psycopg2.sql fragments rather than concatenating a raw
-    # string; all user-supplied filters remain bound via %s.
-    query = sql.SQL(
-        "SELECT id, symbol, account, side, trade_date, quantity, price, fees "
-        "FROM lots "
-        "WHERE 1=1"
-    )
+    """Pull lot rows in the column order portfolio.compute_*_merged expects.
+
+    Composed on the parity contract's own query (ledger_inputs.LOTS_SQL /
+    LOTS_ORDER) with this reader's filters added; all values stay bound.
+    """
+    query = ledger_inputs.LOTS_SQL
     params: list[Any] = []
-    if account is not None:
-        query += sql.SQL(" AND account = %s")
-        params.append(account)
+    query, params = common.add_account_filter(query, params, account)
     if symbol is not None:
         query += sql.SQL(" AND symbol = %s")
         params.append(symbol.upper())
     if as_of is not None:
         query += sql.SQL(" AND trade_date <= %s")
         params.append(as_of)
-    query += sql.SQL(" ORDER BY symbol, COALESCE(account,''), trade_date, id")
+    query += ledger_inputs.LOTS_ORDER
 
     with conn.cursor() as cur:
         cur.execute(query, params)
@@ -72,18 +72,15 @@ def _fetch_lots(
     # reported twenty shares against a pre-split quote (re-audit F03, case A).
     # Quantity and price move inversely, so cost basis and realized P&L are
     # unchanged — only share count and per-share cost are corrected.
-    return ledger_inputs.prepare(
-        lot_rows, corporate_actions.fetch_actions(conn), as_of=as_of
-    ).lots
+    if actions is None:
+        actions = corporate_actions.fetch_actions(conn)
+    return ledger_inputs.prepare(lot_rows, actions, as_of=as_of).lots
 
 
 def _engine(method: str):
-    method = method.lower()
-    if method == "fifo":
+    if common.normalize_method(method) == "fifo":
         return compute_fifo_merged
-    if method in ("avg", "avg_cost"):
-        return compute_avg_cost_merged
-    raise ValueError(f"Unknown method '{method}'. Use 'fifo' or 'avg'.")
+    return compute_avg_cost_merged
 
 
 # ────────────────────────── public API ──────────────────────────
@@ -106,20 +103,58 @@ def _engine(method: str):
 # cutoff would otherwise be masked for the life of the process. A short TTL
 # bounds that to seconds, well inside the 5-minute snapshot cadence, while still
 # covering the burst of calls within one request.
+#
+# Why it is locked: tools run on worker threads, and the evict-then-insert below
+# is a compound mutation of a shared dict (audit X-10).
+#
+# Inside deps.snapshot() the global cache is bypassed entirely: the snapshot's
+# reads must all come from its own REPEATABLE READ transaction, and a frame
+# cached from an earlier transaction would let one section of a review see
+# data the others do not (audit Q-6). The snapshot keeps its own memo instead,
+# so a review still computes each frame once.
 _FRAME_CACHE: dict[tuple, tuple[float, pd.DataFrame]] = {}
 _FRAME_CACHE_MAX = 32
 _FRAME_CACHE_TTL_SECONDS = 60.0
+_FRAME_CACHE_LOCK = threading.Lock()
 
 
 def _cache_key(
     method: str, account: str | None, as_of: date | None, cutoff: Cutoff
 ) -> tuple:
-    return (method, account, as_of, cutoff.ts)
+    return (common.normalize_method(method), account, as_of, cutoff.ts)
 
 
 def clear_frame_cache() -> None:
     """Drop the memoised frames. For tests that mutate the underlying data."""
-    _FRAME_CACHE.clear()
+    with _FRAME_CACHE_LOCK:
+        _FRAME_CACHE.clear()
+
+
+def _cache_get(key: tuple) -> pd.DataFrame | None:
+    local = snapshot_memo()
+    if local is not None:
+        frame = local.get(("positions_frame", key))
+        return frame.copy() if frame is not None else None
+    with _FRAME_CACHE_LOCK:
+        entry = _FRAME_CACHE.get(key)
+        if entry is not None and (time.monotonic() - entry[0]) < _FRAME_CACHE_TTL_SECONDS:
+            # Copy: callers filter and assign columns on the result, and a
+            # mutated cache entry would corrupt every later read.
+            return entry[1].copy()
+    return None
+
+
+def _cache_put(key: tuple, frame: pd.DataFrame) -> None:
+    local = snapshot_memo()
+    if local is not None:
+        local[("positions_frame", key)] = frame.copy()
+        return
+    with _FRAME_CACHE_LOCK:
+        if key not in _FRAME_CACHE and len(_FRAME_CACHE) >= _FRAME_CACHE_MAX:
+            # Bounded, and insertion-ordered: drop the oldest entry rather than
+            # letting a long-lived server accumulate one frame per cutoff.
+            _FRAME_CACHE.pop(next(iter(_FRAME_CACHE)))
+        _FRAME_CACHE[key] = (time.monotonic(), frame.copy())
 
 
 def positions_dataframe(
@@ -143,28 +178,44 @@ def positions_dataframe(
     engine = _engine(method)
     key = _cache_key(method, account, as_of, cutoff) if cutoff is not None else None
     if key is not None:
-        entry = _FRAME_CACHE.get(key)
-        if entry is not None and (time.monotonic() - entry[0]) < _FRAME_CACHE_TTL_SECONDS:
-            # Copy: callers filter and assign columns on the result, and a
-            # mutated cache entry would corrupt every later read.
-            return entry[1].copy()
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
 
     effective_as_of = as_of if as_of is not None else (cutoff.trade_date if cutoff else None)
+    # One database state for the actions, the lots and the quotes: they are
+    # read in three steps and must all be restated with the same actions (QA of
+    # PR #126 — a split approved between two reads mixed units). The actions
+    # are read once and handed to the lot loader, not re-read.
+    with deps.snapshot():
+        merged, latest, actions = _read_frame(engine, account, effective_as_of, cutoff)
+    return _finish_frame(merged, latest, actions, key)
+
+
+def _read_frame(engine, account, effective_as_of, cutoff):
     with get_conn() as conn:
-        lot_rows = _fetch_lots(conn, account=account, as_of=effective_as_of)
+        recorded = corporate_actions.fetch_actions(conn)
+        lot_rows = _fetch_lots(
+            conn, account=account, as_of=effective_as_of, actions=recorded
+        )
         # The actions that had happened by the observation date — the same set
         # _fetch_lots restated the lots with — so the quotes below can be put in
         # the same units.
-        actions = ledger_inputs.prepare(
-            [], corporate_actions.fetch_actions(conn), as_of=effective_as_of
-        ).actions
+        actions = ledger_inputs.prepare([], recorded, as_of=effective_as_of).actions
     merged = engine(lot_rows)
+    # The total-return denominator, from exactly the lots this frame values
+    # (same account and date filter, restated alike): docs/methodology.md §12.
+    merged.attrs["invested_capital"] = portfolio_kpis.peak_net_invested(lot_rows)
 
     # Bring the cutoff's price into the frame so callers can compute market
     # value without re-querying. None/NaN price is fine — left join keeps the row.
     latest = prices_service.latest_price_map_with_ts(
         as_of_ts=cutoff.ts if cutoff else None
     )
+    return merged, latest, actions
+
+
+def _finish_frame(merged, latest, actions, key):
     # A quote is in the units of the moment it was observed. The latest quote
     # at or before the cutoff is normally after every applicable action and
     # needs nothing; a *stale* one — last observed before an ex-date that the
@@ -198,11 +249,7 @@ def positions_dataframe(
     )
 
     if key is not None:
-        if len(_FRAME_CACHE) >= _FRAME_CACHE_MAX:
-            # Bounded, and insertion-ordered: drop the oldest entry rather than
-            # letting a long-lived server accumulate one frame per cutoff.
-            _FRAME_CACHE.pop(next(iter(_FRAME_CACHE)))
-        _FRAME_CACHE[key] = (time.monotonic(), merged.copy())
+        _cache_put(key, merged)
     return merged
 
 
@@ -227,58 +274,92 @@ def positions_summary(
     account: str | None = None,
     as_of: date | None = None,
     cutoff: Cutoff | None = None,
+    include_income: bool = True,
 ) -> dict[str, Any]:
-    """Aggregate totals across positions (used by KPIs and pnl summary)."""
+    """Aggregate totals across positions, by the dashboard's definitions.
+
+    The same definitions the dashboard, the Advisor and the reports compute
+    through app/portfolio_kpis.py (docs/methodology.md §12 and §14):
+
+    * market value and unrealized P&L over **priced** rows only; a held
+      position with no quote is not a loss — its open cost is reported as
+      ``unpriced_cost_basis`` and its symbol in ``unpriced_symbols``;
+    * ``unrealized_pct`` over the **priced** cost basis it was earned on;
+    * ``total_return_pct`` = (realized + unrealized) / peak net invested
+      capital of the same account- and date-filtered lots, and
+      ``total_return_with_income_pct`` adds USD income received by the same
+      date. The old ratio divided by the cost still open, so it exploded after
+      a large sale and read 0% after a full one (audit F-5 / Q-4).
+
+    ``include_income=False`` skips the income read for callers that only need
+    the valuation (allocation buckets, fee drag); the with-income figure is
+    then None.
+    """
     df = positions_dataframe(method, account=account, as_of=as_of, cutoff=cutoff)
-    if df.empty:
-        # Absolute totals are truly zero; the percentages are undefined without
-        # a cost basis, so they are null rather than a misleading 0.0.
-        return {
-            "market_value": 0.0,
-            "cost_basis": 0.0,
-            "unrealized_pnl": 0.0,
-            "unrealized_pct": None,
-            "realized_pnl": 0.0,
-            "active_symbols": 0,
-            "total_return_pct": None,
-            "null_reasons": {
-                "unrealized_pct": "no_cost_basis",
-                "total_return_pct": "no_cost_basis",
-            },
-        }
-    market_value = float(df["market_value"].sum(skipna=True))
-    cost_basis = float(df["open_cost"].sum())
-    unrealized_pnl = float(df["unrealized_pnl"].sum(skipna=True))
-    realized_pnl = float(df["realized_pnl"].sum()) if "realized_pnl" in df.columns else 0.0
-    active = int((df["qty"] > 0).sum())
-    unrealized_pct = (unrealized_pnl / cost_basis * 100.0) if cost_basis else None
-    total_return_pct = (
-        (realized_pnl + unrealized_pnl) / cost_basis * 100.0 if cost_basis else None
+    invested = df.attrs.get("invested_capital", portfolio_kpis.ZERO)
+    rollup = portfolio_kpis.rollup(df.to_dict(orient="records") if not df.empty else [])
+
+    income_total = None
+    income_excluded: list[dict[str, Any]] = []
+    if include_income:
+        from app.mcp.services import income as income_service
+
+        until = as_of if as_of is not None else (cutoff.trade_date if cutoff else None)
+        income_total, income_excluded = income_service.usd_income_total(
+            until=until, account=account
+        )
+
+    total_return = portfolio_kpis.total_return_pct(
+        rollup["realized_pnl"], rollup["unrealized_pnl"], invested
     )
+    total_with_income = (
+        portfolio_kpis.total_return_pct(
+            rollup["realized_pnl"], rollup["unrealized_pnl"], invested,
+            portfolio_kpis.to_dec(income_total) or portfolio_kpis.ZERO,
+        )
+        if income_total is not None else None
+    )
+    f = portfolio_kpis.as_float
+    null_reasons: dict[str, str] = {}
+    if rollup["unrealized_pct"] is None:
+        null_reasons["unrealized_pct"] = (
+            "no_priced_cost_basis" if rollup["cost_basis"] else "no_cost_basis"
+        )
+    if total_return is None:
+        null_reasons["total_return_pct"] = "no_invested_capital"
+        if include_income:
+            null_reasons["total_return_with_income_pct"] = "no_invested_capital"
     return {
-        "market_value": market_value,
-        "cost_basis": cost_basis,
-        "unrealized_pnl": unrealized_pnl,
-        "unrealized_pct": unrealized_pct,
-        "realized_pnl": realized_pnl,
-        "active_symbols": active,
-        "total_return_pct": total_return_pct,
-        "null_reasons": (
-            {}
-            if cost_basis
-            else {"unrealized_pct": "no_cost_basis", "total_return_pct": "no_cost_basis"}
-        ),
+        "market_value": f(rollup["market_value"]),
+        "cost_basis": f(rollup["cost_basis"]),
+        "priced_cost_basis": f(rollup["priced_cost_basis"]),
+        "unpriced_cost_basis": f(rollup["unpriced_cost_basis"]),
+        "unpriced_symbols": rollup["unpriced_symbols"],
+        "unrealized_pnl": f(rollup["unrealized_pnl"]),
+        "unrealized_pct": f(rollup["unrealized_pct"]),
+        "realized_pnl": f(rollup["realized_pnl"]),
+        "active_symbols": int((df["qty"] > 0).sum()) if not df.empty else 0,
+        "invested_capital": f(invested),
+        "total_return_pct": f(total_return),
+        "total_return_with_income_pct": f(total_with_income),
+        "total_return_partial": bool(rollup["unpriced_symbols"]),
+        "total_return_basis": portfolio_kpis.TOTAL_RETURN_BASIS,
+        "income_total": income_total,
+        "income_excluded_non_usd": income_excluded,
+        "null_reasons": null_reasons,
     }
 
 
 def position_detail(symbol: str, method: str = "fifo") -> dict[str, Any]:
     """Per-symbol drill-down: merged numbers + per-account breakdown + open lots."""
     sym = symbol.upper()
+    method = common.normalize_method(method)
     merged_row = next(
         (r for r in current_positions(method, held_only=False) if r["symbol"] == sym),
         None,
     )
     breakdown = _per_account_breakdown(sym, method)
+    # Open lots are a FIFO concept: avg-cost has no lot identity to report.
     open_lots_list = open_lots(symbol=sym) if method == "fifo" else []
     trades = _symbol_trades(sym)
     return {
@@ -310,7 +391,7 @@ def _per_account_breakdown(symbol: str, method: str) -> list[dict[str, Any]]:
         if df.empty:
             continue
         row = df.iloc[0].to_dict()
-        row["account"] = acct if acct is not None else "(none)"
+        row["account"] = common.account_label(acct)
         out.append(_clean_record(row))
     return out
 
@@ -328,7 +409,11 @@ def _symbol_trades(symbol: str, limit: int = 20) -> list[dict[str, Any]]:
                 (symbol, limit),
             )
             cols = [d[0] for d in cur.description]
-            return [_clean_record(dict(zip(cols, r))) for r in cur.fetchall()]
+            rows = [_clean_record(dict(zip(cols, r))) for r in cur.fetchall()]
+    for r in rows:
+        # Free text a person typed — or a broker CSV carried in (audit M-6).
+        r["notes"] = common.untrusted(r.get("notes"))
+    return rows
 
 
 def open_lots(

@@ -71,7 +71,9 @@ def test_password_never_appears_in_sql_text():
 def test_password_is_bound_on_alter_role():
     """ALTER ROLE carries the real password, parameterised."""
     calls = _run(HOSTILE)
-    altered = [(s, p) for s, p in calls if "ALTER ROLE" in s]
+    # The script itself also ALTERs the role (its deadlines); the password is
+    # the one statement that carries a parameter.
+    altered = [(s, p) for s, p in calls if "WITH PASSWORD" in s]
     assert len(altered) == 1
     sql, params = altered[0]
     assert params == (HOSTILE,)
@@ -92,7 +94,9 @@ def test_placeholder_is_filled_with_a_throwaway():
 def test_quote_bearing_passwords_survive(password):
     """The characters that used to break the statement now pass through intact."""
     calls = _run(password)
-    altered = [(s, p) for s, p in calls if "ALTER ROLE" in s]
+    # The script itself also ALTERs the role (its deadlines); the password is
+    # the one statement that carries a parameter.
+    altered = [(s, p) for s, p in calls if "WITH PASSWORD" in s]
     assert altered[0][1] == (password,)
     for sql, _params in calls:
         assert password not in sql

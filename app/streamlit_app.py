@@ -99,11 +99,11 @@ except Exception as exc:  # surfaced inline rather than a blank page
 def get_pool():
     from psycopg2.pool import ThreadedConnectionPool
 
-    return ThreadedConnectionPool(
-        1, 10,
-        host=cfg.host, port=cfg.port, dbname=cfg.dbname,
-        user=cfg.user, password=cfg.password,
-    )
+    from db import connect_params
+
+    # connect_params carries the connect timeout (audit A-6): without it an
+    # unreachable database hung the page instead of failing.
+    return ThreadedConnectionPool(1, 10, **connect_params(cfg))
 
 
 def get_conn():

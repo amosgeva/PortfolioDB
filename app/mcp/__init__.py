@@ -23,3 +23,4 @@ if str(_APP_DIR) not in sys.path:
     # shadows the installed `mcp` SDK that fastmcp imports (`mcp.types`) — which
     # surfaces as the misleading "FastMCP server support is not installed".
     sys.path.append(str(_APP_DIR))
+

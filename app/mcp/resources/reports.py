@@ -7,6 +7,7 @@ philosophy resource just streams the markdown the advisor uses.
 
 from __future__ import annotations
 
+import html
 import logging
 
 from fastmcp import FastMCP
@@ -15,8 +16,14 @@ import advisor
 import exec_report
 
 from app.mcp.deps import get_conn
+from app.mcp.errors import client_message
 
 log = logging.getLogger(__name__)
+
+
+def _reason(exc: BaseException) -> str:
+    """A client-safe one-liner for ``exc``: a database category or a generic note."""
+    return client_message(exc) or "an internal error occurred; details are in the server log."
 
 
 def register(mcp: FastMCP) -> None:
@@ -32,11 +39,13 @@ def register(mcp: FastMCP) -> None:
             with get_conn() as conn:
                 return exec_report.build_html(conn)
         except Exception as e:
+            # The exception is logged in full here; the client gets a category,
+            # never the driver's text or a traceback (audit M-7).
             log.exception("executive report generation failed")
             return (
                 "<!doctype html><meta charset='utf-8'>"
-                f"<title>Report unavailable</title>"
-                f"<p>Executive report failed: <code>{e}</code></p>"
+                "<title>Report unavailable</title>"
+                f"<p>Executive report failed: {html.escape(_reason(e))}</p>"
             )
 
     @mcp.resource(
@@ -50,7 +59,7 @@ def register(mcp: FastMCP) -> None:
             text = advisor.load_philosophy()
         except Exception as e:
             log.exception("philosophy load failed")
-            return f"# Philosophy unavailable\n\n`{e}`"
+            return f"# Philosophy unavailable\n\n{_reason(e)}"
         if not text:
             return (
                 "# Philosophy not configured\n\n"

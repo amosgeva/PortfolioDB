@@ -100,6 +100,18 @@ def add_lot(conn, symbol, side, day, qty, price, account=TEST_ACCOUNT):
     conn.commit()
 
 
+def add_action(conn, symbol, kind, ex_date, ratio):
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO corporate_actions(symbol, kind, ex_date, ratio, source) "
+            # A hand-entered record: in effect at once. A machine-recorded one
+            # (any other source, unreviewed) is pending and adjusts nothing.
+            "VALUES (%s, %s, %s, %s, 'manual')",
+            (symbol, kind, ex_date, ratio),
+        )
+    conn.commit()
+
+
 def cutoff_at(day: date = date(2026, 12, 31)):
     from app.mcp.services.cutoff import Cutoff
 
@@ -136,6 +148,48 @@ class TestOrphanSells:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM lots WHERE account = 'ZZDQ-OTHER'")
         conn.commit()
+
+    def test_a_split_between_buy_and_sell_is_not_an_orphan(self, conn, dq):
+        """X-5: buy 10, 2:1 split, sell 20. The engines match it in full on the
+        prepared ledger; summing raw quantities read it as an oversell of 10."""
+        add_lot(conn, "ZZDQA", "BUY", date(2026, 1, 5), 10, 100)
+        add_action(conn, "ZZDQA", "SPLIT", date(2026, 1, 20), 2)
+        add_lot(conn, "ZZDQA", "SELL", date(2026, 2, 5), 20, 55)
+        assert "ZZDQA" not in dq._orphan_sells(cutoff_at())
+
+    def test_a_reverse_split_no_longer_hides_an_oversell(self, conn, dq):
+        """X-5, the other direction: buy 10, 1-for-2 reverse split (5 shares),
+        sell 10. Raw quantities net to zero; the engine can match only 5."""
+        add_lot(conn, "ZZDQA", "BUY", date(2026, 1, 5), 10, 100)
+        add_action(conn, "ZZDQA", "REVERSE_SPLIT", date(2026, 1, 20), 0.5)
+        add_lot(conn, "ZZDQA", "SELL", date(2026, 2, 5), 10, 210)
+        found = dq._orphan_sells(cutoff_at())
+        assert "ZZDQA" in found
+        assert found["ZZDQA"]["shortfall"] == pytest.approx(-5.0)
+
+    def test_a_split_after_the_cutoff_is_not_applied(self, conn, dq):
+        """Actions dated after the cutoff have not happened from its point of
+        view: the same buy-10 / sell-20 is an oversell before the split."""
+        add_lot(conn, "ZZDQA", "BUY", date(2026, 1, 5), 10, 100)
+        add_lot(conn, "ZZDQA", "SELL", date(2026, 2, 5), 20, 55)
+        add_action(conn, "ZZDQA", "SPLIT", date(2026, 3, 1), 2)
+        assert "ZZDQA" in dq._orphan_sells(cutoff_at(date(2026, 2, 28)))
+
+    def test_a_pending_split_adjusts_nothing_and_is_reported(self, conn, dq):
+        """A machine-recorded, unreviewed split is not in effect: the sale of
+        20 after it is still an oversell, and the split is reported as pending
+        review rather than as unrecorded."""
+        add_lot(conn, "ZZDQA", "BUY", date(2026, 1, 5), 10, 100)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO corporate_actions(symbol, kind, ex_date, ratio, source) "
+                "VALUES ('ZZDQA', 'SPLIT', %s, 2, 'yfinance')", (date(2026, 1, 20),),
+            )
+        conn.commit()
+        add_lot(conn, "ZZDQA", "SELL", date(2026, 2, 5), 20, 55)
+        assert "ZZDQA" in dq._orphan_sells(cutoff_at())
+        pending = dq._pending_splits(cutoff_at())
+        assert pending["ZZDQA"]["ex_date"] == "2026-01-20"
 
     def test_sell_before_buy_in_date_order_is_orphaned(self, conn, dq):
         add_lot(conn, "ZZDQA", "SELL", date(2026, 1, 5), 5, 110)
