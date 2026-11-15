@@ -16,6 +16,47 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-11-15
+
+The release that answers an independent audit of 1.7.6/1.7.7: security,
+correctness, the two halves of the dashboard, the MCP server, CI and supply
+chain, operations and documentation, worked through in eleven reviewed pull
+requests (#121–#136). Figures that were wrong are now right — total return,
+unpriced positions, same-day trades, splits, stale quotes, foreign currency —
+and several are computed differently, so read **Changed — figures computed
+differently** below before comparing numbers with 1.7.x.
+
+**Upgrading — the short list** (each item is explained in the section it
+links to below):
+
+1. **Back up first** (`make backup` / `.\pdb.ps1 backup`). This release adds
+   migrations 004–007.
+2. **Run `make init`** (or `.\pdb.ps1 init`) once. It adds
+   `PORTFOLIODB_DASHBOARD_PASSWORD` to an existing `.env`; without it the write
+   pages (Manage, Advisor, Settings) are read-only.
+3. **Apply the schema:** `make schema` (or
+   `docker compose run --rm dashboard python app/apply_schema.py`). It records
+   every migration in `schema_migrations` and lists any collector-recorded split
+   still awaiting review. Migration 007 refuses, and lists the rows, if an
+   account is named `(none)`; rename it and re-run.
+4. **Re-run `make ro-role`** (or
+   `python app/create_ro_role.py --password=<current>`), so the read-only MCP
+   role gets its narrowed grant list, including `settings`.
+5. **Check the MCP:** its token must be at least 32 characters, and LAN clients
+   need `PORTFOLIODB_MCP_ALLOWED_HOSTS`.
+6. **Ports are loopback-only now.** If you reach the dashboard or Postgres from
+   another machine, use the LAN override (see `docs/exposure.md`).
+7. **The scheduler is two services** (`scheduler`, `scheduler-llm`), and the
+   running containers no longer contain `pip`; move any customised crontab line
+   or override accordingly.
+
+**Fixed (release)**
+
+- `create_ro_role.py --generate` no longer produces a password that starts with
+  `-`. One that did could not be passed back as `--password <value>` (argparse
+  read it as an option), which the upgrade step above asks for. An existing
+  password that starts with `-` still works with the `--password=<value>` form.
+
 **Upgrading (account names, migration 007)**
 
 - Apply `sql/migrations/007_reserved_account_names.sql` (`make schema`, or
@@ -2317,7 +2358,8 @@ Single currency (mixed currencies are **wrong, not approximate**), equities and
 ETFs only, no broker sync, no authentication, no shorts, one person's portfolio.
 See "Scope and limitations" in the README before installing.
 
-[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.7.7...HEAD
+[Unreleased]: https://github.com/amosgeva/PortfolioDB/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.8.0
 [1.7.7]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.7
 [1.7.6]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.6
 [1.7.5]: https://github.com/amosgeva/PortfolioDB/releases/tag/v1.7.5

@@ -29,6 +29,21 @@ SQL_PATH = Path(__file__).resolve().parent.parent / "sql" / "create_ro_role.sql"
 PLACEHOLDER = "CHANGE_ME"
 
 
+def generate_password() -> str:
+    """A random role password that never starts with '-'.
+
+    token_urlsafe's alphabet includes '-', and a value that starts with it is
+    read by argparse as an option when an operator later passes it as
+    ``--password <value>`` (as the upgrade notes tell them to), so the re-run
+    fails with "expected one argument". Draw again until the first character
+    is a letter or digit.
+    """
+    while True:
+        candidate = secrets.token_urlsafe(18)
+        if candidate[0].isalnum():
+            return candidate
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     g = ap.add_mutually_exclusive_group(required=True)
@@ -40,7 +55,7 @@ def main() -> int:
         print(f"Missing {SQL_PATH} — is this running with the application image?")
         return 1
 
-    password = args.password or secrets.token_urlsafe(18)
+    password = args.password or generate_password()
     sql = SQL_PATH.read_text(encoding="utf-8")
     if PLACEHOLDER not in sql:
         print(f"{SQL_PATH.name} no longer contains {PLACEHOLDER}; refusing to guess.")

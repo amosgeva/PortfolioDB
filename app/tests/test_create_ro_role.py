@@ -100,3 +100,15 @@ def test_quote_bearing_passwords_survive(password):
     assert altered[0][1] == (password,)
     for sql, _params in calls:
         assert password not in sql
+
+
+def test_generated_password_never_starts_with_a_dash():
+    """A generated password is passed back as `--password <value>` on upgrade;
+    a leading '-' would make argparse read it as an option."""
+    import create_ro_role
+
+    draws = iter(["-starts-with-dash", "_underscore", "Ok-password"])
+    with mock.patch.object(create_ro_role.secrets, "token_urlsafe", lambda n: next(draws)):
+        assert create_ro_role.generate_password() == "Ok-password"
+    for _ in range(2000):
+        assert create_ro_role.generate_password()[0].isalnum()
