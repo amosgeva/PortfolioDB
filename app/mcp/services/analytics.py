@@ -411,7 +411,7 @@ def _daily_price_frame(
                         date_trunc('day', ts AT TIME ZONE %s)::date AS day_local,
                         last_price
                     FROM price_snapshots
-                    WHERE symbol = ANY(%s)
+                    WHERE last_price > 0 AND symbol = ANY(%s)
                       AND (%s::timestamptz IS NULL OR ts >= %s)
                       AND (%s::timestamptz IS NULL OR ts <= %s)
                     ORDER BY symbol,
@@ -426,7 +426,7 @@ def _daily_price_frame(
                     """
                     SELECT symbol, ts, last_price
                     FROM price_snapshots
-                    WHERE symbol = ANY(%s)
+                    WHERE last_price > 0 AND symbol = ANY(%s)
                       AND (%s::timestamptz IS NULL OR ts >= %s)
                       AND (%s::timestamptz IS NULL OR ts <= %s)
                     ORDER BY symbol, ts
@@ -563,7 +563,7 @@ def _symbol_price_series(
                 """
                 SELECT ts, last_price
                 FROM price_snapshots
-                WHERE symbol = %s
+                WHERE last_price > 0 AND symbol = %s
                   AND (%s::date IS NULL OR ts >= %s)
                   AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY ts
@@ -598,7 +598,7 @@ def _portfolio_value_series(
                 """
                 SELECT ts, symbol, last_price
                 FROM price_snapshots
-                WHERE symbol = ANY(%s)
+                WHERE last_price > 0 AND symbol = ANY(%s)
                   AND (%s::date IS NULL OR ts >= %s)
                   AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY ts

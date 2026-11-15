@@ -450,7 +450,7 @@ def _price_by_day(cutoff: Cutoff | None = None) -> dict[date, dict[str, float]]:
                        date_trunc('day', ts AT TIME ZONE %s)::date AS day_local,
                        symbol, last_price
                 FROM price_snapshots
-                WHERE (%s::timestamptz IS NULL OR ts <= %s)
+                WHERE last_price > 0 AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY symbol,
                          date_trunc('day', ts AT TIME ZONE %s),
                          ts DESC

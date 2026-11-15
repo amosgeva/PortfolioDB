@@ -67,6 +67,9 @@ CORRECTNESS_CODES = frozenset({
     "foreign_currency",
     "foreign_currency_income",
     "foreign_currency_cash",
+    # A recorded split awaiting review adjusts nothing yet, so every return
+    # and drawdown across its date reads the split as a price move.
+    "split_pending_review",
 })
 
 # A position at or above this share of market value is material.
@@ -117,6 +120,7 @@ def portfolio_data_quality(
     impossible = _impossible_values(cutoff)
     first_trade = _first_trade_dates(cutoff)
     splits = _suspected_splits(cutoff)
+    pending = _pending_splits(cutoff)
     foreign = _foreign_currency(cutoff)
 
     issues_by_symbol: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -206,6 +210,16 @@ def portfolio_data_quality(
             f"{detail['day']} with no corporate_actions row. If it is a split, "
             f"returns and drawdown across that date are wrong. Confirm against "
             f"a real source, then record it — see app/check_splits.py.",
+            **detail,
+        ))
+
+    for sym, detail in pending.items():
+        issues_by_symbol[sym].append(_issue(
+            "split_pending_review", "inconsistent",
+            f"A {detail['ratio']:g}:1 {detail['kind'].lower().replace('_', ' ')} on "
+            f"{detail['ex_date']} is recorded but awaiting review, so it adjusts "
+            "nothing yet: returns and drawdown across that date read it as a price "
+            "move. Confirm it and mark it reviewed (app/check_splits.py).",
             **detail,
         ))
 
@@ -496,7 +510,7 @@ def _symbols_priced_at(run_ts: datetime) -> set[str]:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT symbol FROM price_snapshots WHERE ts = %s", (run_ts,)
+                "SELECT symbol FROM price_snapshots WHERE ts = %s AND last_price > 0", (run_ts,)
             )
             return {r[0] for r in cur.fetchall()}
 
@@ -730,6 +744,35 @@ def _foreign_currency(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
             }
 
 
+def _recorded_actions(conn) -> list:
+    """Every recorded corporate action, pending review or not.
+
+    corporate_actions.fetch_actions returns only the actions in effect; from
+    1.8.0 a collector-recorded split adjusts nothing until a person reviews it,
+    so the full register comes from fetch_recorded_actions. On a build without
+    that split (pre-1.8.0 ledger core) every recorded action is in effect, and
+    fetch_actions is the register.
+    """
+    fetch = getattr(corporate_actions, "fetch_recorded_actions", None) or corporate_actions.fetch_actions
+    return list(fetch(conn))
+
+
+def _pending_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
+    """Recorded splits awaiting review, dated on or before the cutoff."""
+    with get_conn() as conn:
+        recorded = _recorded_actions(conn)
+    out: dict[str, dict[str, Any]] = {}
+    for a in recorded:
+        if not getattr(a, "pending_review", False) or a.ex_date > cutoff.trade_date:
+            continue
+        out[a.symbol.upper()] = {
+            "ex_date": a.ex_date.isoformat(),
+            "kind": a.kind,
+            "ratio": float(a.ratio),
+        }
+    return out
+
+
 def _foreign_money(cutoff: Cutoff) -> list[dict[str, Any]]:
     """Income and cash recorded in a currency other than USD, at the cutoff.
 
@@ -786,7 +829,7 @@ def _suspected_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
     investigation, not to enumerate every day of a corrupted series.
     """
     with get_conn() as conn:
-        known = corporate_actions.fetch_actions(conn)
+        known = _recorded_actions(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -807,6 +850,9 @@ def _suspected_splits(cutoff: Cutoff) -> dict[str, dict[str, Any]]:
                 series[sym].append((day, float(price)))
 
     out: dict[str, dict[str, Any]] = {}
+    # Every RECORDED action counts as known, pending ones included: a split
+    # recorded and awaiting review is not "unrecorded" — it is reported as
+    # pending by _pending_splits instead.
     for hit in corporate_actions.detect_suspected_splits(series, known=known):
         out[hit["symbol"]] = {
             "day": hit["day"].isoformat(),

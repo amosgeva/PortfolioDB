@@ -18,6 +18,7 @@ from app.mcp.services.cutoff import LOCAL_TZ, tz_name
 # Import deps first (above): it puts app/ on sys.path so these top-level modules
 # resolve however the tests are invoked.
 import corporate_actions
+import ledger_inputs
 import holdings as holdings_module
 
 # Windows accepted by get_price_change / get_top_movers.
@@ -53,7 +54,7 @@ def latest_price(
                 """
                 SELECT symbol, ts, last_price, bid, ask, source
                 FROM price_snapshots
-                WHERE symbol = %s
+                WHERE last_price > 0 AND symbol = %s
                   AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY ts DESC
                 LIMIT 1
@@ -87,7 +88,7 @@ def latest_prices(
                 SELECT DISTINCT ON (symbol)
                        symbol, ts, last_price, bid, ask, source
                 FROM price_snapshots
-                WHERE (%s::text[] IS NULL OR symbol = ANY(%s))
+                WHERE last_price > 0 AND (%s::text[] IS NULL OR symbol = ANY(%s))
                   AND (%s::timestamptz IS NULL OR ts <= %s)
                 ORDER BY symbol, ts DESC
                 """,
@@ -138,7 +139,7 @@ def second_latest_price_map(
                   SELECT symbol, ts, last_price,
                          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
                   FROM price_snapshots
-                  WHERE (%s::timestamptz IS NULL OR ts <= %s)
+                  WHERE last_price > 0 AND (%s::timestamptz IS NULL OR ts <= %s)
                 )
                 SELECT symbol, ts, last_price
                 FROM ranked
@@ -175,7 +176,8 @@ def prev_day_eod_price_map(
                   SELECT symbol, price_snapshots.ts, last_price,
                          ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY price_snapshots.ts DESC) AS rn
                   FROM price_snapshots, ref
-                  WHERE price_snapshots.ts < ref.day_start
+                  WHERE price_snapshots.last_price > 0
+                    AND price_snapshots.ts < ref.day_start
                 )
                 SELECT symbol, ts, last_price
                 FROM prev
@@ -235,7 +237,7 @@ def price_history(
                         date_trunc('day', ts AT TIME ZONE %s) AS day_local,
                         ts, last_price, bid, ask
                     FROM price_snapshots
-                    WHERE symbol = %s
+                    WHERE last_price > 0 AND symbol = %s
                       AND ts >= %s AND ts < %s
                     ORDER BY date_trunc('day', ts AT TIME ZONE %s),
                              ts DESC
@@ -248,7 +250,7 @@ def price_history(
                     """
                     SELECT ts, last_price, bid, ask
                     FROM price_snapshots
-                    WHERE symbol = %s
+                    WHERE last_price > 0 AND symbol = %s
                       AND ts >= %s AND ts < %s
                     ORDER BY ts
                     LIMIT %s
@@ -307,7 +309,7 @@ def price_change(symbol: str, window: str = "1d") -> dict[str, Any] | None:
             # Latest snapshot
             cur.execute(
                 "SELECT ts, last_price FROM price_snapshots "
-                "WHERE symbol = %s ORDER BY ts DESC LIMIT 1",
+                "WHERE last_price > 0 AND symbol = %s ORDER BY ts DESC LIMIT 1",
                 (sym,),
             )
             latest = cur.fetchone()
@@ -318,13 +320,13 @@ def price_change(symbol: str, window: str = "1d") -> dict[str, Any] | None:
                 # 'all' — use the very first snapshot
                 cur.execute(
                     "SELECT ts, last_price FROM price_snapshots "
-                    "WHERE symbol = %s ORDER BY ts ASC LIMIT 1",
+                    "WHERE last_price > 0 AND symbol = %s ORDER BY ts ASC LIMIT 1",
                     (sym,),
                 )
             else:
                 cur.execute(
                     "SELECT ts, last_price FROM price_snapshots "
-                    "WHERE symbol = %s AND ts >= %s ORDER BY ts ASC LIMIT 1",
+                    "WHERE last_price > 0 AND symbol = %s AND ts >= %s ORDER BY ts ASC LIMIT 1",
                     (sym, since),
                 )
             base = cur.fetchone()
@@ -462,7 +464,7 @@ def portfolio_value_history(
                 """
                 SELECT ts, symbol, last_price
                 FROM price_snapshots
-                WHERE ts >= %s AND ts < %s AND symbol = ANY(%s)
+                WHERE last_price > 0 AND ts >= %s AND ts < %s AND symbol = ANY(%s)
                 ORDER BY ts
                 LIMIT %s
                 """,
@@ -525,24 +527,16 @@ def _value_lots(
 ) -> list[dict[str, Any]]:
     """Lot rows for holdings reconstruction, restated into post-split units.
 
-    Only the fields `holdings` needs — this is a valuation input, not a P&L
-    one, so price and fees are irrelevant here.
+    The parity contract's own query (ledger_inputs.LOTS_SQL), so each row
+    carries ``id`` and ``account``: the holdings walk matches per (symbol,
+    account) and truncates an oversell within its own account, as the engines
+    do, instead of netting one account's sale against another's purchase.
     """
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT symbol, side, trade_date, quantity, price FROM lots ORDER BY trade_date, id"
-        )
-        rows = [
-            {
-                "symbol": r[0],
-                "side": r[1],
-                "trade_date": r[2],
-                "quantity": r[3],
-                "price": r[4],
-            }
-            for r in cur.fetchall()
-        ]
-    adjusted = corporate_actions.adjust_lot_rows(rows, actions)
+        cur.execute(ledger_inputs.LOTS_SQL + ledger_inputs.LOTS_ORDER)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    adjusted = ledger_inputs.prepare(rows, actions).lots
     for r in adjusted:
         r["quantity"] = float(r["quantity"])
     return adjusted

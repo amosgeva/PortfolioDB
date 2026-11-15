@@ -186,7 +186,7 @@ def resolve(as_of: datetime | date | None = None) -> Cutoff:
                 """
                 SELECT DISTINCT ON (symbol) symbol, ts
                 FROM price_snapshots
-                WHERE ts <= %s
+                WHERE last_price > 0 AND ts <= %s
                 ORDER BY symbol, ts DESC
                 """,
                 (ts,),
@@ -204,7 +204,7 @@ def resolve(as_of: datetime | date | None = None) -> Cutoff:
             )
             cash_ts = {acct: t for acct, t in cur.fetchall()}
 
-            cur.execute("SELECT MIN(ts) FROM price_snapshots")
+            cur.execute("SELECT MIN(ts) FROM price_snapshots WHERE last_price > 0")
             row = cur.fetchone()
             first_ts = row[0] if row else None
 

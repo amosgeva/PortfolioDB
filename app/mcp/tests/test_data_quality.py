@@ -64,6 +64,7 @@ def stub(monkeypatch):
             "_suspected_splits": lambda c: {},
             "_foreign_currency": lambda c: {},
             "_foreign_money": lambda c: [],
+            "_pending_splits": lambda c: {},
         }
         defaults.update(overrides)
         for name, fn in defaults.items():
