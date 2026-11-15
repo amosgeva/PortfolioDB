@@ -36,8 +36,6 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-import pytest
-
 import demo_seed
 import exec_report
 import ledger_inputs

@@ -1,0 +1,13 @@
+# Test and lint tools for CI and the pre-commit hook, pinned exactly.
+#
+# Installed next to the application's own locked set:
+#
+#   pip install --only-binary :all: -c app/constraints.txt -r app/requirements.txt -r tools/requirements-ci.txt
+#
+# None of these ships in the image. They are pinned anyway, because a test run
+# that resolves `pytest` afresh every time is a test run whose result can change
+# without a commit. Bump them by hand; the weekly pip-audit covers this file.
+pytest==9.2.0
+pytest-cov==7.1.0
+coverage==7.17.3
+ruff==0.17.5

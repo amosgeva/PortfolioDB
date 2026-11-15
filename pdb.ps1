@@ -218,6 +218,16 @@ function Invoke-Init {
         Write-Host 'MCP token already set - left alone.'
     }
 
+    # The shared password for the dashboard's write pages. An .env from before
+    # 1.8.0 has no line for it at all; Set-EnvValue appends one in that case.
+    if (-not (Get-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_DASHBOARD_PASSWORD')) {
+        Set-EnvValue -Path $EnvFile -Key 'PORTFOLIODB_DASHBOARD_PASSWORD' -Value (Get-RandomSecret -Length 20)
+        Write-Host 'Generated a dashboard password (the write pages ask for it; it is in .env).'
+    }
+    else {
+        Write-Host 'Dashboard password already set - left alone.'
+    }
+
     Protect-File -Path $EnvFile
 
     Write-Host ''

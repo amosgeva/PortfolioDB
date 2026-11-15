@@ -1,54 +1,81 @@
 # Exposing PortfolioDB safely
 
-**The dashboard has no authentication.** Anyone who can reach port 8501 can read
-your entire ledger and add or delete trades. This is deliberate — it keeps a
-single-user tool simple — and it means the network is your only access control.
+**The dashboard has no login of its own.** Anyone who can reach port 8501 can
+read your entire ledger; the write pages (Manage, Advisor) sit behind one shared
+password, `PORTFOLIODB_DASHBOARD_PASSWORD`, which `make init` / `.\pdb.ps1 init`
+generates. That password is a second layer, not a reason to publish the port:
+the network is still your main access control.
 
-The defaults bind to **every interface on the host**:
+So **every port is bound to the host's loopback interface by default**:
 
 | Surface | Default binding | Reachable from |
 |---|---|---|
-| Dashboard | `0.0.0.0:8501` | every network the host is on |
-| Postgres | `0.0.0.0:54320` | every network the host is on |
+| Dashboard | `127.0.0.1:8501` | the host only |
+| Postgres | `127.0.0.1:54320` | the host only |
 | MCP server | `127.0.0.1:8765` | the host only |
 | pgAdmin (`tools` profile) | `127.0.0.1:58080` | the host only |
 
-On a home machine behind a router that is "your LAN". On a VPS, a machine with
-a public address, or a host that is also on a VPN, it is every one of those
-networks at once — a wildcard bind is only as private as the host's least
-private interface. Two things follow: **never port-forward 8501 on your
-router**, and if any network the host sits on has guests or devices you don't
-control, tighten the binding.
+Before 1.8.0 the dashboard and Postgres bound to every interface (`0.0.0.0`).
+If you relied on that — opening the dashboard from your phone, say — that stops
+working on upgrade until you choose a way back in: prefer the tunnel or tailnet
+in the next sections, or read [Reaching it from your
+LAN](#reaching-it-from-your-lan).
 
-## Localhost only
+## From another machine, without publishing anything
 
-Copy `docker-compose.override.yml.example` to `docker-compose.override.yml` and
-bind to the loopback interface:
+Reach the loopback-bound dashboard over SSH:
+
+```bash
+ssh -N -L 8501:127.0.0.1:8501 you@your-host
+# now open http://localhost:8501
+```
+
+The same works for Postgres (`-L 54320:127.0.0.1:54320`) and the MCP server
+(`-L 8765:127.0.0.1:8765`).
+
+## Reaching it from your LAN
+
+An explicit opt-in, through `docker-compose.override.yml` (copy
+`docker-compose.override.yml.example`, whose last block is this one, commented
+out):
 
 ```yaml
 services:
   dashboard:
     ports: !override
-      - "127.0.0.1:8501:8501"
-  postgres:
-    ports: !override
-      - "127.0.0.1:54320:5432"
+      - "8501:8501"
 ```
+
+That binds the dashboard to **every interface on the host**. On a home machine
+behind a router that is "your LAN". On a VPS, a machine with a public address,
+or a host that is also on a VPN, it is every one of those networks at once — a
+wildcard bind is only as private as the host's least private interface. So:
+**never port-forward 8501 on your router**, and do not do this at all if any
+network the host sits on has guests or devices you don't control. Binding to
+one interface's address instead of all of them (`"192.168.1.20:8501:8501"`)
+narrows it to that network.
 
 The `!override` tag is not decoration. Compose merges an override file's
 `ports` *into* the base file's list rather than replacing it, and it treats a
-different host IP as a different entry — so without the tag the loopback
-mapping lands **beside** the inherited `0.0.0.0:8501`, and the dashboard stays
-open to the network while the file says otherwise. `!override` replaces the
-list (Compose 2.24.4 or newer; `docker compose version` tells you). A test in
-this repository renders these examples and fails if a wildcard mapping
-survives, because the plain-list form looked right and was not.
+different host IP as a different entry — so without the tag the new mapping
+lands **beside** the inherited loopback one instead of replacing it. Going the
+other way (tightening a wildcard to loopback) the same mistake left the
+dashboard open while the file said "localhost only", which is how this repo
+found out. `!override` replaces the list (Compose 2.24.4 or newer;
+`docker compose version` tells you). A test in this repository renders every
+example on this page and fails if the result is not exactly what the block
+says.
 
-Then reach it over SSH from another machine:
+Postgres is the same, and needs it even less: it has a password, but the
+dashboard and the scheduler reach it over the compose network whatever you do
+here, so publishing it to the LAN only serves a database client on another
+machine.
 
-```bash
-ssh -N -L 8501:127.0.0.1:8501 you@your-host
-# now open http://localhost:8501
+```yaml
+services:
+  postgres:
+    ports: !override
+      - "54320:5432"
 ```
 
 ## Remote access, in order of preference
@@ -59,9 +86,11 @@ The least you can get wrong. Install Tailscale on the host and on your phone or
 laptop; reach the dashboard at the host's tailnet address. No port is ever
 exposed to the internet, and access is authenticated by the mesh.
 
-```yaml
-# with tailscale on the host, keep the service bound to the LAN and
-# let the tailnet address do the work — no reverse proxy needed
+With the default loopback binding, `tailscale serve` publishes it to your
+tailnet only, over HTTPS, without opening it to the LAN:
+
+```bash
+tailscale serve --bg 8501
 ```
 
 ### A reverse proxy that authenticates
@@ -83,15 +112,15 @@ Streamlit uses websockets; Caddy proxies them without extra configuration. On
 nginx you must pass `Upgrade`/`Connection` headers through explicitly, which is
 the usual reason a proxied dashboard loads and then hangs on "Connecting".
 
-Whatever you use: bind the dashboard to `127.0.0.1` so the proxy is the only
-path in, and prefer an identity-aware proxy (Cloudflare Access, Authelia,
-oauth2-proxy) over basic auth if more than one person could plausibly find the
-hostname.
+Whatever you use: keep the dashboard on its default `127.0.0.1` binding so the
+proxy is the only path in, and prefer an identity-aware proxy (Cloudflare
+Access, Authelia, oauth2-proxy) over basic auth if more than one person could
+plausibly find the hostname.
 
 ### Straight to the internet
 
-Don't. There is no login, no rate limiting, and no audit trail; the ledger is
-writable by anyone who loads the page.
+Don't. The read-only views have no login, there is no rate limiting, and the
+write pages are protected by one shared password and nothing else.
 
 ## The MCP server
 
@@ -136,9 +165,10 @@ dashboard and treat the token as one factor, not the only one.
 
 ## Postgres
 
-Port 54320 is published so host tools and the CLIs can reach it. If nothing
-outside Docker needs it, remove the mapping in your override — the other
-services talk to `postgres` over the compose network regardless:
+Port 54320 is published on loopback so host tools and host-run Python can reach
+it at `127.0.0.1:54320`. If nothing outside Docker needs it, remove the mapping
+in your override — the other services talk to `postgres` over the compose
+network regardless:
 
 ```yaml
 services:
@@ -150,11 +180,35 @@ An empty list without the `!reset` tag removes nothing: Compose merges it
 with the base file's list and the port stays published. Check the result with
 `docker compose config` — the `postgres` service should show no `ports` key.
 
+## What the containers may do
+
+Network binding decides who can reach a service; these decide what a
+compromised one could do next. They are on by default in `docker-compose.yml`:
+
+| Service | Linux capabilities | `no-new-privileges` | Read-only root | Healthcheck |
+|---|---|---|---|---|
+| dashboard, scheduler, mcp | none | yes | yes (`/tmp` and the home directory are tmpfs) | yes |
+| postgres | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID` — what its entrypoint needs to hand the data directory to the `postgres` user | yes | no — `docker compose cp`, which the Windows backup and restore depend on, does not work on a read-only container | yes |
+| pgadmin (`tools`) | none (listens on 8080 inside the container for that reason) | yes | no — its entrypoint writes its config on start | no |
+
+The scheduler is handed the `.env` keys its jobs use — the LLM key for the
+morning brief, the Financial Datasets key for the weekly enrichment — and the
+secrets that belong to other processes (the MCP token and role, pgAdmin's login,
+the dashboard password) are blanked for it. The dashboard gets the same
+treatment, minus its own password. The MCP server gets none of `.env` at all
+(see above).
+
+If you relax any of these in an override, say why in a comment there; the
+defaults are the ones that were tested.
+
 ## A short checklist
 
 - [ ] Nothing forwarded from the router to 8501 or 54320
-- [ ] Dashboard bound to `127.0.0.1` if the LAN isn't trusted — and
-      `docker compose config` confirms no `0.0.0.0` mapping is left beside it
+- [ ] Ports still on `127.0.0.1` unless you opted in — `docker compose config`
+      shows `host_ip: 127.0.0.1` on every published port, or exactly the
+      interface you chose
+- [ ] `PORTFOLIODB_DASHBOARD_PASSWORD` set (`make init` / `.\pdb.ps1 init`
+      generates one)
 - [ ] Remote access via tailnet or an authenticating proxy, never raw
 - [ ] `PORTFOLIODB_MCP_TOKEN` is long and random (`make init` / `.\pdb.ps1 init`
       generates one)

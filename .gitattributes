@@ -6,3 +6,5 @@ Makefile         text eol=lf
 *.sh             text eol=lf
 Dockerfile       text eol=lf
 *.sql            text eol=lf
+# Read by pip inside the image build, and regenerated there by `make lock`.
+app/requirements.lock text eol=lf
