@@ -675,7 +675,9 @@ def _kpi_block(
         "unpricedCostBasis": money(s["unpriced_cost_basis"]),
         "unpricedSymbols": s["unpriced_symbols"],
         "dayChange": round(day_change, 2),
-        "dayChangePct": round(day_change / prev_value * 100, 2) if prev_value else 0.0,
+        # Null, not 0.0, when no held position has a priced previous close:
+        # there is no day move to report (the MCP's daily_change_pct agrees).
+        "dayChangePct": round(day_change / prev_value * 100, 2) if prev_value else None,
         "unrealized": money(s["unrealized_pnl"]),
         "unrealizedPct": ratio(s["unrealized_pct"]),
         "realized": money(s["realized_pnl"]),
@@ -688,7 +690,9 @@ def _kpi_block(
         "deltaLastPrev": round(delta_prev, 2),
         "deltaLastCurr": round(delta_curr, 2),
         "deltaLastSyms": len(delta_syms),
-        "activeCount": len(holdings),
+        # Every open position (quantity > 0), priced or not — the MCP's
+        # active_symbols. `holdings` lists only the priced ones.
+        "activeCount": len(qty_map),
         "watchlistCount": len(watch_rows),
         "totalFees": round(total_fees, 2),
         # Lifetime fees over the same lifetime denominator as total return; over
