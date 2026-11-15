@@ -1,5 +1,39 @@
-# Serve app/static/ at /app/static/ — used for the PWA manifest + icon that
-# the dashboard injects into the page head (see brandParentPage in
-# streamlit_app.py). Theme env vars in run_dashboard.ps1 still apply.
+# Streamlit configuration for the dashboard — the same file in the image, in
+# compose and on a host run, so every install draws the same product.
+
+# Serve app/static/ at /app/static/ — used for the PWA manifest + icon.
 [server]
 enableStaticServing = true
+
+# The native pages' widget theme (audit N-4). Until 1.8.0 this lived only in
+# environment variables set by a gitignored Windows launcher, so the shipped
+# image fell back to Streamlit's red default: a red "Generate brief" button
+# beside an indigo rail. The colours are the design tokens in
+# app/dashboard/static/app.css (--accent, --bg, --surface-2, --fg, --border-2,
+# --up, --down), converted from OKLCH to the hex this file needs; change them
+# there first, then here. Light and dark follow the viewer's system setting,
+# as the custom front end's default does.
+[theme]
+primaryColor = "#3567de"
+font = "Space Grotesk, -apple-system, BlinkMacSystemFont, Segoe UI, system-ui, sans-serif"
+codeFont = "JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
+baseRadius = "9px"
+showSidebarBorder = false
+
+[theme.light]
+primaryColor = "#3567de"
+backgroundColor = "#f6f9fc"
+secondaryBackgroundColor = "#f4f7fb"
+textColor = "#19202a"
+borderColor = "#cdd1d8"
+greenColor = "#007e32"
+redColor = "#cc272b"
+
+[theme.dark]
+primaryColor = "#4d7ff1"
+backgroundColor = "#0b0e15"
+secondaryBackgroundColor = "#1a2029"
+textColor = "#e5e8ed"
+borderColor = "#353b44"
+greenColor = "#4fb772"
+redColor = "#f3625b"

@@ -16,6 +16,106 @@ needs a schema step says so under **Upgrading**.
 
 ## [Unreleased]
 
+**Upgrading (dashboard write pages, migration 006)**
+
+- **The dashboard's write pages now need a password.** Set
+  `PORTFOLIODB_DASHBOARD_PASSWORD` in the repo-root `.env` — run `make init`
+  (or `.\pdb.ps1 init`), which adds a random one to an existing `.env` without
+  touching the other secrets, or add a long random string by hand — and
+  restart the dashboard. Until it is set,
+  Manage, Advisor and Settings stay visible but **read-only**: nothing can be
+  recorded, deleted, saved or sent to your model from the browser. The
+  read-only views (Portfolio … History, Data Health) are unchanged and need no
+  password. The CLIs and the scheduler do not use it.
+- Apply `sql/migrations/006_price_alerts_and_lot_audit.sql` (`make schema`
+  does it, and records it in `schema_migrations`). It adds two tables,
+  `price_alerts` and `lot_deletions`; nothing existing changes. The schema
+  version is now 0.6 (`sql/schema.sql` header and the MCP's
+  `schema_version`).
+- If a launcher of yours sets `STREAMLIT_THEME_*` variables, you can drop
+  them: the theme now ships in `app/.streamlit/config.toml`, and an
+  environment variable still overrides it.
+
+### Security
+
+- Every change made from the dashboard needs `PORTFOLIODB_DASHBOARD_PASSWORD`:
+  adding, selling and deleting lots, the watchlist, cash, price alerts, the
+  Settings form, the investor one-pager, and every brief or chat message that
+  calls your model (audit A-1). Unlocking lasts one browser session and
+  relocks after 30 minutes idle, on **Lock**, or when the password in `.env`
+  changes. The compare is constant-time on bytes; wrong attempts are
+  throttled per client and process-wide (30 s after five, doubling to 15
+  minutes); the password is never shown, logged or kept in the session. Each
+  write re-checks at the moment it writes, so a disabled button is not the
+  control. Unset means read-only, never open. The topbar refresh still
+  redraws prices for everyone, but fetching new headlines (which runs the
+  Financial Datasets enrichment, writes to the database and spends that key)
+  now needs an unlocked session too.
+- Deleting a lot needs a reason and records the full row, the time and the
+  reason in `lot_deletions`, in the same statement as the delete (A-9). The
+  Manage page shows the log.
+- The lots CSV export, and the "Download as CSV" built into the on-screen
+  tables, prefix text cells that start with `=`, `+`, `-`, `@`, tab or CR with
+  `'`, so a spreadsheet does not run them as formulas (A-4, the Manage half).
+  Numbers are untouched.
+
+### Fixed
+
+- Adding a lot that matches one already recorded (same symbol, account,
+  side, date, quantity and price) on the Manage page now says **"DUPLICATE —
+  NOT RECORDED"**, in the same words as the CLIs, instead of "Added" over a
+  row that was silently dropped (N-2). Manage also asks before recording a
+  lot outside the USD-only scope, where the CLIs refuse without
+  `--allow-non-usd`.
+- The Advisor chat shows the newest 100 messages in order, with a count when
+  there are more; from message 101 on, new exchanges used to vanish on the
+  next rerun (N-3).
+- Before a sale is recorded, the Manage form warns when it exceeds the
+  position in that account, or when it has no account while the shares sit in
+  a named one, and asks for confirmation (N-7).
+- Manage writes are one transaction each (the instrument row and the lot
+  together; the whole Settings form together), and quantities, prices, fees,
+  cash and alert levels are parsed as exact decimals — what you type is what
+  is stored (N-6).
+- Times on the native pages and the default trade date use the reporting
+  timezone setting, not the server process's clock (N-9).
+- The native rail shows a missing day change as "n/a", not a green +0.00%.
+
+### Changed
+
+- **Price alerts are persisted.** Manage → Alerts creates them (symbol
+  validated, level a finite positive number) and deactivates them; they are
+  never deleted from the page (U-1, the management half). An alert is only
+  accepted on a symbol the collector actually fetches — held, or on the
+  watchlist — or with "also add to the watchlist" ticked; an armed alert whose
+  symbol stops being collected is shown as "not collected". Removing the
+  watchlist entry, or selling the last shares, of a symbol with armed alerts
+  asks first.
+- **Phone and tablet navigation.** Below 980 px the native pages have a
+  bottom tab bar like the custom front end's (N-1).
+- **No page reload between the two halves.** The rail, the tab bar and the
+  custom front end's Manage / Advisor / Data Health entries now change view
+  inside the same Streamlit session, so an unlock and the warm caches survive
+  the move, and so do drafts: what you typed into the lot, watchlist, cash,
+  alert and Settings fields or the one-pager comes back when you return. The
+  address bar still updates (N-5).
+- Generating a brief and the topbar's news refresh run in the background, so
+  the page stays usable; when either lands, the page redraws by itself and
+  says whether it worked. Both are throttled for the whole process (one brief
+  a minute, one news fetch per 20 minutes), not per browser tab (N-10).
+- Manage's entry fields are no longer forms: pressing Enter in a field does
+  not submit; use the button.
+- The widget theme (indigo primary, the design system's colours and fonts,
+  light and dark) ships in `app/.streamlit/config.toml`, so the Docker image
+  matches the design instead of Streamlit's red default (N-4).
+- The native pages read their design tokens from the custom front end's
+  stylesheet instead of a hand-copied set (R-3), and use words in tinted
+  wells for status instead of emoji (N-8). Manage is organised in tabs:
+  Trades, Watchlist, Cash, Alerts, Settings, Export.
+- Streamlit page tests (AppTest) now drive Manage, Advisor, Data Health and
+  Settings through the real script against Postgres, including the password
+  gate; they run in CI's database job (T-1).
+
 **Upgrading (CI, supply chain, containers)**
 
 - **The dashboard and Postgres now listen on `127.0.0.1` only.** Before, they
