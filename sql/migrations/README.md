@@ -1,9 +1,12 @@
 # Migrations
 
 Numbered, forward-only migrations for databases that predate a schema change.
-A fresh database does not depend on them — `sql/schema.sql` always describes the
-full current schema (and stays `IF NOT EXISTS`-idempotent) — but
-`apply_schema.py` runs and records them there too, where each is a no-op.
+`sql/schema.sql` aims to describe the full current schema (and stays
+`IF NOT EXISTS`-idempotent), but a fresh database is installed the same way as
+an existing one: `apply_schema.py` runs and records every migration there too,
+and some still add something on a fresh database (003, for example, adds the
+named NaN check on `price_snapshots.volume`). Install with `apply_schema.py`,
+not with `schema.sql` alone.
 
 ## Applying them
 

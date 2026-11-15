@@ -172,7 +172,9 @@ Add a numbered file under `sql/migrations/` **and** make the same change in
 complete current core schema on its own. The installer is the same for fresh
 and existing databases: `app/apply_schema.py` (`make schema`) applies
 `schema.sql`, then `schema_fd.sql`, then every migration not yet recorded — on
-a fresh database too, where each is a no-op over the complete schema. It records
+a fresh database too, so install it the same way rather than from `schema.sql`
+alone (a migration can still add something, e.g. 003's named NaN check on
+`price_snapshots.volume`). It records
 each migration in `schema_migrations` with a checksum and reports one whose text
 changed after it was applied — so fix a shipped migration with a new one. If the MCP
 server must read the new table, add it to the read-only role's grant list
