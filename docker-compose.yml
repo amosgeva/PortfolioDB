@@ -278,6 +278,9 @@ services:
       PORTFOLIODB_MCP_RO_PASSWORD: ${PORTFOLIODB_MCP_RO_PASSWORD:-}
       PORTFOLIODB_MCP_ALLOW_RW_FALLBACK: ${PORTFOLIODB_MCP_ALLOW_RW_FALLBACK:-}
       PORTFOLIODB_MCP_LOG_LEVEL: ${PORTFOLIODB_MCP_LOG_LEVEL:-INFO}
+      # Host-header names other machines use to reach the server (the guard
+      # refuses anything else with 421; loopback is always accepted).
+      PORTFOLIODB_MCP_ALLOWED_HOSTS: ${PORTFOLIODB_MCP_ALLOWED_HOSTS:-}
       PORTFOLIODB_BENCHMARK_SYMBOL: ${PORTFOLIODB_BENCHMARK_SYMBOL:-SPY}
       # The reporting timezone, so the server buckets days the way the
       # dashboard does. TZ above is the process clock; this is the setting the
